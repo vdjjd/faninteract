@@ -59,34 +59,49 @@ export default function DashboardPage() {
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) throw new Error("No authenticated user");
 
-        let { data: hostRow } = await supabase
+        /* ------------------------------------------------------- */
+        /* 1️⃣ Try loading host row                                 */
+        /* ------------------------------------------------------- */
+        let { data: hostRow, error: hostFetchError } = await supabase
           .from("hosts")
           .select("*")
           .eq("auth_id", user.id)
           .maybeSingle();
 
+        /* ------------------------------------------------------- */
+        /* 2️⃣ If no host exists, create one                       */
+        /* ------------------------------------------------------- */
         if (!hostRow) {
-          const { data: inserted } = await supabase
+          console.warn("⚠ No host found — creating a new host profile.");
+
+          const newHost = {
+            id: crypto.randomUUID(),
+            auth_id: user.id,
+            email: user.email || "unknown@example.com",
+            username: user.email?.split("@")[0] || "newuser",
+            venue_name: "My Venue",
+            role: "host",
+            created_at: new Date().toISOString(),
+          };
+
+          const { data: inserted, error: insertError } = await supabase
             .from("hosts")
-            .insert([
-              {
-                id: crypto.randomUUID(),
-                auth_id: user.id,
-                email: user.email,
-                username: user.user_metadata?.username || user.email?.split("@")[0],
-                venue_name: user.user_metadata?.venue_name || "My Venue",
-                role: "host",
-                created_at: new Date().toISOString(),
-              },
-            ])
+            .insert([newHost])
             .select()
             .maybeSingle();
+
+          if (insertError) {
+            console.error("❌ Host insert failed:", insertError);
+          }
 
           hostRow = inserted;
         }
 
         setHost(hostRow);
 
+        /* ------------------------------------------------------- */
+        /* 3️⃣ Load all dashboard content                          */
+        /* ------------------------------------------------------- */
         if (hostRow?.id) {
           const [walls, wheels, pollsData, triviaData] = await Promise.all([
             getFanWallsByHost(hostRow.id),
