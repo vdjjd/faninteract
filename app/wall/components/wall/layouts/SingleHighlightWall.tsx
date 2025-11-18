@@ -4,34 +4,36 @@ import { useEffect, useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { QRCodeCanvas } from 'qrcode.react';
 import { useAdInjector } from '@/hooks/useAdInjector';
+import React from 'react';
 
 /* ---------------------------------------------------- */
-/*  STYLE CONTROL BLOCK (YOU EDIT EVERYTHING HERE)       */
+/*  STYLE CONTROL BLOCK — FULLY TYPED                   */
 /* ---------------------------------------------------- */
+
 const STYLE = {
   title: {
-  color: '#fff',
-  marginTop: '-9vh',
-  marginBottom: '-1vh',
-  fontWeight: 900,
-  fontSize: 'clamp(2.5rem,4vw,5rem)',
-  textShadow: `
-    2px 2px 2px #000,
-    -2px 2px 2px #000,
-    2px -2px 2px #000,
-    -2px -2px 2px #000
-  `,
-  filter: `
-    drop-shadow(0 0 25px rgba(255,255,255,0.6))
-    drop-shadow(0 0 40px rgba(255,255,255,0.3))
-  `,
-},
+    color: '#fff',
+    marginTop: '-9vh',
+    marginBottom: '-1vh',
+    fontWeight: 900,
+    fontSize: 'clamp(2.5rem,4vw,5rem)',
+    textShadow: `
+      2px 2px 2px #000,
+      -2px 2px 2px #000,
+      2px -2px 2px #000,
+      -2px -2px 2px #000
+    `,
+    filter: `
+      drop-shadow(0 0 25px rgba(255,255,255,0.6))
+      drop-shadow(0 0 40px rgba(255,255,255,0.3))
+    `,
+  } as React.CSSProperties,
 
   logo: {
     width: 'clamp(260px,28vw,380px)',
     marginTop: '0vh',
     filter: 'drop-shadow(0 0 14px rgba(0,0,0,0.85))',
-  },
+  } as React.CSSProperties,
 
   greyBar: {
     width: '90%',
@@ -41,7 +43,7 @@ const STYLE = {
     marginLeft: '3.5%',
     background: 'linear-gradient(to right, #000, #4444)',
     borderRadius: '6px',
-  },
+  } as React.CSSProperties,
 
   nickname: {
     fontSize: 'clamp(3rem,4vw,5rem)',
@@ -49,7 +51,7 @@ const STYLE = {
     color: '#fff',
     textTransform: 'uppercase',
     margin: 0,
-  },
+  } as React.CSSProperties,
 
   message: {
     fontSize: 'clamp(4rem,1vw,2.4rem)',
@@ -58,21 +60,22 @@ const STYLE = {
     maxWidth: '90%',
     marginTop: '1.2vh',
     fontWeight: 600,
-  },
+  } as React.CSSProperties,
 
   scanText: {
     color: '#fff',
     fontWeight: 700,
     marginBottom: '0.6vh',
     fontSize: 'clamp(1rem,1.4vw,1.4rem)',
-  },
+  } as React.CSSProperties,
 
   qrWrapper: {
     padding: '4px',
     borderRadius: '20px',
     background: 'rgba(255,255,255,0.10)',
-    boxShadow: '0 0 25px rgba(255,255,255,0.6), 0 0 40px rgba(255,255,255,0.3)',
-  },
+    boxShadow:
+      '0 0 25px rgba(255,255,255,0.6), 0 0 40px rgba(255,255,255,0.3)',
+  } as React.CSSProperties,
 
   qrContainer: {
     position: 'absolute',
@@ -81,11 +84,11 @@ const STYLE = {
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
-  },
+  } as React.CSSProperties,
 };
 
 /* ---------------------------------------------------- */
-/* TRANSITIONS (UNCHANGED)                              */
+/* TRANSITIONS                                           */
 /* ---------------------------------------------------- */
 const transitions: Record<string, any> = {
   'Fade In / Fade Out': {
@@ -152,7 +155,7 @@ const speedMap: Record<string, number> = {
 };
 
 /* ---------------------------------------------------- */
-/* COMPONENT                                             */
+/* COMPONENT — FULL FILE                                */
 /* ---------------------------------------------------- */
 
 export default function SingleHighlightWall({ event, posts }) {
@@ -168,11 +171,16 @@ export default function SingleHighlightWall({ event, posts }) {
   const [randomTransition, setRandomTransition] = useState<string | null>(null);
 
   const title = event?.title || 'Fan Zone Wall';
-  const logo = event?.logo_url || '/faninteractlogo.png';
 
-  const bg = event?.background_type === 'image'
-    ? `url(${event.background_value}) center/cover no-repeat`
-    : event?.background_value || 'linear-gradient(135deg,#1b2735,#090a0f)';
+  const logo =
+    event?.host?.branding_logo_url?.trim()
+      ? event.host.branding_logo_url
+      : '/faninteractlogo.png';
+
+  const bg =
+    event?.background_type === 'image'
+      ? `url(${event.background_value}) center/cover no-repeat`
+      : event?.background_value || 'linear-gradient(135deg,#1b2735,#090a0f)';
 
   const brightness = event?.background_brightness ?? 100;
 
@@ -199,7 +207,7 @@ export default function SingleHighlightWall({ event, posts }) {
     }, displayDuration);
 
     return () => clearInterval(interval);
-  }, [livePosts.length, displayDuration, transitionType]);
+  }, [livePosts.length, displayDuration, transitionType, tick]);
 
   const effectiveTransition = useMemo(() => {
     if (transitionType === 'Random') {
@@ -247,8 +255,7 @@ export default function SingleHighlightWall({ event, posts }) {
           display: 'flex',
         }}
       >
-
-        {/* LEFT: Image */}
+        {/* LEFT IMAGE */}
         <div
           style={{
             position: 'absolute',
@@ -258,7 +265,6 @@ export default function SingleHighlightWall({ event, posts }) {
             height: '92%',
             borderRadius: 18,
             overflow: 'hidden',
-            border: '0px solid red',
           }}
         >
           <AnimatePresence mode="wait">
@@ -304,19 +310,15 @@ export default function SingleHighlightWall({ event, posts }) {
             alignItems: 'center',
           }}
         >
-
           <img src={logo} style={STYLE.logo} />
 
           <div style={STYLE.greyBar} />
 
-          <p style={STYLE.nickname}>
-            {current?.nickname || 'Guest'}
-          </p>
+          <p style={STYLE.nickname}>{current?.nickname || 'Guest'}</p>
 
           <p style={STYLE.message}>
             {current?.message || 'Be the first to post!'}
           </p>
-
         </div>
       </div>
 

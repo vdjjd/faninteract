@@ -2,7 +2,6 @@
 
 import { QRCodeCanvas } from 'qrcode.react';
 import { useEffect, useState, useRef } from 'react';
-import { useRealtimeChannel } from '@/providers/SupabaseRealtimeProvider';
 
 /* ---------- COUNTDOWN COMPONENT ---------- */
 function CountdownDisplay({ countdown, countdownActive }) {
@@ -28,6 +27,7 @@ function CountdownDisplay({ countdown, countdownActive }) {
   }, [active, timeLeft]);
 
   if (!countdown || countdown === 'none') return null;
+
   const m = Math.floor(timeLeft / 60);
   const s = timeLeft % 60;
 
@@ -46,25 +46,24 @@ function CountdownDisplay({ countdown, countdownActive }) {
 }
 
 /* -------------------------------------------------------------------------- */
-/* ✅ INACTIVE WALL — CLEAN VERSION (NO FULLSCREEN BUTTON)                     */
+/* 🚀 INACTIVE WALL — CLEAN **NO REALTIME** VERSION                           */
 /* -------------------------------------------------------------------------- */
 export default function InactiveWall({ wall }) {
-  const rt = useRealtimeChannel();
 
   const [bg, setBg] = useState(
     'linear-gradient(to bottom right,#1b2735,#090a0f)'
   );
-  const [brightness, setBrightness] = useState(
-    wall?.background_brightness || 100
-  );
+  const [brightness, setBrightness] = useState(wall?.background_brightness || 100);
+
   const [wallState, setWallState] = useState({
     countdown: '',
     countdownActive: false,
     title: '',
   });
+
   const updateTimeout = useRef(null);
 
-  /* Pulse animation */
+  /* 🌟 Pulse animation */
   const PulseStyle = (
     <style>{`
       @keyframes pulseSoonGlow {
@@ -75,7 +74,9 @@ export default function InactiveWall({ wall }) {
     `}</style>
   );
 
-  /* Load initial data */
+  /* ---------------------------------------------------------------------- */
+  /* LOAD DATA FROM POLLING HOOK (THIS IS NOW THE ONLY SOURCE OF TRUTH)     */
+  /* ---------------------------------------------------------------------- */
   useEffect(() => {
     if (!wall) return;
 
@@ -97,50 +98,16 @@ export default function InactiveWall({ wall }) {
       setBrightness(wall.background_brightness);
   }, [wall]);
 
-  /* Supabase Realtime Listener */
-  useEffect(() => {
-    if (!rt?.current || !wall?.id) return;
+  /* ---------------------------------------------------------------------- */
+  /* ❌ REMOVED REALTIME LISTENER                                            */
+  /*    - No "rt.channel"                                                   */
+  /*    - No subscriptions                                                  */
+  /*    - No broadcast events                                               */
+  /* ---------------------------------------------------------------------- */
 
-    const channel = rt.current;
-
-    const scheduleUpdate = (data) => {
-      if (updateTimeout.current) clearTimeout(updateTimeout.current);
-      updateTimeout.current = setTimeout(
-        () => setWallState((prev) => ({ ...prev, ...data })),
-        100
-      );
-    };
-
-    channel.on('broadcast', {}, ({ event, payload }) => {
-      if (!payload?.id || payload.id !== wall.id) return;
-
-      if (event === 'wall_updated') {
-        if (payload.background_value) {
-          setBg(
-            payload.background_type === 'image'
-              ? `url(${payload.background_value}) center/cover no-repeat`
-              : payload.background_value
-          );
-        }
-        if (payload.background_brightness !== undefined)
-          setBrightness(payload.background_brightness);
-        if (payload.title) scheduleUpdate({ title: payload.title });
-        if (payload.countdown) scheduleUpdate({ countdown: payload.countdown });
-      }
-
-      if (event === 'wall_status_changed') {
-        if (payload.countdown_active !== undefined)
-          scheduleUpdate({ countdownActive: payload.countdown_active });
-      }
-
-      if (event === 'countdown_finished')
-        scheduleUpdate({ countdownActive: false });
-    });
-
-    return () => channel.unsubscribe?.();
-  }, [rt, wall?.id]);
-
-  /* QR + Logo setup */
+  /* ---------------------------------------------------------------------- */
+  /* QR + Logo                                                              */
+  /* ---------------------------------------------------------------------- */
   const origin =
     typeof window !== 'undefined'
       ? window.location.origin
@@ -155,6 +122,9 @@ export default function InactiveWall({ wall }) {
 
   if (!wall) return <div>Loading Wall…</div>;
 
+  /* ---------------------------------------------------------------------- */
+  /* RENDER                                                                  */
+  /* ---------------------------------------------------------------------- */
   return (
     <div
       style={{
@@ -206,7 +176,7 @@ export default function InactiveWall({ wall }) {
           display: 'flex',
         }}
       >
-        {/* QR Side */}
+        {/* QR SECTION */}
         <div
           style={{
             position: 'absolute',
@@ -234,7 +204,7 @@ export default function InactiveWall({ wall }) {
           />
         </div>
 
-        {/* Info Side */}
+        {/* TEXT + LOGO SIDE */}
         <div
           style={{
             position: 'relative',
@@ -262,7 +232,7 @@ export default function InactiveWall({ wall }) {
             />
           </div>
 
-          {/* Divider Bar */}
+          {/* Divider */}
           <div
             style={{
               position: 'absolute',
@@ -276,7 +246,7 @@ export default function InactiveWall({ wall }) {
             }}
           />
 
-          {/* Text */}
+          {/* "Fan Zone Wall" */}
           <p
             style={{
               position: 'absolute',
@@ -286,7 +256,6 @@ export default function InactiveWall({ wall }) {
               color: '#fff',
               fontSize: 'clamp(2em,3.5vw,6rem)',
               fontWeight: 900,
-              margin: 0,
               textAlign: 'center',
               textShadow: '0 0 14px rgba(0,0,0,0.6)',
             }}
@@ -294,6 +263,7 @@ export default function InactiveWall({ wall }) {
             Fan Zone Wall
           </p>
 
+          {/* Starting Soon */}
           <p
             className="pulseSoon"
             style={{
@@ -316,7 +286,7 @@ export default function InactiveWall({ wall }) {
             style={{
               position: 'absolute',
               top: '73%',
-              left: '50%',
+              left: '53%',
               transform: 'translateX(-50%)',
             }}
           >

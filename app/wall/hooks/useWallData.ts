@@ -15,7 +15,7 @@ function canonicalLayout(input?: string) {
 }
 
 /* ---------------------------------------------- */
-/* MAIN POLLING HOOK                               */
+/* MAIN POLLING HOOK                              */
 /* ---------------------------------------------- */
 export function useWallData(wallId: string | undefined) {
 
@@ -27,61 +27,72 @@ export function useWallData(wallId: string | undefined) {
   const lastWallJSON = useRef<string>('');
   const lastPostCount = useRef<number>(0);
 
+  // 🚨 Prevent overlapping requests
+  const isFetching = useRef(false);
+
   /* ---------------------------------------------- */
-  /* REFRESH FUNCTION                                */
+  /* REFRESH FUNCTION                               */
   /* ---------------------------------------------- */
   const refresh = useCallback(async () => {
 
-    // 🚨 FIX: wait for Next.js to hydrate params
-    if (!wallId) {
-      setLoading(true);
-      return;
-    }
+    // 🔐 Skip if already fetching
+    if (isFetching.current) return;
+    isFetching.current = true;
 
-    const wallUUID = wallId.trim();
+    try {
+      if (!wallId) {
+        setLoading(true);
+        return;
+      }
 
-    /* 1️⃣ FETCH WALL SETTINGS */
-    const { data: wallRow } = await supabase
-      .from('fan_walls')
-      .select(`*, host:host_id (id, email, branding_logo_url)`)
-      .eq('id', wallUUID)
-      .maybeSingle();
+      const wallUUID = wallId.trim();
 
-    if (!wallRow) {
-      setWall(null);
+      /* 1️⃣ FETCH WALL SETTINGS */
+      const { data: wallRow } = await supabase
+        .from('fan_walls')
+        .select(`*, host:host_id (id, email, branding_logo_url)`)
+        .eq('id', wallUUID)
+        .maybeSingle();
+
+      if (!wallRow) {
+        setWall(null);
+        setLoading(false);
+        return;
+      }
+
+      const normalized = {
+        ...wallRow,
+        layout_type: canonicalLayout(wallRow.layout_type),
+      };
+
+      const nextJSON = JSON.stringify(normalized);
+
+      if (nextJSON !== lastWallJSON.current) {
+        lastWallJSON.current = nextJSON;
+        setWall(normalized);
+        setShowLive(wallRow.status === 'live');
+      }
+
+      /* 2️⃣ FETCH POSTS */
+      const { data: postRows } = await supabase
+        .from('guest_posts')
+        .select('*')
+        .eq('fan_wall_id', wallUUID)
+        .eq('status', 'approved')
+        .order('created_at', { ascending: false });
+
+      const newCount = postRows?.length || 0;
+
+      if (newCount !== lastPostCount.current) {
+        lastPostCount.current = newCount;
+        setPosts(postRows || []);
+      }
+
       setLoading(false);
-      return;
+
+    } finally {
+      isFetching.current = false;  // 🔓 Unlock
     }
-
-    const normalized = {
-      ...wallRow,
-      layout_type: canonicalLayout(wallRow.layout_type),
-    };
-
-    const nextJSON = JSON.stringify(normalized);
-
-    if (nextJSON !== lastWallJSON.current) {
-      lastWallJSON.current = nextJSON;
-      setWall(normalized);
-      setShowLive(wallRow.status === 'live');
-    }
-
-    /* 2️⃣ FETCH POSTS */
-    const { data: postRows } = await supabase
-      .from('guest_posts')
-      .select('*')
-      .eq('fan_wall_id', wallUUID)
-      .eq('status', 'approved')
-      .order('created_at', { ascending: false });
-
-    const newCount = postRows?.length || 0;
-
-    if (newCount !== lastPostCount.current) {
-      lastPostCount.current = newCount;
-      setPosts(postRows || []);
-    }
-
-    setLoading(false);
 
   }, [wallId]);
 
@@ -89,14 +100,14 @@ export function useWallData(wallId: string | undefined) {
   /* INITIAL LOAD + POLLING                         */
   /* ---------------------------------------------- */
   useEffect(() => {
-    refresh();  // run immediately when hydrated
+    refresh(); // immediate load
 
     const interval = setInterval(refresh, 3000);
     return () => clearInterval(interval);
   }, [refresh]);
 
   /* ---------------------------------------------- */
-  /* RETURN DATA                                     */
+  /* RETURN DATA                                    */
   /* ---------------------------------------------- */
   return {
     wall,

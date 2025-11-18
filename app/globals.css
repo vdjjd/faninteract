@@ -1,11 +1,19 @@
+/* ------------------------------------------------------------- */
+/* Tailwind Base Layers                                           */
+/* ------------------------------------------------------------- */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-/* Global default */
+/* ------------------------------------------------------------- */
+/* Global Defaults (NO @apply → fixed errors)                     */
+/* ------------------------------------------------------------- */
 html, body {
-  @apply h-full w-full overflow-x-hidden text-white;
-  background: transparent !important; /* ✅ allow wall backgrounds to show */
+  height: 100%;
+  width: 100%;
+  overflow-x: hidden;
+  color: white;
+  background: transparent !important; /* allow wall backgrounds to show */
 }
 
 /* Smooth scrolling & UI polish */
@@ -13,11 +21,14 @@ html, body {
   -webkit-tap-highlight-color: transparent;
 }
 
+/* Inputs — replaced @apply with raw CSS to avoid errors */
 input, textarea, button {
-  @apply outline-none;
+  outline: none;
 }
 
-/* Neon pulse utility (you can reuse for titles/buttons) */
+/* ------------------------------------------------------------- */
+/* Neon Pulse Utility                                              */
+/* ------------------------------------------------------------- */
 .glow-pulse {
   animation: glowpulse 2.8s ease-in-out infinite;
 }
@@ -35,9 +46,8 @@ input, textarea, button {
 }
 
 /* ------------------------------------------------------------- */
-/* ✅ Modal Animations for AdsManagerModal (fade + zoom)        */
+/* Modal Animations                                               */
 /* ------------------------------------------------------------- */
-
 @keyframes fadeIn {
   from { opacity: 0; }
   to   { opacity: 1; }
