@@ -81,6 +81,15 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
   const brightA = wheel?.tile_brightness_a ?? 100;
   const brightB = wheel?.tile_brightness_b ?? 100;
 
+  /* ---------------------------------------------- */
+  /* HOST LOGO LOGIC — MATCHES FAN WALL EXACTLY     */
+  /* ---------------------------------------------- */
+  const logoUrl =
+    wheel?.host?.branding_logo_url &&
+    wheel.host.branding_logo_url.trim() !== ""
+      ? wheel.host.branding_logo_url
+      : "/faninteractlogo.png";
+
   /* ASSIGN ENTRIES */
   function assignEntriesToTiles(normalized: any[]) {
     if (!normalized?.length) return;
@@ -236,7 +245,6 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
     cssRenderer.domElement.style.left = "0";
     container.appendChild(cssRenderer.domElement);
 
-    /* Resize */
     function handleResize() {
       if (!mountRef.current) return;
 
@@ -365,23 +373,19 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
 
     assignEntriesToTiles(normalizeEntries(entries));
 
-    /* Animation Loop */
     function animate(time: number) {
       const spin = spinRef.current;
       const drift = driftRef.current;
       const winner = winnerRef.current;
 
-      /* Unfreeze after 15 sec */
       if (winner.isFrozen && time - winner.freezeStart > 15000) {
         winner.isFrozen = false;
       }
 
-      /* Ambient drift */
       if (!spin.spinning && !drift.drifting && !winner.isFrozen) {
         wheelGroup.rotation.y += ambientRef.current.speed;
       }
 
-      /* Main Spin */
       if (spin.spinning) {
         const t = Math.min((time - spin.startTime) / spin.duration, 1);
         const eased = t * t * (3 - 2 * t);
@@ -403,7 +407,6 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
         }
       }
 
-      /* Drift center snap */
       if (drift.drifting) {
         const t = Math.min((time - drift.start) / drift.duration, 1);
         const easeOut = 1 - Math.pow(1 - t, 3);
@@ -421,7 +424,6 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
 
     animate(0);
 
-    /* Cleanup */
     return () => {
       window.removeEventListener("resize", handleResize);
       document.removeEventListener("fullscreenchange", handleResize);
@@ -440,7 +442,7 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
   }, [entries]);
 
   /* ===========================================================
-     BULB LOGIC — U-SHAPE AROUND PANEL
+     BULB LOGIC
      =========================================================== */
 
   const bulbColor = wheel?.tile_color_a || "#ffffff";
@@ -584,12 +586,41 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
         <div ref={mountRef} style={{ width: "100%", height: "100%" }} />
       </div>
 
+      {/* HOST LOGO — Lower Left */}
+      <div
+        style={{
+          position: "absolute",
+          bottom: "4.5vh",
+          left: "2.25vw",
+          width: "clamp(140px, 14vw, 220px)",
+          height: "clamp(80px, 8vw, 140px)",
+          border: "0px solid red",
+          borderRadius: "12px",
+          background: "rgba(0,0,0,0.0)",
+          overflow: "hidden",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          zIndex: 9999,
+        }}
+      >
+        <img
+          src={logoUrl}
+          style={{
+            width: "100%",
+            height: "100%",
+            objectFit: "contain",
+            filter: "drop-shadow(0 0 12px rgba(0,0,0,0.7))",
+          }}
+        />
+      </div>
+
       {/* FULLSCREEN BUTTON */}
       <button
         onClick={toggleFullscreen}
         style={{
           position: "absolute",
-          bottom: "2vh",
+          bottom: "3vh",
           right: "2vw",
           width: 48,
           height: 48,
