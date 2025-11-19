@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import {
   Sheet,
   SheetContent,
@@ -18,14 +18,15 @@ import {
   CreditCard,
   LogOut,
   SlidersHorizontal,
+  Upload,
+  Trash2,
 } from "lucide-react";
 
 import ChangeEmailModal from "@/components/ChangeEmailModal";
 import ChangePasswordModal from "@/components/ChangePasswordModal";
 
-import Modal from "@/components/Modal";   // ✅ YOUR CUSTOM MODAL
+import Modal from "@/components/Modal";
 import { Switch } from "@/components/ui/switch";
-import { motion } from "framer-motion";
 import { cn } from "../lib/utils";
 
 interface HostProfilePanelProps {
@@ -38,8 +39,12 @@ export default function HostProfilePanel({ host, setHost }: HostProfilePanelProp
 
   const [showEmailModal, setShowEmailModal] = useState(false);
   const [showPassModal, setShowPassModal] = useState(false);
-
   const [showGuestModal, setShowGuestModal] = useState(false);
+
+  const [uploadingLogo, setUploadingLogo] = useState(false);
+  const [logoPreview, setLogoPreview] = useState(host?.branding_logo_url || "");
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   async function handleLogout() {
     await supabase.auth.signOut();
@@ -55,9 +60,109 @@ export default function HostProfilePanel({ host, setHost }: HostProfilePanelProp
     setHost((prev: any) => ({ ...prev, [field]: value }));
   }
 
-  /** -----------------------------------
-   *   Guest Signup Options Modal
-   *  ----------------------------------- */
+  /* -------------------------------------------------------------
+     LOGO UPLOAD — convert to PNG, resize, upload, update DB
+  ------------------------------------------------------------- */
+  async function handleLogoUpload(e: any) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setUploadingLogo(true);
+
+    try {
+      const bitmap = await createImageBitmap(file);
+
+      const maxSize = 1600;
+      const size = Math.min(maxSize, bitmap.width, bitmap.height);
+
+      const canvas = document.createElement("canvas");
+      canvas.width = size;
+      canvas.height = size;
+
+      const ctx = canvas.getContext("2d")!;
+      ctx.fillStyle = "rgba(0,0,0,0)";
+      ctx.fillRect(0, 0, size, size);
+
+      const scale = Math.min(size / bitmap.width, size / bitmap.height);
+      const w = bitmap.width * scale;
+      const h = bitmap.height * scale;
+      const x = (size - w) / 2;
+      const y = (size - h) / 2;
+
+      ctx.drawImage(bitmap, x, y, w, h);
+
+      const blob = await new Promise<Blob>((resolve) =>
+        canvas.toBlob((b) => resolve(b as Blob), "image/png")
+      );
+
+      const finalFile = new File([blob], `${host.id}.png`, { type: "image/png" });
+      const filePath = `${host.id}.png`;
+
+      const { error: uploadError } = await supabase.storage
+        .from("host-logos")
+        .upload(filePath, finalFile, { upsert: true });
+
+      if (uploadError) {
+        alert("Upload failed.");
+        setUploadingLogo(false);
+        return;
+      }
+
+      const { data } = supabase.storage
+        .from("host-logos")
+        .getPublicUrl(filePath);
+
+      const cacheBusted = `${data.publicUrl}?t=${Date.now()}`;
+
+      await supabase
+        .from("hosts")
+        .update({ branding_logo_url: cacheBusted })
+        .eq("id", host.id);
+
+      setHost((prev: any) => ({ ...prev, branding_logo_url: cacheBusted }));
+      setLogoPreview(cacheBusted);
+    } catch (err) {
+      console.error(err);
+      alert("Image processing failed.");
+    }
+
+    setUploadingLogo(false);
+  }
+
+  /* -------------------------------------------------------------
+     DELETE LOGO — remove from bucket + clear DB
+  ------------------------------------------------------------- */
+  async function handleDeleteLogo() {
+    if (!host?.branding_logo_url) return;
+
+    const url: string = host.branding_logo_url;
+    const filename = url.split("/").pop()?.split("?")[0];
+
+    if (!filename) {
+      alert("Could not extract logo filename.");
+      return;
+    }
+
+    const { error: deleteError } = await supabase.storage
+      .from("host-logos")
+      .remove([filename]);
+
+    if (deleteError) {
+      console.error(deleteError);
+      alert("Delete failed.");
+      return;
+    }
+
+    await supabase
+      .from("hosts")
+      .update({ branding_logo_url: null })
+      .eq("id", host.id);
+
+    setHost((prev: any) => ({ ...prev, branding_logo_url: null }));
+    setLogoPreview("");
+  }
+
+  /** Modal for guest options */
   const GuestOptionsModal = () => (
     <Modal isOpen={showGuestModal} onClose={() => setShowGuestModal(false)}>
       <div className="text-white">
@@ -66,15 +171,11 @@ export default function HostProfilePanel({ host, setHost }: HostProfilePanelProp
         </h2>
 
         <div className="space-y-4">
-          {/* Always Required */}
           <div className={cn('flex', 'items-center', 'justify-between', 'p-2', 'bg-black/40', 'rounded-lg', 'border', 'border-white/10')}>
             <span className={cn('font-medium', 'text-gray-200')}>First Name</span>
-            <span className={cn('text-gray-400', 'text-sm', 'italic')}>
-              (always required)
-            </span>
+            <span className={cn('text-gray-400', 'text-sm', 'italic')}>(always required)</span>
           </div>
 
-          {/* Toggles */}
           {[
             { key: "require_last_name", label: "Last Name" },
             { key: "require_email", label: "Email Address" },
@@ -139,22 +240,66 @@ export default function HostProfilePanel({ host, setHost }: HostProfilePanelProp
             </div>
 
             <div className={cn('flex', 'flex-col', 'items-center', 'gap-3', 'text-center')}>
+              {/* Circle Avatar */}
               <div className={cn('w-24', 'h-24', 'rounded-full', 'overflow-hidden', 'border', 'border-gray-600', 'shadow-md', 'flex', 'items-center', 'justify-center', 'bg-gray-800')}>
                 <span className={cn('text-3xl', 'font-semibold', 'text-gray-300')}>
                   {host?.first_name?.[0]?.toUpperCase() || "H"}
                 </span>
               </div>
 
-              <div className={cn('text-center', 'mt-3')}>
+              {/* Logo Preview */}
+              {logoPreview && (
+                <img
+                  src={logoPreview}
+                  alt="Host Logo"
+                  className={cn('w-28', 'h-28', 'object-contain', 'rounded-md', 'border', 'border-gray-700', 'bg-black/40', 'p-2', 'mt-3')}
+                />
+              )}
+
+              {/* Upload + Delete Buttons */}
+              <div className={cn('flex', 'gap-2', 'w-full', 'mt-2')}>
+                <Button
+                  onClick={() => fileInputRef.current?.click()}
+                  className={cn('flex-1', 'bg-blue-600', 'hover:bg-blue-700')}
+                >
+                  <Upload className={cn('w-4', 'h-4', 'mr-2')} />
+                  {uploadingLogo ? "Uploading…" : "Upload"}
+                </Button>
+
+                <Button
+                  variant="destructive"
+                  className="flex-1"
+                  disabled={!logoPreview}
+                  onClick={handleDeleteLogo}
+                >
+                  <Trash2 className={cn('w-4', 'h-4', 'mr-2')} />
+                  Delete
+                </Button>
+              </div>
+
+              <input
+                type="file"
+                accept="image/*"
+                ref={fileInputRef}
+                className="hidden"
+                onChange={handleLogoUpload}
+              />
+
+              {/* Instructions */}
+              <p className={cn('text-xs', 'text-gray-400', 'mt-1', 'text-center')}>
+                Best results:
+                <br />
+                <strong>1600 × 1600 PNG</strong> (transparent background)
+              </p>
+
+              {/* Name + Email */}
+              <div className={cn('text-center', 'mt-4')}>
                 <p className={cn('font-semibold', 'text-lg', 'text-white')}>
                   {host?.first_name && host?.last_name
                     ? `${host.first_name} ${host.last_name}`
                     : host?.venue_name || "Host User"}
                 </p>
                 <p className={cn('text-sm', 'text-gray-400')}>{host?.email}</p>
-                <p className={cn('text-sm', 'text-gray-400', 'italic', 'mt-1')}>
-                  Role: {host?.role || "host"}
-                </p>
               </div>
 
               <div className={cn('flex', 'flex-col', 'gap-2', 'w-full', 'mt-4')}>
@@ -173,6 +318,7 @@ export default function HostProfilePanel({ host, setHost }: HostProfilePanelProp
             <div className={cn('flex', 'items-center', 'justify-center', 'gap-3', 'mb-3', 'text-blue-400', 'font-semibold')}>
               <Settings className={cn('w-5', 'h-5')} /> Settings
             </div>
+
             <p className={cn('text-sm', 'text-gray-400', 'text-center')}>
               Venue: {host?.venue_name}
             </p>
@@ -185,10 +331,10 @@ export default function HostProfilePanel({ host, setHost }: HostProfilePanelProp
 
             <Button
               variant="outline"
-              className={cn('w-full', 'mt-3', 'flex', 'items-center', 'justify-center', 'gap-2')}
+              className={cn('w-full', 'mt-3')}
               onClick={() => setShowGuestModal(true)}
             >
-              <SlidersHorizontal className={cn('w-4', 'h-4')} />
+              <SlidersHorizontal className={cn('w-4', 'h-4', 'mr-2')} />
               Guest Sign Up Options
             </Button>
 

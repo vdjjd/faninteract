@@ -46,10 +46,9 @@ function CountdownDisplay({ countdown, countdownActive }) {
 }
 
 /* -------------------------------------------------------------------------- */
-/* 🚀 INACTIVE WALL — CLEAN **NO REALTIME** VERSION                           */
+/* 🚀 INACTIVE WALL                                                           */
 /* -------------------------------------------------------------------------- */
 export default function InactiveWall({ wall }) {
-
   const [bg, setBg] = useState(
     'linear-gradient(to bottom right,#1b2735,#090a0f)'
   );
@@ -74,9 +73,6 @@ export default function InactiveWall({ wall }) {
     `}</style>
   );
 
-  /* ---------------------------------------------------------------------- */
-  /* LOAD DATA FROM POLLING HOOK (THIS IS NOW THE ONLY SOURCE OF TRUTH)     */
-  /* ---------------------------------------------------------------------- */
   useEffect(() => {
     if (!wall) return;
 
@@ -93,21 +89,9 @@ export default function InactiveWall({ wall }) {
           'linear-gradient(to bottom right,#1b2735,#090a0f)';
 
     setBg(value);
-
-    if (wall.background_brightness !== undefined)
-      setBrightness(wall.background_brightness);
+    setBrightness(wall.background_brightness ?? 100);
   }, [wall]);
 
-  /* ---------------------------------------------------------------------- */
-  /* ❌ REMOVED REALTIME LISTENER                                            */
-  /*    - No "rt.channel"                                                   */
-  /*    - No subscriptions                                                  */
-  /*    - No broadcast events                                               */
-  /* ---------------------------------------------------------------------- */
-
-  /* ---------------------------------------------------------------------- */
-  /* QR + Logo                                                              */
-  /* ---------------------------------------------------------------------- */
   const origin =
     typeof window !== 'undefined'
       ? window.location.origin
@@ -212,22 +196,34 @@ export default function InactiveWall({ wall }) {
             marginLeft: '44%',
           }}
         >
-          {/* Logo */}
+
+          {/* ─────────────────────────────────────────────── */}
+          {/* ⭐ LOGO CONTAINER (ADJUST SIZE HERE)             */}
+          {/* ─────────────────────────────────────────────── */}
           <div
             style={{
               position: 'absolute',
-              top: '6%',
+              top: '2%',
               left: '53%',
               transform: 'translateX(-50%)',
-              width: 'clamp(280px,28vw,420px)',
+              width: 'clamp(300px,27vw,400px)',   // ← WIDTH
+              height: 'clamp(300px,12vw,260px)',  // ← HEIGHT
+              border: '0px solid red',            // ← RED BORDER
+              borderRadius: '12px',
+              background: 'transparent',
+              display: 'flex',
+              justifyContent: 'center',
+              alignItems: 'center',
+              overflow: 'hidden',                  // ← prevents overflow
             }}
           >
             <img
               src={displayLogo}
               style={{
                 width: '100%',
-                height: 'auto',
-                filter: 'drop-shadow(0 0 14px rgba(0,0,0,0.85))',
+                height: '100%',
+                objectFit: 'contain',              // ← OPTION B
+                filter: 'drop-shadow(0 0 12px rgba(0,0,0,0.6))',
               }}
             />
           </div>

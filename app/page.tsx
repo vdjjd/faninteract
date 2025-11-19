@@ -5,7 +5,7 @@ import { motion } from 'framer-motion';
 import Image from 'next/image';
 import Link from 'next/link';
 import Modal from '@/components/Modal';
-import HostSignupForm from '@/components/Signup/HostSignupForm';   // ✅ FIXED
+import HostSignupForm from '@/components/Signup/HostSignupForm';
 import { cn } from "../lib/utils";
 
 export default function LandingPage() {
@@ -46,12 +46,33 @@ export default function LandingPage() {
       />
 
       {/* 🎯 Hero Section */}
-      <div className={cn('relative', 'z-10', 'flex', 'flex-col', 'items-center', 'justify-center', 'h-screen', 'w-full', 'px-6')}>
+      <div
+        className={cn(
+          'relative',
+          'z-10',
+          'flex',
+          'flex-col',
+          'items-center',
+          'justify-center',
+          'h-screen',
+          'w-full',
+          'px-6'
+        )}
+      >
         <motion.div
           initial={{ opacity: 0, y: 25 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 1 }}
-          className={cn('flex', 'flex-col', 'items-center', 'justify-center', 'space-y-12', 'mt-[-60px]')}
+
+          // ⭐ Updated spacing so slogan is closer to the logo
+          className={cn(
+            'flex',
+            'flex-col',
+            'items-center',
+            'justify-center',
+            'space-y-5',   // ⭐ Reduced gap (was space-y-12)
+            'mt-[-30px]'   // ⭐ Less offset (was -60px)
+          )}
         >
           {/* Logo */}
           <motion.div
@@ -63,33 +84,60 @@ export default function LandingPage() {
               alt="FanInteract Logo"
               width={420}
               height={180}
-              className={cn('w-[300px]', 'md:w-[420px]', 'h-auto', 'object-contain', 'drop-shadow-[0_0_30px_rgba(56,189,248,0.3)]')}
+              className={cn(
+                'w-[300px]',
+                'md:w-[420px]',
+                'h-auto',
+                'object-contain',
+                'drop-shadow-[0_0_30px_rgba(56,189,248,0.3)]'
+              )}
               priority
               unoptimized
             />
           </motion.div>
 
-          <h1 className={cn(
-            'text-5xl',
-            'md:text-7xl',
-            'font-extrabold',
-            'tracking-tight',
-            'bg-clip-text',
-            'text-transparent',
-            'bg-gradient-to-r',
-            'from-sky-400',
-            'via-blue-500',
-            'to-indigo-400',
-            'drop-shadow-[0_0_30px_rgba(56,189,248,0.25)]'
-          )}>
+          {/* Headline */}
+          <h1
+            className={cn(
+              'text-5xl',
+              'md:text-7xl',
+              'font-extrabold',
+              'tracking-tight',
+              'bg-clip-text',
+              'text-transparent',
+              'bg-gradient-to-r',
+              'from-sky-400',
+              'via-blue-500',
+              'to-indigo-400',
+              'drop-shadow-[0_0_30px_rgba(56,189,248,0.25)]'
+            )}
+          >
             Turn Crowds Into Communities
           </h1>
 
-          <p className={cn('text-lg', 'md:text-2xl', 'text-gray-300', 'max-w-2xl', 'leading-relaxed')}>
+          {/* Subtext */}
+          <p
+            className={cn(
+              'text-lg',
+              'md:text-2xl',
+              'text-gray-300',
+              'max-w-2xl',
+              'leading-relaxed'
+            )}
+          >
             FanInteract lets your audience post, vote, and play live — all on one wall.
           </p>
 
-          <div className={cn('flex', 'flex-wrap', 'justify-center', 'gap-6', 'pt-4')}>
+          {/* Buttons */}
+          <div
+            className={cn(
+              'flex',
+              'flex-wrap',
+              'justify-center',
+              'gap-6',
+              'pt-4'
+            )}
+          >
             <button
               onClick={() => setShowSignup(true)}
               className={cn(
@@ -134,9 +182,10 @@ export default function LandingPage() {
 
       {/* Signup Modal */}
       <Modal isOpen={showSignup} onClose={() => setShowSignup(false)}>
-        <HostSignupForm /> {/* ✅ FIXED */}
+        <HostSignupForm />
       </Modal>
 
+      {/* Footer */}
       <footer
         className={cn(
           'relative',
