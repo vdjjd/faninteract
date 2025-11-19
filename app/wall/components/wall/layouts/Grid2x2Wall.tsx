@@ -155,10 +155,14 @@ function PostRow({ post, reversed = false }) {
 /* MAIN WALL                               */
 /* -------------------------------------- */
 export default function Grid2x2Wall({ event, posts }: Grid2x2WallProps) {
-  const { showAd, currentAd, setShowAd, tick, injectorEnabled } =
-    useAdInjector({
-      hostId: event?.host_profile_id || event?.host_id,
-    });
+  /*  
+     ⭐ Your hook does NOT return setShowAd  
+     ⭐ It ONLY returns: { showAd, currentAd, injectorEnabled, injectorMode, tick }
+  */
+
+  const { showAd, currentAd, injectorEnabled, tick } = useAdInjector({
+    hostId: event?.host_profile_id ?? event?.host_id,
+  });
 
   const transitionSpeed = event?.transition_speed || 'Medium';
   const slideUp = buildSlideUpTransition(transitionSpeed);
@@ -168,9 +172,7 @@ export default function Grid2x2Wall({ event, posts }: Grid2x2WallProps) {
   const [brightness, setBrightness] = useState(100);
   const [title, setTitle] = useState('Fan Zone Wall');
 
-  // ⭐ SAFE LOGO — never empty string
   const [logo, setLogo] = useState('/faninteractlogo.png');
-
   const [displayDuration, setDisplayDuration] = useState(
     speedMap[transitionSpeed]
   );
@@ -185,7 +187,6 @@ export default function Grid2x2Wall({ event, posts }: Grid2x2WallProps) {
     setBrightness(event?.background_brightness ?? 100);
     setTitle(event?.title || 'Fan Zone Wall');
 
-    // ⭐ FIXED: ensure never "", null, or undefined
     setLogo(
       event?.logo_url && event.logo_url.trim() !== ''
         ? event.logo_url
@@ -196,7 +197,7 @@ export default function Grid2x2Wall({ event, posts }: Grid2x2WallProps) {
   }, [event]);
 
   /* -------------------------------------- */
-  /* QUAD ROTATION LOOP                     */
+  /* QUAD ROTATION ENGINE                   */
   /* -------------------------------------- */
   const [gridPosts, setGridPosts] = useState<(any | null)[]>(
     Array(4).fill(null)
@@ -208,7 +209,7 @@ export default function Grid2x2Wall({ event, posts }: Grid2x2WallProps) {
 
   const rotationOrder = [0, 1, 2, 3];
 
-  // Initial fill
+  // INITIAL FILL
   useEffect(() => {
     if (!posts?.length) return;
 
@@ -220,7 +221,7 @@ export default function Grid2x2Wall({ event, posts }: Grid2x2WallProps) {
     }
   }, [posts]);
 
-  // Rotation loop
+  // ROTATION LOOP
   useEffect(() => {
     if (!posts?.length) return;
     running.current = true;
@@ -230,7 +231,7 @@ export default function Grid2x2Wall({ event, posts }: Grid2x2WallProps) {
         const pos = rotationOrder[slot.current % 4];
         const nextPost = posts[pointer.current % posts.length];
 
-        // exit phase
+        // exit
         setGridPosts((prev) => {
           const updated = [...prev];
           updated[pos] = null;
@@ -241,7 +242,7 @@ export default function Grid2x2Wall({ event, posts }: Grid2x2WallProps) {
           setTimeout(res, animSpeedMap[transitionSpeed] * 1000 * 0.6)
         );
 
-        // enter phase
+        // enter
         setGridPosts((prev) => {
           const updated = [...prev];
           updated[pos] = nextPost;
@@ -289,10 +290,7 @@ export default function Grid2x2Wall({ event, posts }: Grid2x2WallProps) {
           width: 'clamp(160px,18vw,220px)',
         }}
       >
-        <img
-          src={logo || '/faninteractlogo.png'}
-          style={{ width: '100%' }}
-        />
+        <img src={logo} style={{ width: '100%' }} />
       </div>
 
       {/* TITLE */}
@@ -337,10 +335,7 @@ export default function Grid2x2Wall({ event, posts }: Grid2x2WallProps) {
                 {...slideUp}
                 style={{ width: '100%', height: '100%' }}
               >
-                <PostRow
-                  post={gridPosts[i]}
-                  reversed={i === 2 || i === 3}
-                />
+                <PostRow post={gridPosts[i]} reversed={i === 2 || i === 3} />
               </motion.div>
             )}
           </AnimatePresence>
@@ -352,14 +347,14 @@ export default function Grid2x2Wall({ event, posts }: Grid2x2WallProps) {
         style={{
           position: 'absolute',
           bottom: '4vh',
-          left: '4vw',
+          left: '2.5vw',
           textAlign: 'center',
         }}
       >
         <p
           style={{
             color: '#fff',
-            fontWeight: 700,
+            fontWeight: 800,
             marginBottom: '0.6vh',
           }}
         >
@@ -379,20 +374,12 @@ export default function Grid2x2Wall({ event, posts }: Grid2x2WallProps) {
         >
           <QRCodeCanvas
             value={`https://faninteract.vercel.app/guest/signup?wall=${event?.id}`}
-            size={140}
+            size={210}
             level="H"
             style={{ borderRadius: 8 }}
           />
         </div>
       </div>
-
-      {/* ADS */}
-      <AdOverlay
-        showAd={showAd && injectorEnabled}
-        currentAd={currentAd}
-        onAdEnd={() => setShowAd(false)}
-      />
     </div>
   );
 }
-

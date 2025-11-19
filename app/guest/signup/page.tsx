@@ -9,10 +9,24 @@ import { cn } from "@/lib/utils";
 import { getSupabaseClient } from "@/lib/supabaseClient";
 import { syncGuestProfile, getOrCreateGuestDeviceId } from "@/lib/syncGuest";
 
+/* ----------------------------------------------------------
+ * 🔥 STATE OPTIONS — FIX FOR MISSING VARIABLE
+ * ---------------------------------------------------------- */
+const stateOptions = [
+  "AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA",
+  "HI","ID","IL","IN","IA","KS","KY","LA","ME","MD",
+  "MA","MI","MN","MS","MO","MT","NE","NV","NH","NJ",
+  "NM","NY","NC","ND","OH","OK","OR","PA","RI","SC",
+  "SD","TN","TX","UT","VT","VA","WA","WV","WI","WY"
+];
+
 export default function GuestSignupPage() {
   const router = useRouter();
   const params = useSearchParams();
 
+  /* ----------------------------------------------------------
+   * READ URL PARAMETERS
+   * ---------------------------------------------------------- */
   const redirect = params.get("redirect");
   const wallId = params.get("wall");
   const wheelId = params.get("prizewheel");
@@ -23,6 +37,7 @@ export default function GuestSignupPage() {
   const [wall, setWall] = useState<any>(null);
   const [hostSettings, setHostSettings] = useState<any>(null);
 
+  // Form fields
   const [form, setForm] = useState({
     first_name: "",
     last_name: "",
@@ -46,7 +61,7 @@ export default function GuestSignupPage() {
   }, []);
 
   /* ----------------------------------------------------------
-   * LOAD HOST SETTINGS FOR ANY EVENT TYPE
+   * LOAD HOST SETTINGS BASED ON TYPE
    * ---------------------------------------------------------- */
   useEffect(() => {
     async function loadHostForWall() {
@@ -89,7 +104,7 @@ export default function GuestSignupPage() {
   }, [wallId, wheelId, pollId]);
 
   /* ----------------------------------------------------------
-   * LOAD HOST REQUIREMENTS
+   * LOAD HOST FIELD REQUIREMENTS
    * ---------------------------------------------------------- */
   async function loadHostSettings(hostId: string) {
     const { data } = await supabase
@@ -111,7 +126,7 @@ export default function GuestSignupPage() {
   }
 
   /* ----------------------------------------------------------
-   * Auto-forward returning guest
+   * AUTO-FORWARD RETURNING GUESTS
    * ---------------------------------------------------------- */
   useEffect(() => {
     async function validateGuest() {
@@ -130,6 +145,7 @@ export default function GuestSignupPage() {
         return;
       }
 
+      // 🔥 Correct forwarding logic
       if (redirect) return router.push(redirect);
       if (wallId) return router.push(`/wall/${wallId}/submit`);
       if (wheelId) return router.push(`/prizewheel/${wheelId}/submit`);
@@ -140,7 +156,7 @@ export default function GuestSignupPage() {
   }, [redirect, wallId, wheelId, pollId]);
 
   /* ----------------------------------------------------------
-   * Submit
+   * SUBMIT FORM
    * ---------------------------------------------------------- */
   const handleSubmit = async (e: any) => {
     e.preventDefault();
@@ -149,26 +165,29 @@ export default function GuestSignupPage() {
     setSubmitting(true);
 
     try {
+      // Determine target ID
       let targetId =
         wallId ||
         wheelId ||
+        pollId ||
         redirect?.match(/([0-9a-fA-F-]{36})/)?.[0];
 
       if (!targetId && redirect?.startsWith("/polls/"))
         targetId = redirect.split("/")[2];
 
-      if (!targetId && pollId) targetId = pollId;
-
+      // Determine type
       const type =
         wallId ? "wall" :
         wheelId ? "prizewheel" :
         pollId ? "poll" :
         "";
 
+      // Save profile
       const { profile } = await syncGuestProfile(type, targetId, form);
 
       localStorage.setItem("guest_profile", JSON.stringify(profile));
 
+      // 🔥 Redirect correctly
       if (redirect) router.push(redirect);
       else if (wallId) router.push(`/wall/${wallId}/submit`);
       else if (wheelId) router.push(`/prizewheel/${wheelId}/submit`);
@@ -183,7 +202,7 @@ export default function GuestSignupPage() {
   };
 
   /* ----------------------------------------------------------
-   * Helpers to render fields
+   * FIELD RENDER HELPER
    * ---------------------------------------------------------- */
   const renderField = (
     key: string,
@@ -206,16 +225,8 @@ export default function GuestSignupPage() {
     />
   );
 
-  const stateOptions = [
-    "AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA",
-    "HI","ID","IL","IN","IA","KS","KY","LA","ME","MD",
-    "MA","MI","MN","MS","MO","MT","NE","NV","NH","NJ",
-    "NM","NY","NC","ND","OH","OK","OR","PA","RI","SC",
-    "SD","TN","TX","UT","VT","VA","WA","WV","WI","WY"
-  ];
-
   /* ----------------------------------------------------------
-   * Wait for hostSettings before rendering
+   * WAIT FOR SETTINGS
    * ---------------------------------------------------------- */
   if (!hostSettings)
     return (
@@ -228,9 +239,8 @@ export default function GuestSignupPage() {
    * RENDER PAGE
    * ---------------------------------------------------------- */
   return (
-    <main className={cn("relative flex items-center justify-center min-h-screen w-full text-white")}>
-
-      {/* Background */}
+    <main className={cn('relative', 'flex', 'items-center', 'justify-center', 'min-h-screen', 'w-full', 'text-white')}>
+      {/* BACKGROUND */}
       <div
         className={cn('absolute', 'inset-0', 'bg-cover', 'bg-center')}
         style={{
@@ -243,6 +253,7 @@ export default function GuestSignupPage() {
 
       <div className={cn('absolute', 'inset-0', 'bg-black/60', 'backdrop-blur-md')} />
 
+      {/* CARD */}
       <motion.div
         initial={{ opacity: 0, y: 30, scale: 0.97 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -253,6 +264,7 @@ export default function GuestSignupPage() {
           "border border-white/10 bg-white/10 backdrop-blur-lg"
         )}
       >
+        {/* LOGO */}
         <div className={cn('flex', 'justify-center', 'mb-6')}>
           <Image
             src="/faninteractlogo.png"
@@ -263,6 +275,7 @@ export default function GuestSignupPage() {
           />
         </div>
 
+        {/* TITLE */}
         <motion.h2
           animate={{
             textShadow: [
@@ -277,12 +290,11 @@ export default function GuestSignupPage() {
           Join the Fan Zone
         </motion.h2>
 
+        {/* FORM */}
         <form onSubmit={handleSubmit} className="space-y-3">
 
-          {/* Always required */}
           {renderField("first_name", "First Name *", "text", true)}
 
-          {/* Conditional fields */}
           {hostSettings.require_last_name &&
             renderField("last_name", "Last Name *", "text", true)}
 
@@ -303,11 +315,10 @@ export default function GuestSignupPage() {
               name="state"
               required
               value={form.state}
-              onChange={(e) => setForm({ ...form, state: e.target.value })}
-              className={cn(
-                "w-full p-3 rounded-xl bg-black/40 border border-white/20",
-                "focus:border-sky-400 outline-none text-white"
-              )}
+              onChange={(e) =>
+                setForm({ ...form, state: e.target.value })
+              }
+              className={cn('w-full', 'p-3', 'rounded-xl', 'bg-black/40', 'border', 'border-white/20', 'focus:border-sky-400', 'outline-none', 'text-white')}
             >
               <option value="">State *</option>
               {stateOptions.map((s) => (
@@ -324,7 +335,6 @@ export default function GuestSignupPage() {
           {hostSettings.require_age &&
             renderField("age", "Age *", "number", true)}
 
-          {/* TERMS */}
           <label className={cn('flex', 'items-center', 'gap-2', 'text-sm', 'text-gray-300', 'mt-2')}>
             <input
               type="checkbox"

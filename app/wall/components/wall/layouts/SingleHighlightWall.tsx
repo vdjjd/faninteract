@@ -79,8 +79,8 @@ const STYLE = {
 
   qrContainer: {
     position: 'absolute',
-    bottom: '4.9vh',
-    left: '4vw',
+    bottom: '4vh',
+    left: '2vw',
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
@@ -329,7 +329,7 @@ export default function SingleHighlightWall({ event, posts }) {
         <div style={STYLE.qrWrapper}>
           <QRCodeCanvas
             value={`${origin}/guest/signup?wall=${event?.id}`}
-            size={160}
+            size={210}
             level="H"
             bgColor="#fff"
             fgColor="#000"

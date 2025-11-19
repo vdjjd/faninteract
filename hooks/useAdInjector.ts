@@ -7,19 +7,23 @@ interface UseAdInjectorOptions {
   hostId: string;
 }
 
-/**
- * ADS INJECTOR — MIXED CORPORATE + HOST ADS (FINAL)
- *
- *  ✔ Corporate ads come from slide_ads where master_id = host.master_id
- *  ✔ Local ads come from slide_ads where host_profile_id = host.id
- *  ✔ Unified sort order = corporate first, then local
- *      ORDER BY is_master_ad DESC, order_index ASC
- *  ✔ Corporate ads locked from editing
- *  ✔ Supports 3 modes: rotation, slideshow, takeover
- *  ✔ Handles realtime updates cleanly
- */
+interface HostRow {
+  injector_enabled?: boolean;
+  trigger_interval?: number;
+  injector_mode?: 'rotation' | 'slideshow' | 'takeover';
+  master_id?: string | null;
+}
+
+interface SlideAd {
+  id?: string;
+  master_id?: string | null;
+  host_profile_id?: string | null;
+  order_index?: number | null;
+  [key: string]: any;
+}
+
 export function useAdInjector({ hostId }: UseAdInjectorOptions) {
-  const [ads, setAds] = useState<any[]>([]);
+  const [ads, setAds] = useState<SlideAd[]>([]);
   const [showAd, setShowAd] = useState(false);
   const [current, setCurrent] = useState(0);
 
@@ -33,36 +37,38 @@ export function useAdInjector({ hostId }: UseAdInjectorOptions) {
   const rotationRef = useRef(0);
 
   /* --------------------------------------------------------------------
-     LOAD HOST SETTINGS + BOTH AD TYPES
+     LOAD HOST + ADS
   -------------------------------------------------------------------- */
   useEffect(() => {
     if (!hostId) return;
 
     async function loadAll() {
-      /** 1. Load host settings including master_id */
-      const { data: host } = await supabase
+      /** HOST SETTINGS */
+      const { data } = await supabase
         .from('hosts')
         .select('injector_enabled, trigger_interval, injector_mode, master_id')
         .eq('id', hostId)
         .single();
 
-      if (host) {
-        setInjectorEnabled(!!host.injector_enabled);
-        setTriggerInterval(Number(host.trigger_interval) || 8);
-        setInjectorMode(host.injector_mode || 'rotation');
-        masterIdRef.current = host.master_id || null;
-      }
+      const host = (data || {}) as HostRow;
 
-      /** 2. Load local ads */
-      const { data: localAds } = await supabase
+      setInjectorEnabled(!!host.injector_enabled);
+      setTriggerInterval(Number(host.trigger_interval) || 8);
+      setInjectorMode(host.injector_mode ?? 'rotation');
+      masterIdRef.current = host.master_id ?? null;
+
+      /** LOCAL ADS */
+      const { data: localAdsData } = await supabase
         .from('slide_ads')
         .select('*')
         .eq('host_profile_id', hostId)
         .eq('active', true)
         .order('order_index', { ascending: true });
 
-      /** 3. Load corporate ads (same table, master_id column) */
-      let corporateAds: any[] = [];
+      const localAds = (localAdsData || []) as SlideAd[];
+
+      /** CORPORATE ADS */
+      let corporateAds: SlideAd[] = [];
 
       if (masterIdRef.current) {
         const { data: corp } = await supabase
@@ -72,21 +78,23 @@ export function useAdInjector({ hostId }: UseAdInjectorOptions) {
           .eq('active', true)
           .order('order_index', { ascending: true });
 
-        corporateAds =
-          (corp || []).map(a => ({
-            ...a,
-            locked: true, // mark for UI
-          })) || [];
+        corporateAds = ((corp || []) as SlideAd[]).map(a => ({
+          ...a,
+          locked: true,
+        }));
       }
 
-      /** 4. Merge using SQL sort rules */
-      const merged = [...(corporateAds || []), ...(localAds || [])].sort((a, b) => {
-        // Corporate first (is_master_ad DESC)
-        if (a.master_id && !b.master_id) return -1;
-        if (!a.master_id && b.master_id) return 1;
+      /** MERGE WITH SAFE CASTS */
+      const merged = [...corporateAds, ...localAds].sort((a, b) => {
+        const aa = a as SlideAd;
+        const bb = b as SlideAd;
 
-        // Within group, use order_index
-        return (a.order_index ?? 9999) - (b.order_index ?? 9999);
+        // corporate first:
+        if (aa.master_id && !bb.master_id) return -1;
+        if (!aa.master_id && bb.master_id) return 1;
+
+        // then order_index:
+        return (aa.order_index ?? 9999) - (bb.order_index ?? 9999);
       });
 
       setAds(merged);
@@ -94,31 +102,39 @@ export function useAdInjector({ hostId }: UseAdInjectorOptions) {
 
     loadAll();
 
-    /* realtime — local host ads */
-    const localChannel = supabase
+    /* REALTIME LISTENERS ---------------------------------- */
+
+    // LOCAL ADS
+    const localChan = supabase
       .channel(`slide_ads_local_${hostId}`)
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'slide_ads', filter: `host_profile_id=eq.${hostId}` },
+        {
+          event: '*',
+          schema: 'public',
+          table: 'slide_ads',
+          filter: `host_profile_id=eq.${hostId}`,
+        },
         () => loadAll()
       )
       .subscribe();
 
-    /* realtime — corporate ads */
-    const corpChannel = supabase
+    // CORPORATE ADS
+    const corpChan = supabase
       .channel(`slide_ads_corp_${hostId}`)
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'slide_ads' },
         payload => {
-          if (payload.new?.master_id === masterIdRef.current) loadAll();
+          const row = payload.new as SlideAd; // FIX HERE
+          if (row.master_id === masterIdRef.current) loadAll();
         }
       )
       .subscribe();
 
     return () => {
-      supabase.removeChannel(localChannel);
-      supabase.removeChannel(corpChannel);
+      supabase.removeChannel(localChan);
+      supabase.removeChannel(corpChan);
     };
   }, [hostId]);
 
@@ -128,31 +144,23 @@ export function useAdInjector({ hostId }: UseAdInjectorOptions) {
   const showNextAd = () => {
     if (!injectorEnabled || ads.length === 0) return;
 
-    setCurrent(prev => {
-      const next = (prev + 1) % ads.length;
-      return next;
-    });
-
+    setCurrent(prev => (prev + 1) % ads.length);
     setShowAd(true);
   };
 
   /* --------------------------------------------------------------------
-     TAKEOVER MODE (always showing ads)
+     MODES
   -------------------------------------------------------------------- */
   useEffect(() => {
     if (injectorMode !== 'takeover') return hideAndClear();
     if (!injectorEnabled || ads.length === 0) return hideAndClear();
 
-    setShowAd(true); // permanent
-
-    restartInterval(() => showNextAd(), triggerInterval * 1000);
+    setShowAd(true);
+    restartInterval(showNextAd, triggerInterval * 1000);
 
     return clearIntervalOnly;
   }, [injectorMode, injectorEnabled, ads.length, triggerInterval]);
 
-  /* --------------------------------------------------------------------
-     SLIDESHOW MODE (timed show + hide)
-  -------------------------------------------------------------------- */
   useEffect(() => {
     if (injectorMode !== 'slideshow') return hideAndClear();
     if (!injectorEnabled || ads.length === 0) return hideAndClear();
@@ -165,9 +173,6 @@ export function useAdInjector({ hostId }: UseAdInjectorOptions) {
     return clearIntervalOnly;
   }, [injectorMode, injectorEnabled, ads.length, triggerInterval]);
 
-  /* --------------------------------------------------------------------
-     ROTATION MODE (wall-driven tick)
-  -------------------------------------------------------------------- */
   const tick = () => {
     if (injectorMode !== 'rotation') return;
     if (!injectorEnabled || ads.length === 0) return;
@@ -182,9 +187,9 @@ export function useAdInjector({ hostId }: UseAdInjectorOptions) {
     }
   };
 
-  /* UTILITIES --------------------------------------------------------- */
+  /* UTIL */
   function restartInterval(fn: () => void, ms: number) {
-    if (intervalRef.current) clearInterval(intervalRef.current);
+    clearIntervalOnly();
     intervalRef.current = setInterval(fn, ms);
   }
 

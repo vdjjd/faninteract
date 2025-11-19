@@ -10,20 +10,16 @@ import SingleHighlightWall from '@/app/wall/components/wall/layouts/SingleHighli
 import Grid2x2Wall from '@/app/wall/components/wall/layouts/Grid2x2Wall';
 
 import AdOverlay from '@/app/wall/components/AdOverlay';
+import { useAdInjector } from '@/hooks/useAdInjector';
 import { cn } from "../../../lib/utils";
 
 export default function FanWallPage() {
 
   /* ------------------------------------------------------- */
-  /* ✅ Correct param name: wallId                           */
+  /* GET wallId                                              */
   /* ------------------------------------------------------- */
   const { wallId } = useParams();
-
-  // Convert param to usable value
   const wallUUID = Array.isArray(wallId) ? wallId[0] : wallId;
-
-  console.log("🔥 useParams.wallId =", wallId);
-  console.log("🔥 wallUUID =", wallUUID);
 
   /* ------------------------------------------------------- */
   /* Load wall data                                          */
@@ -34,6 +30,16 @@ export default function FanWallPage() {
   const [layoutKey, setLayoutKey] = useState(0);
   const prevLayout = useRef<string | null>(null);
 
+  /* ------------------------------------------------------- */
+  /* Inject Ads (A4 FULLSCREEN MODE)                         */
+  /* ------------------------------------------------------- */
+  const {
+    showAd,
+    currentAd,
+    injectorEnabled,
+  } = useAdInjector({
+    hostId: wall?.host?.id || '',
+  });
 
   /* ------------------------------------------------------- */
   /* Background updater                                      */
@@ -49,7 +55,6 @@ export default function FanWallPage() {
     setBg(value || 'linear-gradient(to bottom right,#1b2735,#090a0f)');
   }, [wall?.background_type, wall?.background_value]);
 
-
   /* ------------------------------------------------------- */
   /* Layout key updater                                      */
   /* ------------------------------------------------------- */
@@ -60,7 +65,6 @@ export default function FanWallPage() {
       setLayoutKey(k => k + 1);
     }
   }, [wall?.layout_type]);
-
 
   /* ------------------------------------------------------- */
   /* Render Active Wall                                      */
@@ -77,9 +81,8 @@ export default function FanWallPage() {
     }
   };
 
-
   /* ------------------------------------------------------- */
-  /* LOADING + ERROR STATES                                  */
+  /* Loading + Errors                                        */
   /* ------------------------------------------------------- */
   if (loading)
     return (
@@ -95,7 +98,6 @@ export default function FanWallPage() {
       </p>
     );
 
-
   /* ------------------------------------------------------- */
   /* Fullscreen toggle                                       */
   /* ------------------------------------------------------- */
@@ -106,7 +108,6 @@ export default function FanWallPage() {
       document.exitFullscreen();
     }
   };
-
 
   /* ------------------------------------------------------- */
   /* MAIN RENDER                                             */
@@ -149,8 +150,10 @@ export default function FanWallPage() {
         {renderActiveWall()}
       </div>
 
-      {/* ADS */}
-      {wall?.host?.id && <AdOverlay hostId={wall.host.id} />}
+      {/* A4 FULLSCREEN AD OVERLAY */}
+      {injectorEnabled && (
+        <AdOverlay showAd={showAd} currentAd={currentAd} />
+      )}
 
       {/* FULLSCREEN BUTTON */}
       <div
