@@ -3,7 +3,6 @@
 import { useEffect, useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { QRCodeCanvas } from 'qrcode.react';
-import { useAdInjector } from '@/hooks/useAdInjector';
 import React from 'react';
 
 /* ---------------------------------------------------- */
@@ -29,16 +28,10 @@ const STYLE = {
     `,
   } as React.CSSProperties,
 
-  logo: {
-    width: 'clamp(260px,28vw,380px)',
-    marginTop: '0vh',
-    filter: 'drop-shadow(0 0 14px rgba(0,0,0,0.85))',
-  } as React.CSSProperties,
-
   greyBar: {
     width: '90%',
     height: '14px',
-    marginTop: '4vh',
+    marginTop: '2vh',
     marginBottom: '2vh',
     marginLeft: '3.5%',
     background: 'linear-gradient(to right, #000, #4444)',
@@ -90,6 +83,7 @@ const STYLE = {
 /* ---------------------------------------------------- */
 /* TRANSITIONS                                           */
 /* ---------------------------------------------------- */
+
 const transitions: Record<string, any> = {
   'Fade In / Fade Out': {
     initial: { opacity: 0 },
@@ -148,6 +142,7 @@ const transitions: Record<string, any> = {
 };
 
 const transitionKeys = Object.keys(transitions);
+
 const speedMap: Record<string, number> = {
   Slow: 12000,
   Medium: 8000,
@@ -155,17 +150,10 @@ const speedMap: Record<string, number> = {
 };
 
 /* ---------------------------------------------------- */
-/* COMPONENT — FULL FILE                                */
+/*  CLEANED SingleHighlightWall (NO ADS)                */
 /* ---------------------------------------------------- */
 
 export default function SingleHighlightWall({ event, posts }) {
-  const hostId =
-    event?.host_profile_id ||
-    event?.host_id ||
-    '';
-
-  const { tick } = useAdInjector({ hostId });
-
   const [livePosts, setLivePosts] = useState(posts || []);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [randomTransition, setRandomTransition] = useState<string | null>(null);
@@ -187,17 +175,18 @@ export default function SingleHighlightWall({ event, posts }) {
   const transitionType = event?.post_transition || 'Fade In / Fade Out';
   const displayDuration = speedMap[event?.transition_speed || 'Medium'];
 
+  /* Reset posts on change */
   useEffect(() => {
     setLivePosts(posts || []);
     setCurrentIndex(0);
   }, [posts]);
 
+  /* Post cycling & transition switching */
   useEffect(() => {
     if (!livePosts.length) return;
 
     const interval = setInterval(() => {
       setCurrentIndex(prev => (prev + 1) % livePosts.length);
-      tick();
 
       if (transitionType === 'Random') {
         const nextKey =
@@ -207,7 +196,7 @@ export default function SingleHighlightWall({ event, posts }) {
     }, displayDuration);
 
     return () => clearInterval(interval);
-  }, [livePosts.length, displayDuration, transitionType, tick]);
+  }, [livePosts.length, displayDuration, transitionType]);
 
   const effectiveTransition = useMemo(() => {
     if (transitionType === 'Random') {
@@ -310,7 +299,32 @@ export default function SingleHighlightWall({ event, posts }) {
             alignItems: 'center',
           }}
         >
-          <img src={logo} style={STYLE.logo} />
+
+          {/* LOGO CONTAINER */}
+          <div
+            style={{
+              width: 'clamp(400px,28vw,380px)',
+              height: 'clamp(180px,18vw,260px)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              borderRadius: 12,
+              background: 'transparent',
+              overflow: 'hidden',
+              padding: '6px',
+              marginBottom: '0vh',
+            }}
+          >
+            <img
+              src={logo}
+              style={{
+                width: '100%',
+                height: '100%',
+                objectFit: 'contain',
+                filter: 'drop-shadow(0 0 14px rgba(0,0,0,0.85))',
+              }}
+            />
+          </div>
 
           <div style={STYLE.greyBar} />
 

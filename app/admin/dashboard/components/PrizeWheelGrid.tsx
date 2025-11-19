@@ -31,16 +31,14 @@ export default function PrizeWheelGrid({
   useEffect(() => {
     if (Array.isArray(wheels)) {
       const safe = wheels.filter((w) => w && w.id);
-      // ✅ ensure NEW array reference (React must see a change)
-      setLocalWheels([...safe]);
+      setLocalWheels([...safe]); // ensure NEW array reference
     } else {
       setLocalWheels([]);
     }
   }, [wheels]);
 
   /* ------------------------------------------------------------
-     ✅ REALTIME LISTENER FOR wheel_entries (FIX)
-     This keeps pending count LIVE without page reload
+     ✅ REALTIME LISTENER FOR wheel_entries
   ------------------------------------------------------------ */
   useEffect(() => {
     if (!host?.id) return;
@@ -55,14 +53,12 @@ export default function PrizeWheelGrid({
           event: '*',
         },
         async () => {
-          // ✅ Always pull fresh wheels from DB
           const { data } = await supabase
             .from('prize_wheels')
             .select('*')
             .eq('host_id', host.id)
             .order('created_at', { ascending: false });
 
-          // ✅ Force local wheels to refresh
           setLocalWheels(data || []);
         }
       )
@@ -74,7 +70,7 @@ export default function PrizeWheelGrid({
   }, [host?.id]);
 
   /* ------------------------------------------------------------
-     ✅ Unified realtime broadcast helper (same as Card)
+     ✅ Broadcast helper
   ------------------------------------------------------------ */
   async function broadcast(event: string, payload: any) {
     try {
@@ -177,7 +173,7 @@ export default function PrizeWheelGrid({
   }
 
   /* ------------------------------------------------------------
-     ✅ Moderation Modal
+     ✅ Moderation Modal (OPEN/CLOSE)
   ------------------------------------------------------------ */
   function handleOpenModeration(wheel: any) {
     if (!wheel || !wheel.id) return;
@@ -211,7 +207,9 @@ export default function PrizeWheelGrid({
         )}
       >
         {localWheels.length === 0 && (
-          <p className={cn('text-gray-400 italic')}>No Prize Wheels created yet.</p>
+          <p className={cn('text-gray-400 italic')}>
+            No Prize Wheels created yet.
+          </p>
         )}
 
         {localWheels.map((wheel) => (
@@ -228,11 +226,11 @@ export default function PrizeWheelGrid({
         ))}
       </div>
 
+      {/* ✅ PATCHED — removed invalid refreshWheel prop */}
       {moderationWheel && (
         <PrizeWheelModerationModal
           wheelId={moderationWheel.id}
           onClose={handleCloseModeration}
-          refreshWheel={refreshPrizeWheels}
         />
       )}
     </div>

@@ -5,8 +5,29 @@ import { supabase } from '@/lib/supabaseClient';
 import { cn } from '@/lib/utils';
 
 /* ------------------------------------------------------------
-   🔧 Broadcast: Host triggers the wheel spin
+   TYPES
 ------------------------------------------------------------ */
+
+interface PrizeWheelCardProps {
+  wheel: any;
+  onOpenOptions: (wheel: any) => void;
+  onDelete: (id: string) => void;
+  onSpin: (id: string) => Promise<void>;
+  onOpenModeration: (wheel: any) => void;
+  onPlay: (id: string) => Promise<void>;
+  onStop: (id: string) => Promise<void>;
+}
+
+declare global {
+  interface Window {
+    _activePrizeWheel?: Window | null;
+  }
+}
+
+/* ------------------------------------------------------------
+   BROADCAST HELPERS
+------------------------------------------------------------ */
+
 async function broadcastSpin(id: string) {
   await supabase.channel(`prizewheel-${id}`).send({
     type: 'broadcast',
@@ -15,9 +36,6 @@ async function broadcastSpin(id: string) {
   });
 }
 
-/* ------------------------------------------------------------
-   🔧 Broadcast: Host picks a guest
------------------------------------------------------------- */
 async function broadcastRemoteSelection(wheelId: string, guestId: string) {
   await supabase.channel(`prizewheel-${wheelId}`).send({
     type: 'broadcast',
@@ -25,6 +43,10 @@ async function broadcastRemoteSelection(wheelId: string, guestId: string) {
     payload: { selected_guest_id: guestId },
   });
 }
+
+/* ------------------------------------------------------------
+   COMPONENT
+------------------------------------------------------------ */
 
 export default function PrizeWheelCard({
   wheel,
@@ -34,14 +56,12 @@ export default function PrizeWheelCard({
   onOpenModeration,
   onPlay,
   onStop,
-}) {
-  if (!wheel || !wheel.id) {
+}: PrizeWheelCardProps) {
+  if (!wheel?.id) {
     return (
-      <div
-        className={cn(
-          'rounded-xl p-4 text-center bg-gray-700/20 text-gray-300 border border-white/10'
-        )}
-      >
+      <div className={cn(
+        'rounded-xl p-4 text-center bg-gray-700/20 text-gray-300 border border-white/10'
+      )}>
         Loading wheel…
       </div>
     );
@@ -51,65 +71,64 @@ export default function PrizeWheelCard({
   const [pendingCount, setPendingCount] = useState(0);
   const [pendingRemote, setPendingRemote] = useState(false);
 
-  const [toggleRemote, setToggleRemote] = useState(
+  const [toggleRemote, setToggleRemote] = useState<boolean>(
     wheel.remote_spin_enabled ?? false
   );
-  const [selectedSpinner, setSelectedSpinner] = useState(
+  const [selectedSpinner, setSelectedSpinner] = useState<string | null>(
     wheel.selected_remote_spinner ?? null
   );
 
   /* ------------------------------------------------------------
-     📌 Load Entry Counts
-  ------------------------------------------------------------ */
+     Load Entry Counts
+------------------------------------------------------------ */
   async function loadCounts() {
     const { data } = await supabase
       .from('wheel_entries')
       .select('status')
       .eq('wheel_id', wheel.id);
 
-    const all = data || [];
+    if (!data) {
+      setEntryCount(0);
+      setPendingCount(0);
+      return;
+    }
 
-    setEntryCount(all.filter((x) => x.status === 'approved').length);
-    setPendingCount(all.filter((x) => x.status === 'pending').length);
+    setEntryCount(data.filter(e => e.status === 'approved').length);
+    setPendingCount(data.filter(e => e.status === 'pending').length);
   }
 
   /* ------------------------------------------------------------
-     🔥 FIXED REALTIME LISTENER — UPDATES INSTANTLY
-  ------------------------------------------------------------ */
+     Realtime: wheel_entries updates
+------------------------------------------------------------ */
   useEffect(() => {
-    if (!wheel?.id) return;
+    if (!wheel.id) return;
 
-    loadCounts(); // initial load
+    loadCounts();
 
-    // IMPORTANT:
-    // Realtime channel MUST be table-level (no custom name)
     const channel = supabase
       .channel(`wheel_entries_watch_${wheel.id}`)
       .on(
         'postgres_changes',
         {
-          event: '*', // INSERT, UPDATE, DELETE
+          event: '*',
           schema: 'public',
           table: 'wheel_entries',
           filter: `wheel_id=eq.${wheel.id}`,
         },
-        (payload) => {
-          // console.log("🔥 entry updated:", payload);
-          loadCounts();
-        }
+        loadCounts
       )
       .subscribe();
 
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [wheel?.id]);
+  }, [wheel.id]);
 
   /* ------------------------------------------------------------
-     📌 Listen for HOST spin
-  ------------------------------------------------------------ */
+     Realtime: listen for HOST spin
+------------------------------------------------------------ */
   useEffect(() => {
-    if (!wheel?.id) return;
+    if (!wheel.id) return;
 
     const ch = supabase
       .channel(`prizewheel-${wheel.id}`)
@@ -120,35 +139,35 @@ export default function PrizeWheelCard({
       .subscribe();
 
     return () => supabase.removeChannel(ch);
-  }, [wheel?.id]);
+  }, [wheel.id]);
 
   /* ------------------------------------------------------------
-     📌 Remote phone triggered spin
-  ------------------------------------------------------------ */
+     Realtime: phone remote spin
+------------------------------------------------------------ */
   useEffect(() => {
-    if (!wheel?.id) return;
+    if (!wheel.id) return;
 
-    const phonePress = supabase
+    const ch = supabase
       .channel(`prizewheel-${wheel.id}`)
       .on('broadcast', { event: 'remote_spin_pressed' }, async () => {
         await handleSpin();
       })
       .subscribe();
 
-    return () => supabase.removeChannel(phonePress);
-  }, [wheel?.id]);
+    return () => supabase.removeChannel(ch);
+  }, [wheel.id]);
 
   /* ------------------------------------------------------------
-     📌 Remote toggle
-  ------------------------------------------------------------ */
+     Remote Spin Toggle
+------------------------------------------------------------ */
   async function handleRemoteToggle() {
-    const newState = !toggleRemote;
-    setToggleRemote(newState);
+    const newEnabled = !toggleRemote;
+    setToggleRemote(newEnabled);
 
     await supabase
       .from('prize_wheels')
       .update({
-        remote_spin_enabled: newState,
+        remote_spin_enabled: newEnabled,
         selected_remote_spinner: null,
       })
       .eq('id', wheel.id);
@@ -157,8 +176,8 @@ export default function PrizeWheelCard({
   }
 
   /* ------------------------------------------------------------
-     📌 Pick Random Spinner
-  ------------------------------------------------------------ */
+     Pick Random Spinner
+------------------------------------------------------------ */
   async function pickRandomSpinner() {
     const { data } = await supabase
       .from('wheel_entries')
@@ -166,8 +185,8 @@ export default function PrizeWheelCard({
       .eq('wheel_id', wheel.id)
       .eq('status', 'approved');
 
-    if (!data || data.length === 0) {
-      alert("No approved entrants yet.");
+    if (!data?.length) {
+      alert('No approved entrants yet.');
       return;
     }
 
@@ -185,37 +204,24 @@ export default function PrizeWheelCard({
   }
 
   /* ------------------------------------------------------------
-     📌 Launch Wheel Popup
-  ------------------------------------------------------------ */
+     Launch Wheel Popup
+------------------------------------------------------------ */
   function handleLaunch() {
     const url = `${window.location.origin}/prizewheel/${wheel.id}`;
+
     const popup = window.open(
       url,
       '_blank',
       'width=1280,height=800,resizable=yes,scrollbars=yes'
     );
+
     popup?.focus();
-    window._activePrizeWheel = popup;
-  }
-
-  function StatusBadge() {
-    let text = 'INACTIVE';
-    let color = 'text-orange-400';
-
-    if (wheel.status === 'live') {
-      text = 'LIVE';
-      color = 'text-lime-400';
-    } else if (wheel.countdown_active) {
-      text = 'COUNTDOWN';
-      color = 'text-yellow-400';
-    }
-
-    return <span className={cn('font-bold tracking-wide', color)}>{text}</span>;
+    window._activePrizeWheel = popup || null;
   }
 
   /* ------------------------------------------------------------
-     📌 PLAY / STOP
-  ------------------------------------------------------------ */
+     PLAY
+------------------------------------------------------------ */
   async function handlePlay() {
     await onPlay(wheel.id);
 
@@ -233,6 +239,9 @@ export default function PrizeWheelCard({
       .eq('id', wheel.id);
   }
 
+  /* ------------------------------------------------------------
+     STOP
+------------------------------------------------------------ */
   async function handleStop() {
     await onStop(wheel.id);
 
@@ -247,13 +256,13 @@ export default function PrizeWheelCard({
       })
       .eq('id', wheel.id);
 
-    setSelectedSpinner(null);
     setToggleRemote(false);
+    setSelectedSpinner(null);
   }
 
   /* ------------------------------------------------------------
-     📌 SPIN NOW
-  ------------------------------------------------------------ */
+     SPIN NOW
+------------------------------------------------------------ */
   async function handleSpin() {
     await onSpin(wheel.id);
 
@@ -266,8 +275,27 @@ export default function PrizeWheelCard({
   }
 
   /* ------------------------------------------------------------
-     📌 RENDER
-  ------------------------------------------------------------ */
+     Status Badge
+------------------------------------------------------------ */
+  function StatusBadge() {
+    let text = 'INACTIVE';
+    let color = 'text-orange-400';
+
+    if (wheel.status === 'live') {
+      text = 'LIVE';
+      color = 'text-lime-400';
+    } else if (wheel.countdown_active) {
+      text = 'COUNTDOWN';
+      color = 'text-yellow-400';
+    }
+
+    return <span className={cn('font-bold tracking-wide', color)}>{text}</span>;
+  }
+
+  /* ------------------------------------------------------------
+     RENDER
+------------------------------------------------------------ */
+
   return (
     <div
       className={cn(
@@ -287,16 +315,16 @@ export default function PrizeWheelCard({
     >
       {/* TITLE + STATUS */}
       <div>
-        <h3 className={cn('font-bold', 'text-lg', 'mb-1')}>
+        <h3 className={cn('font-bold text-lg mb-1')}>
           {wheel.host_title || wheel.title || 'Untitled Wheel'}
         </h3>
 
-        <p className={cn('text-sm', 'mb-3')}>
+        <p className={cn('text-sm mb-3')}>
           <strong>Status:</strong> <StatusBadge />
         </p>
 
-        {/* PENDING BTN */}
-        <div className={cn('flex', 'justify-center', 'mb-3')}>
+        {/* Pending Button */}
+        <div className={cn('flex justify-center mb-3')}>
           <button
             onClick={() => onOpenModeration(wheel)}
             className={cn(
@@ -320,8 +348,7 @@ export default function PrizeWheelCard({
           </button>
         </div>
 
-        {/* ENTRY COUNT */}
-        <p className={cn('text-sm', 'mb-3')}>
+        <p className={cn('text-sm mb-3')}>
           🎟 <strong>{entryCount}</strong> Approved Entrants
         </p>
       </div>
@@ -350,7 +377,7 @@ export default function PrizeWheelCard({
           />
         </div>
 
-        {/* PICK RANDOM */}
+        {/* RANDOM PICK */}
         <button
           disabled={!toggleRemote}
           onClick={pickRandomSpinner}
@@ -367,7 +394,9 @@ export default function PrizeWheelCard({
         {/* PLAY */}
         <button
           onClick={handlePlay}
-          className={cn('px-3', 'py-1', 'rounded', 'text-sm', 'font-semibold', 'bg-yellow-600', 'hover:bg-yellow-700', 'text-black')}
+          className={cn(
+            'px-3 py-1 rounded text-sm font-semibold bg-yellow-600 hover:bg-yellow-700 text-black'
+          )}
         >
           ▶ Play
         </button>
@@ -375,7 +404,9 @@ export default function PrizeWheelCard({
         {/* STOP */}
         <button
           onClick={handleStop}
-          className={cn('px-3', 'py-1', 'rounded', 'text-sm', 'font-semibold', 'bg-red-600', 'hover:bg-red-700')}
+          className={cn(
+            'px-3 py-1 rounded text-sm font-semibold bg-red-600 hover:bg-red-700'
+          )}
         >
           ⏹ Stop
         </button>
@@ -383,12 +414,14 @@ export default function PrizeWheelCard({
         {/* LAUNCH */}
         <button
           onClick={handleLaunch}
-          className={cn('px-3', 'py-1', 'rounded', 'text-sm', 'font-semibold', 'bg-blue-600', 'hover:bg-blue-700')}
+          className={cn(
+            'px-3 py-1 rounded text-sm font-semibold bg-blue-600 hover:bg-blue-700'
+          )}
         >
           🚀 Launch
         </button>
 
-        {/* SPIN NOW */}
+        {/* SPIN */}
         <button
           onClick={handleSpin}
           className={cn(
@@ -404,7 +437,9 @@ export default function PrizeWheelCard({
         {/* OPTIONS */}
         <button
           onClick={() => onOpenOptions(wheel)}
-          className={cn('px-3', 'py-1', 'rounded', 'text-sm', 'font-semibold', 'bg-indigo-500', 'hover:bg-indigo-600')}
+          className={cn(
+            'px-3 py-1 rounded text-sm font-semibold bg-indigo-500 hover:bg-indigo-600'
+          )}
         >
           ⚙ Options
         </button>
@@ -412,7 +447,9 @@ export default function PrizeWheelCard({
         {/* DELETE */}
         <button
           onClick={() => onDelete(wheel.id)}
-          className={cn('px-3', 'py-1', 'rounded', 'text-sm', 'font-semibold', 'bg-red-700', 'hover:bg-red-800')}
+          className={cn(
+            'px-3 py-1 rounded text-sm font-semibold bg-red-700 hover:bg-red-800'
+          )}
         >
           ❌ Delete
         </button>

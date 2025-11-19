@@ -18,10 +18,20 @@ export default function PrizeWheelRouterPage() {
   const [showLive, setShowLive] = useState(false);
   const previousStatus = useRef<string | null>(null);
 
+  /* ------------------------------------------------------ */
+  /* 🚀 LOAD EVERYTHING (with HOST JOIN)                    */
+  /* ------------------------------------------------------ */
   async function loadEverything() {
     const { data: wheelData } = await supabase
       .from('prize_wheels')
-      .select('*')
+      .select(`
+        *,
+        host:hosts (
+          id,
+          branding_logo_url,
+          venue_name
+        )
+      `)
       .eq('id', id)
       .maybeSingle();
 
@@ -58,13 +68,23 @@ export default function PrizeWheelRouterPage() {
     setLoading(false);
   }
 
+  /* ------------------------------------------------------ */
+  /* 🚀 INITIAL LOAD + POLLING                              */
+  /* ------------------------------------------------------ */
   useEffect(() => {
     loadEverything();
 
     const interval = setInterval(async () => {
       const { data: wheelData } = await supabase
         .from('prize_wheels')
-        .select('*')
+        .select(`
+          *,
+          host:hosts (
+            id,
+            branding_logo_url,
+            venue_name
+          )
+        `)
         .eq('id', id)
         .maybeSingle();
 
@@ -93,13 +113,16 @@ export default function PrizeWheelRouterPage() {
       setEntries(entryData || []);
       setWheel(wheelData);
 
-      // 🔥 THIS is what makes the fade work
+      // controls fade between inactive / active walls
       setShowLive(wheelData.status === 'live');
     }, 1500);
 
     return () => clearInterval(interval);
   }, [id]);
 
+  /* ------------------------------------------------------ */
+  /* RENDER                                                  */
+  /* ------------------------------------------------------ */
   if (loading)
     return <div style={{ color: 'white', padding: 40 }}>Loading…</div>;
 
@@ -113,7 +136,7 @@ export default function PrizeWheelRouterPage() {
         width: '100%',
         height: '100vh',
         overflow: 'hidden',
-        background: 'black'
+        background: 'black',
       }}
     >
       {/* INACTIVE WALL LAYER */}
@@ -126,7 +149,8 @@ export default function PrizeWheelRouterPage() {
           zIndex: 1,
         }}
       >
-        <InactivePrizeWall wheel={wheel} entries={entries} />
+        {/* 🟢 FIXED: no entries prop here */}
+        <InactivePrizeWall wheel={wheel} />
       </div>
 
       {/* ACTIVE WALL LAYER */}
@@ -139,6 +163,7 @@ export default function PrizeWheelRouterPage() {
           zIndex: 2,
         }}
       >
+        {/* Active wall still gets entries */}
         <ActivePrizeWall wheel={wheel} entries={entries} />
       </div>
     </div>

@@ -3,8 +3,6 @@
 import { useEffect, useState, useRef } from 'react';
 import { QRCodeCanvas } from 'qrcode.react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { useAdInjector } from '@/hooks/useAdInjector';
-import AdOverlay from '@/app/wall/components/AdOverlay';
 
 /* -------------------------------------- */
 /* SPEED MAP                               */
@@ -155,14 +153,8 @@ function PostRow({ post, reversed = false }) {
 /* MAIN WALL                               */
 /* -------------------------------------- */
 export default function Grid2x2Wall({ event, posts }: Grid2x2WallProps) {
-  /*  
-     ⭐ Your hook does NOT return setShowAd  
-     ⭐ It ONLY returns: { showAd, currentAd, injectorEnabled, injectorMode, tick }
-  */
 
-  const { showAd, currentAd, injectorEnabled, tick } = useAdInjector({
-    hostId: event?.host_profile_id ?? event?.host_id,
-  });
+  /* REMOVED: useAdInjector */
 
   const transitionSpeed = event?.transition_speed || 'Medium';
   const slideUp = buildSlideUpTransition(transitionSpeed);
@@ -188,8 +180,9 @@ export default function Grid2x2Wall({ event, posts }: Grid2x2WallProps) {
     setTitle(event?.title || 'Fan Zone Wall');
 
     setLogo(
-      event?.logo_url && event.logo_url.trim() !== ''
-        ? event.logo_url
+      event?.host?.branding_logo_url &&
+      event.host.branding_logo_url.trim() !== ''
+        ? event.host.branding_logo_url
         : '/faninteractlogo.png'
     );
 
@@ -209,7 +202,7 @@ export default function Grid2x2Wall({ event, posts }: Grid2x2WallProps) {
 
   const rotationOrder = [0, 1, 2, 3];
 
-  // INITIAL FILL
+  /* INITIAL FILL */
   useEffect(() => {
     if (!posts?.length) return;
 
@@ -221,7 +214,7 @@ export default function Grid2x2Wall({ event, posts }: Grid2x2WallProps) {
     }
   }, [posts]);
 
-  // ROTATION LOOP
+  /* ROTATION LOOP */
   useEffect(() => {
     if (!posts?.length) return;
     running.current = true;
@@ -252,7 +245,7 @@ export default function Grid2x2Wall({ event, posts }: Grid2x2WallProps) {
         pointer.current = (pointer.current + 1) % posts.length;
         slot.current = (slot.current + 1) % 4;
 
-        tick();
+        /* REMOVED: tick(); */
 
         await new Promise((res) => setTimeout(res, displayDuration));
       }
@@ -281,23 +274,40 @@ export default function Grid2x2Wall({ event, posts }: Grid2x2WallProps) {
         position: 'relative',
       }}
     >
+
       {/* LOGO */}
       <div
         style={{
           position: 'absolute',
-          top: '0vh',
+          top: '1.2vh',
           right: '1.5vw',
-          width: 'clamp(160px,18vw,220px)',
+          width: 'clamp(180px,20vw,260px)',
+          height: 'clamp(110px,12vw,180px)',
+          borderRadius: '12px',
+          background: 'transparent',
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          overflow: 'hidden',
+          zIndex: 20,
         }}
       >
-        <img src={logo} style={{ width: '100%' }} />
+        <img
+          src={logo}
+          style={{
+            width: '100%',
+            height: '100%',
+            objectFit: 'contain',
+            filter: 'drop-shadow(0 0 12px rgba(0,0,0,0.6))',
+          }}
+        />
       </div>
 
       {/* TITLE */}
       <h1
         style={{
           color: '#fff',
-          marginTop: '-0.80vh',
+          marginTop: '3vh',
           marginBottom: '-1vh',
           fontWeight: 900,
           fontSize: 'clamp(2.5rem,4vw,5rem)',

@@ -3,9 +3,10 @@
 import { QRCodeCanvas } from 'qrcode.react';
 import { useEffect, useState, useRef } from 'react';
 import { supabase } from '@/lib/supabaseClient';
-import { useRealtimeChannel } from '@/providers/SupabaseRealtimeProvider';
 
-/* ---------- COUNTDOWN COMPONENT (PATCHED) ---------- */
+/* -------------------------------------------------- */
+/* COUNTDOWN COMPONENT                                */
+/* -------------------------------------------------- */
 function CountdownDisplay({ countdown, countdownActive, wheelId }) {
   const [timeLeft, setTimeLeft] = useState(0);
   const [active, setActive] = useState(countdownActive);
@@ -28,7 +29,7 @@ function CountdownDisplay({ countdown, countdownActive, wheelId }) {
     if (!active || timeLeft <= 0) return;
 
     const timer = setInterval(() => {
-      setTimeLeft((t) => (t > 1 ? t - 1 : 0));
+      setTimeLeft(t => (t > 1 ? t - 1 : 0));
     }, 1000);
 
     return () => clearInterval(timer);
@@ -39,19 +40,14 @@ function CountdownDisplay({ countdown, countdownActive, wheelId }) {
       setActive(false);
 
       (async () => {
-        const { data, error } = await supabase
+        await supabase
           .from('prize_wheels')
           .update({
             countdown_active: false,
             countdown: 'none',
             status: 'live',
           })
-          .eq('id', wheelId)
-          .select();
-
-        if (error) {
-          console.error('COUNTDOWN UPDATE FAILED:', error);
-        }
+          .eq('id', wheelId);
       })();
     }
   }, [timeLeft, active, wheelId]);
@@ -67,7 +63,6 @@ function CountdownDisplay({ countdown, countdownActive, wheelId }) {
         fontSize: 'clamp(6rem,8vw,9rem)',
         fontWeight: 900,
         color: '#fff',
-        marginTop: '2vh',
         textShadow: '0 0 40px rgba(0,0,0,0.7)',
       }}
     >
@@ -76,38 +71,36 @@ function CountdownDisplay({ countdown, countdownActive, wheelId }) {
   );
 }
 
-/* -------------------------------------------------------------------------- */
-/*  PRIZE WHEEL INACTIVE WALL — FULL PATCH                                    */
-/* -------------------------------------------------------------------------- */
+/* -------------------------------------------------- */
+/* INACTIVE PRIZE WHEEL WALL — POLLING VERSION       */
+/* -------------------------------------------------- */
 export default function InactivePrizeWall({ wheel }) {
-  const rt = useRealtimeChannel();
-  const fullscreenButtonRef = useRef(null);
-  const updateTimeout = useRef(null);
+  const updateTimeout = useRef<NodeJS.Timeout | null>(null);
 
-  const [bg, setBg] = useState('linear-gradient(to bottom right,#1b2735,#090a0f)');
-  const [brightness, setBrightness] = useState(wheel?.background_brightness || 100);
+  const [bg, setBg] = useState(
+    'linear-gradient(to bottom right,#1b2735,#090a0f)'
+  );
+  const [brightness, setBrightness] = useState(
+    wheel?.background_brightness || 100
+  );
 
   const [wallState, setWallState] = useState({
     countdown: '',
     countdownActive: false,
   });
 
-  const displayTitle =
-    wheel?.title ||
-    wheel?.host_title ||
-    "Prize Wheel";
-
+  /* PULSE CSS */
   const PulseStyle = (
     <style>{`
       @keyframes pulseSoonGlow {
-        0%,100% { opacity: .7; text-shadow: 0 0 14px rgba(255,255,255,0.3); }
-        50% { opacity: 1; text-shadow: 0 0 22px rgba(180,220,255,0.8); }
+        0%,100% { opacity:.7; text-shadow:0 0 14px rgba(255,255,255,0.3); }
+        50% { opacity:1; text-shadow:0 0 22px rgba(180,220,255,0.8); }
       }
-      .pulseSoon { animation: pulseSoonGlow 2.5s ease-in-out infinite; }
+      .pulseSoon { animation:pulseSoonGlow 2.5s ease-in-out infinite; }
     `}</style>
   );
 
-  /* Init state */
+  /* INITIAL SETUP */
   useEffect(() => {
     if (!wheel) return;
 
@@ -116,68 +109,51 @@ export default function InactivePrizeWall({ wheel }) {
       countdownActive: !!wheel.countdown_active,
     });
 
-    const value =
+    const val =
       wheel.background_type === 'image'
         ? `url(${wheel.background_value}) center/cover no-repeat`
-        : wheel.background_value || 'linear-gradient(to bottom right,#1b2735,#090a0f)';
+        : wheel.background_value ||
+          'linear-gradient(to bottom right,#1b2735,#090a0f)';
 
-    setBg(value);
-
-    if (wheel.background_brightness !== undefined) {
-      setBrightness(wheel.background_brightness);
-    }
+    setBg(val);
+    setBrightness(wheel.background_brightness ?? 100);
   }, [wheel]);
 
-  /* Realtime updates */
+  /* POLLING (every 2 seconds) */
   useEffect(() => {
-    if (!rt?.current || !wheel?.id) return;
+    if (!wheel?.id) return;
 
-    const channel = rt.current;
+    const interval = setInterval(async () => {
+      const { data } = await supabase
+        .from('prize_wheels')
+        .select('*')
+        .eq('id', wheel.id)
+        .single();
 
-    const scheduleUpdate = (data) => {
+      if (!data) return;
+
       if (updateTimeout.current) clearTimeout(updateTimeout.current);
-      updateTimeout.current = setTimeout(
-        () => setWallState((prev) => ({ ...prev, ...data })),
-        100
-      );
-    };
 
-    channel.on('broadcast', {}, ({ event, payload }) => {
-      if (!payload?.id || payload.id !== wheel.id) return;
+      updateTimeout.current = setTimeout(() => {
+        setWallState({
+          countdown: data.countdown,
+          countdownActive: !!data.countdown_active,
+        });
 
-      if (event === 'prizewheel_update') {
-        if (payload.background_value) {
-          const newBg =
-            payload.background_type === 'image'
-              ? `url(${payload.background_value}) center/cover no-repeat`
-              : payload.background_value;
+        const val =
+          data.background_type === 'image'
+            ? `url(${data.background_value}) center/cover no-repeat`
+            : data.background_value;
 
-          setBg(newBg);
-        }
+        setBg(val);
+        setBrightness(data.background_brightness ?? 100);
+      }, 60);
+    }, 2000);
 
-        if (payload.background_brightness !== undefined)
-          setBrightness(payload.background_brightness);
+    return () => clearInterval(interval);
+  }, [wheel?.id]);
 
-        if (payload.countdown)
-          scheduleUpdate({ countdown: payload.countdown });
-      }
-
-      if (event === 'prizewheel_status') {
-        if (payload.countdown_active !== undefined)
-          scheduleUpdate({ countdownActive: payload.countdown_active });
-      }
-
-      if (event === 'prizewheel_countdown_finished') {
-        scheduleUpdate({ countdownActive: false });
-      }
-    });
-
-    return () => channel.unsubscribe?.();
-  }, [rt, wheel?.id]);
-
-  /* ----------------------------------------------------------
-     ⭐ FIXED QR VALUE — NO MORE redirect=/... BUG
-     ---------------------------------------------------------- */
+  /* QR CODE LINK */
   const origin =
     typeof window !== 'undefined'
       ? window.location.origin
@@ -185,19 +161,41 @@ export default function InactivePrizeWall({ wheel }) {
 
   const qrValue = `${origin}/guest/signup?prizewheel=${wheel.id}`;
 
-  /* Logo */
+  /* --- CORRECT HOST LOGO BEHAVIOR (matches Fanzone) --- */
   const displayLogo =
     wheel?.host?.branding_logo_url?.trim()
       ? wheel.host.branding_logo_url
       : '/faninteractlogo.png';
 
+  /* FULLSCREEN BUTTON */
   const toggleFullscreen = () =>
     !document.fullscreenElement
       ? document.documentElement.requestFullscreen().catch(() => {})
       : document.exitFullscreen();
 
+  /* --- LOGO CONTAINER — FIXED TYPE (TS SAFE) --- */
+  const logoContainerStyle: React.CSSProperties = {
+    position: 'absolute',
+    top: '2%',
+    left: '53%',
+    transform: 'translateX(-50%)',
+
+    width: 'clamp(300px,27vw,400px)',
+    height: 'clamp(300px,12vw,260px)',
+
+    border: '0px solid red', // enable for debugging
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+    background: 'transparent',
+  };
+
   if (!wheel) return <div>Loading Prize Wheel…</div>;
 
+  /* -------------------------------------------------- */
+  /* RENDER                                             */
+  /* -------------------------------------------------- */
   return (
     <div
       style={{
@@ -215,39 +213,41 @@ export default function InactivePrizeWall({ wheel }) {
     >
       {PulseStyle}
 
+      {/* TITLE */}
       <h1
         style={{
           color: '#fff',
           fontSize: 'clamp(2.5rem,4vw,5rem)',
           fontWeight: 900,
-          marginBottom: '1vh',
           textShadow: `
             2px 2px 2px #000,
             -2px 2px 2px #000,
             2px -2px 2px #000,
             -2px -2px 2px #000
           `,
+          marginBottom: '1vh',
         }}
       >
-        {displayTitle}
+        {wheel?.title || 'Prize Wheel'}
       </h1>
 
+      {/* PANEL */}
       <div
         style={{
           width: '90vw',
           height: '78vh',
           maxWidth: '1800px',
-          aspectRatio: '16 / 9',
+          aspectRatio: '16/9',
           background: 'rgba(255,255,255,0.08)',
           backdropFilter: 'blur(20px)',
           border: '1px solid rgba(255,255,255,0.15)',
           borderRadius: 24,
           position: 'relative',
-          overflow: 'hidden',
           display: 'flex',
+          overflow: 'hidden',
         }}
       >
-        {/* LEFT: QR Code */}
+        {/* LEFT QR */}
         <div
           style={{
             position: 'absolute',
@@ -263,8 +263,8 @@ export default function InactivePrizeWall({ wheel }) {
           <QRCodeCanvas
             value={qrValue}
             size={1000}
-            bgColor="#ffffff"
-            fgColor="#000000"
+            bgColor="#fff"
+            fgColor="#000"
             level="H"
             style={{
               width: '100%',
@@ -276,32 +276,22 @@ export default function InactivePrizeWall({ wheel }) {
         </div>
 
         {/* RIGHT SIDE */}
-        <div
-          style={{
-            position: 'relative',
-            flexGrow: 1,
-            marginLeft: '44%',
-          }}
-        >
-          <div
-            style={{
-              position: 'absolute',
-              top: '6%',
-              left: '53%',
-              transform: 'translateX(-50%)',
-              width: 'clamp(280px,28vw,420px)',
-            }}
-          >
+        <div style={{ position: 'relative', flexGrow: 1, marginLeft: '44%' }}>
+          
+          {/* LOGO CONTAINER */}
+          <div style={logoContainerStyle}>
             <img
               src={displayLogo}
               style={{
                 width: '100%',
-                height: 'auto',
-                filter: 'drop-shadow(0 0 14px rgba(0,0,0,0.85))',
+                height: '100%',
+                objectFit: 'contain',
+                filter: 'drop-shadow(0 0 12px rgba(0,0,0,0.6))',
               }}
             />
           </div>
 
+          {/* DIVIDER */}
           <div
             style={{
               position: 'absolute',
@@ -315,44 +305,45 @@ export default function InactivePrizeWall({ wheel }) {
             }}
           />
 
+          {/* TEXT */}
           <p
             style={{
               position: 'absolute',
-              top: '50.50%',
+              top: '56%',
               left: '53%',
               transform: 'translateX(-50%)',
               color: '#fff',
               fontSize: 'clamp(2em,3.5vw,6rem)',
               fontWeight: 900,
-              margin: 0,
-              textAlign: 'center',
               textShadow: '0 0 14px rgba(0,0,0,0.6)',
+              margin: 0,
             }}
           >
             Prize Wheel
           </p>
 
+          {/* STATUS */}
           <p
             className="pulseSoon"
             style={{
               position: 'absolute',
-              top: '60%',
+              top: '67%',
               left: '53%',
               transform: 'translateX(-50%)',
               color: '#bcd9ff',
               fontSize: 'clamp(2.8rem,2.4vw,3.2rem)',
               fontWeight: 700,
-              textAlign: 'center',
               margin: 0,
             }}
           >
             Starting Soon!!
           </p>
 
+          {/* COUNTDOWN */}
           <div
             style={{
               position: 'absolute',
-              top: '70%',
+              top: '73%',
               left: '53%',
               transform: 'translateX(-50%)',
             }}
@@ -366,12 +357,13 @@ export default function InactivePrizeWall({ wheel }) {
         </div>
       </div>
 
+      {/* FULLSCREEN BUTTON */}
       <div
-        ref={fullscreenButtonRef}
+        onClick={toggleFullscreen}
         style={{
           position: 'absolute',
-          bottom: 'calc(1.5vh + 1.5%)',
-          right: 'calc(1.5vw + 1.5%)',
+          bottom: '2vh',
+          right: '2vw',
           width: 40,
           height: 40,
           borderRadius: 12,
@@ -381,13 +373,11 @@ export default function InactivePrizeWall({ wheel }) {
           alignItems: 'center',
           justifyContent: 'center',
           cursor: 'pointer',
-          opacity: 0.15,
-          transition: 'opacity 0.2s ease',
-          zIndex: 50,
+          opacity: 0.2,
+          transition: 'opacity 0.2s',
         }}
-        onMouseEnter={(e) => (e.currentTarget.style.opacity = '1')}
-        onMouseLeave={(e) => (e.currentTarget.style.opacity = '0.3')}
-        onClick={toggleFullscreen}
+        onMouseEnter={e => (e.currentTarget.style.opacity = '1')}
+        onMouseLeave={e => (e.currentTarget.style.opacity = '0.3')}
       >
         <svg
           xmlns="http://www.w3.org/2000/svg"

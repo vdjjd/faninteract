@@ -34,7 +34,10 @@ interface HostProfilePanelProps {
   setHost: React.Dispatch<React.SetStateAction<any>>;
 }
 
-export default function HostProfilePanel({ host, setHost }: HostProfilePanelProps) {
+export default function HostProfilePanel({
+  host,
+  setHost,
+}: HostProfilePanelProps) {
   const [isOpen, setIsOpen] = useState(false);
 
   const [showEmailModal, setShowEmailModal] = useState(false);
@@ -52,11 +55,7 @@ export default function HostProfilePanel({ host, setHost }: HostProfilePanelProp
   }
 
   async function updateGuestOption(field: string, value: boolean) {
-    await supabase
-      .from("hosts")
-      .update({ [field]: value })
-      .eq("id", host.id);
-
+    await supabase.from("hosts").update({ [field]: value }).eq("id", host.id);
     setHost((prev: any) => ({ ...prev, [field]: value }));
   }
 
@@ -162,7 +161,7 @@ export default function HostProfilePanel({ host, setHost }: HostProfilePanelProp
     setLogoPreview("");
   }
 
-  /** Modal for guest options */
+  /* -------------------------  GUEST OPTIONS MODAL ------------------------ */
   const GuestOptionsModal = () => (
     <Modal isOpen={showGuestModal} onClose={() => setShowGuestModal(false)}>
       <div className="text-white">
@@ -173,7 +172,9 @@ export default function HostProfilePanel({ host, setHost }: HostProfilePanelProp
         <div className="space-y-4">
           <div className={cn('flex', 'items-center', 'justify-between', 'p-2', 'bg-black/40', 'rounded-lg', 'border', 'border-white/10')}>
             <span className={cn('font-medium', 'text-gray-200')}>First Name</span>
-            <span className={cn('text-gray-400', 'text-sm', 'italic')}>(always required)</span>
+            <span className={cn('text-gray-400', 'text-sm', 'italic')}>
+              (always required)
+            </span>
           </div>
 
           {[
@@ -233,7 +234,7 @@ export default function HostProfilePanel({ host, setHost }: HostProfilePanelProp
         </SheetHeader>
 
         <div className={cn('mt-5', 'flex', 'flex-col', 'gap-6')}>
-          {/* ACCOUNT */}
+          {/* ---------------------- ACCOUNT ----------------------- */}
           <section>
             <div className={cn('flex', 'items-center', 'justify-center', 'gap-3', 'mb-3', 'text-blue-400', 'font-semibold')}>
               <User className={cn('w-5', 'h-5')} /> Account
@@ -256,24 +257,28 @@ export default function HostProfilePanel({ host, setHost }: HostProfilePanelProp
                 />
               )}
 
-              {/* Upload + Delete Buttons */}
-              <div className={cn('flex', 'gap-2', 'w-full', 'mt-2')}>
+              {/* Upload + Delete Buttons (compact) */}
+              <div className={cn('flex', 'gap-2', 'mt-2')}>
+                {/* Upload */}
                 <Button
                   onClick={() => fileInputRef.current?.click()}
-                  className={cn('flex-1', 'bg-blue-600', 'hover:bg-blue-700')}
+                  className={cn('px-3', 'py-2', 'flex', 'items-center', 'gap-1', 'bg-blue-600', 'hover:bg-blue-700')}
                 >
-                  <Upload className={cn('w-4', 'h-4', 'mr-2')} />
-                  {uploadingLogo ? "Uploading…" : "Upload"}
+                  <Upload className={cn('w-4', 'h-4')} />
+                  <span className="text-sm">
+                    {uploadingLogo ? "Uploading…" : "Upload"}
+                  </span>
                 </Button>
 
+                {/* Delete */}
                 <Button
                   variant="destructive"
-                  className="flex-1"
                   disabled={!logoPreview}
                   onClick={handleDeleteLogo}
+                  className={cn('px-3', 'py-2', 'flex', 'items-center', 'gap-1')}
                 >
-                  <Trash2 className={cn('w-4', 'h-4', 'mr-2')} />
-                  Delete
+                  <Trash2 className={cn('w-4', 'h-4')} />
+                  <span className="text-sm">Delete</span>
                 </Button>
               </div>
 
@@ -302,6 +307,7 @@ export default function HostProfilePanel({ host, setHost }: HostProfilePanelProp
                 <p className={cn('text-sm', 'text-gray-400')}>{host?.email}</p>
               </div>
 
+              {/* Email + Password */}
               <div className={cn('flex', 'flex-col', 'gap-2', 'w-full', 'mt-4')}>
                 <Button variant="outline" onClick={() => setShowEmailModal(true)}>
                   Change Email
@@ -313,7 +319,7 @@ export default function HostProfilePanel({ host, setHost }: HostProfilePanelProp
             </div>
           </section>
 
-          {/* SETTINGS */}
+          {/* ---------------------- SETTINGS ----------------------- */}
           <section>
             <div className={cn('flex', 'items-center', 'justify-center', 'gap-3', 'mb-3', 'text-blue-400', 'font-semibold')}>
               <Settings className={cn('w-5', 'h-5')} /> Settings
@@ -331,17 +337,17 @@ export default function HostProfilePanel({ host, setHost }: HostProfilePanelProp
 
             <Button
               variant="outline"
-              className={cn('w-full', 'mt-3')}
+              className={cn('w-full', 'mt-3', 'flex', 'items-center', 'justify-center', 'gap-2')}
               onClick={() => setShowGuestModal(true)}
             >
-              <SlidersHorizontal className={cn('w-4', 'h-4', 'mr-2')} />
+              <SlidersHorizontal className={cn('w-4', 'h-4')} />
               Guest Sign Up Options
             </Button>
 
             <GuestOptionsModal />
           </section>
 
-          {/* BILLING */}
+          {/* ---------------------- BILLING ----------------------- */}
           <section>
             <div className={cn('flex', 'items-center', 'justify-center', 'gap-3', 'mb-3', 'text-blue-400', 'font-semibold')}>
               <CreditCard className={cn('w-5', 'h-5')} /> Billing
@@ -351,7 +357,7 @@ export default function HostProfilePanel({ host, setHost }: HostProfilePanelProp
             </Button>
           </section>
 
-          {/* SECURITY */}
+          {/* ---------------------- SECURITY ----------------------- */}
           <section>
             <div className={cn('flex', 'items-center', 'justify-center', 'gap-3', 'mb-3', 'text-blue-400', 'font-semibold')}>
               <LogOut className={cn('w-5', 'h-5')} /> Security
