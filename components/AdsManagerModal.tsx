@@ -339,23 +339,29 @@ export default function AdsManagerModal({ host, onClose }: AdsManagerModalProps)
         )}
 
         {/* UPLOAD + REORDER */}
-        <div className={cn('mb-4', 'flex', 'items-center', 'gap-3')}>
-          <label className={cn('cursor-pointer', 'flex', 'items-center', 'gap-2', 'text-white/80', 'border', 'border-white/20', 'px-3', 'py-2', 'rounded-lg', 'hover:bg-white/10')}>
-            <Upload size={18} />
-            Upload Ad
-            <input type="file" className="hidden" accept="image/*,video/*" onChange={handleFileUpload} />
-          </label>
+<div className={cn('mb-4', 'flex', 'items-center', 'gap-3')}>
+  <label className={cn('cursor-pointer', 'flex', 'items-center', 'gap-2', 'text-white/80', 'border', 'border-white/20', 'px-3', 'py-2', 'rounded-lg', 'hover:bg-white/10')}>
+    <Upload size={18} />
+    Upload Ad
+    <input type="file" className="hidden" accept="image/*,video/*" onChange={handleFileUpload} />
+  </label>
 
-          <button
-            className={cn(
-              "px-4 py-2 rounded-lg border border-white/10 text-white/90",
-              reorderMode ? "bg-blue-600" : "bg-white/10"
-            )}
-            onClick={() => setReorderMode(!reorderMode)}
-          >
-            {reorderMode ? "Done" : "Reorder"}
-          </button>
-        </div>
+  <button
+    className={cn(
+      "px-4 py-2 rounded-lg border border-white/10 text-white/90",
+      reorderMode ? "bg-blue-600" : "bg-white/10"
+    )}
+    onClick={() => setReorderMode(!reorderMode)}
+  >
+    {reorderMode ? "Done" : "Reorder"}
+  </button>
+
+  {/* ⭐ NEW RED TEXT */}
+  <span className={cn("text-red-400", "text-sm", "font-semibold")}>
+    AD Slides best formats: JPEG, JPG, WEBP, PNG — 1920 × 1080 recommended
+  </span>
+</div>
+
 
         {/* AD GRID */}
         <div className={cn('grid', 'grid-cols-3', 'gap-3', 'overflow-y-auto', 'pr-2')}>
