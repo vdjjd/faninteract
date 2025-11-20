@@ -1,4 +1,4 @@
-'use client';
+"use client";
 
 import { cn } from "@/lib/utils";
 
@@ -18,8 +18,6 @@ export default function TermsModal({
   /* ------------------ HARD-CODED FANINTERACT TERMS ------------------ */
   const fanInteractTerms = `
 # FanInteract Terms & Conditions
-
-By using this platform, you agree to the following:
 
 ## 1. Content Ownership
 You retain ownership of photos, messages, and media you submit.  
@@ -48,40 +46,39 @@ FanInteract is not responsible for:
 - event-related injuries  
 - unauthorized content displayed by other guests  
 
-Our platform is provided *as-is*.
+Platform is provided *as-is*.
 
 ## 5. Event Hosts
-Event hosts may add additional terms that apply to their venue or event.
+Event hosts may add additional venue-specific terms.
 
 ## 6. Acceptance
 Using this service means you accept these terms.
-  `.trim();
+`;
 
-  /* ------------------ MERGED TERMS IN DISPLAY ORDER ------------------ */
-  const combinedTerms = `
-${fanInteractTerms}
+  /* ------------------ MERGE SECTIONS ------------------ */
+  const combinedMarkdown = [
+    fanInteractTerms,
+    masterTerms ? `# Master Account Terms\n${masterTerms}` : "",
+    hostTerms ? `# Host Venue Terms\n${hostTerms}` : ""
+  ]
+    .filter(Boolean)
+    .join("\n\n---\n\n");
 
-${masterTerms ? "\n---\n\n# Master Account Terms\n" + masterTerms : ""}
-
-${hostTerms ? "\n---\n\n# Host Venue Terms\n" + hostTerms : ""}
-  `.trim();
-
-  /* ------------------ BASIC MARKDOWN → HTML ------------------ */
+  /* ------------------ SUPER BASIC MARKDOWN PARSER ------------------ */
   function markdownToHtml(md: string) {
     return md
       .replace(/^### (.*$)/gim, "<h3>$1</h3>")
       .replace(/^## (.*$)/gim, "<h2>$1</h2>")
       .replace(/^# (.*$)/gim, "<h1>$1</h1>")
-      .replace(/^- (.*$)/gim, "<li>$1</li>")
       .replace(/\*\*(.*?)\*\*/gim, "<strong>$1</strong>")
       .replace(/\*(.*?)\*/gim, "<em>$1</em>")
       .replace(/__(.*?)__/gim, "<u>$1</u>")
-      .replace(/\n/g, "<br/>");
+      .replace(/- (.*)/gim, "<li>$1</li>")
+      .replace(/\n{2,}/g, "<br/><br/>");
   }
 
-  const html = markdownToHtml(combinedTerms);
+  const html = markdownToHtml(combinedMarkdown);
 
-  /* ------------------ RENDER ------------------ */
   return (
     <div
       className={cn(
@@ -114,7 +111,7 @@ ${hostTerms ? "\n---\n\n# Host Venue Terms\n" + hostTerms : ""}
           📜 Terms & Conditions
         </h3>
 
-        {/* TERMS CONTENT */}
+        {/* CONTENT BOX */}
         <div
           className={cn(
             "flex-grow overflow-y-auto",
@@ -124,16 +121,13 @@ ${hostTerms ? "\n---\n\n# Host Venue Terms\n" + hostTerms : ""}
           dangerouslySetInnerHTML={{ __html: html }}
         />
 
-        {/* FOOTER BUTTON */}
-        <div
-          className={cn(
-            "flex justify-center pt-4 mt-4 border-t border-white/10"
-          )}
-        >
+        {/* FOOTER */}
+        <div className={cn("flex justify-center mt-5")}>
           <button
             onClick={onClose}
             className={cn(
-              "px-6 py-2 rounded-md bg-white/10 hover:bg-white/20 text-sm"
+              "px-6 py-2 rounded-md bg-white/10 hover:bg-white/20",
+              "text-sm font-medium"
             )}
           >
             Close

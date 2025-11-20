@@ -47,9 +47,6 @@ export default function DashboardPage() {
 
   const loadedRef = useRef(false);
 
-  /* ------------------------------------------------------- */
-  /* INITIAL LOAD                                            */
-  /* ------------------------------------------------------- */
   useEffect(() => {
     if (loadedRef.current) return;
     loadedRef.current = true;
@@ -59,21 +56,13 @@ export default function DashboardPage() {
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) throw new Error("No authenticated user");
 
-        /* ------------------------------------------------------- */
-        /* 1️⃣ Try loading host row                                 */
-        /* ------------------------------------------------------- */
-        let { data: hostRow, error: hostFetchError } = await supabase
+        let { data: hostRow } = await supabase
           .from("hosts")
           .select("*")
           .eq("auth_id", user.id)
           .maybeSingle();
 
-        /* ------------------------------------------------------- */
-        /* 2️⃣ If no host exists, create one                       */
-        /* ------------------------------------------------------- */
         if (!hostRow) {
-          console.warn("⚠ No host found — creating a new host profile.");
-
           const newHost = {
             id: crypto.randomUUID(),
             auth_id: user.id,
@@ -84,45 +73,23 @@ export default function DashboardPage() {
             created_at: new Date().toISOString(),
           };
 
-          const { data: inserted, error: insertError } = await supabase
+          const { data: inserted } = await supabase
             .from("hosts")
             .insert([newHost])
             .select()
             .maybeSingle();
-
-          if (insertError) {
-            console.error("❌ Host insert failed:", insertError);
-          }
 
           hostRow = inserted;
         }
 
         setHost(hostRow);
 
-        /* ------------------------------------------------------- */
-        /* 3️⃣ Load all dashboard content                          */
-        /* ------------------------------------------------------- */
         if (hostRow?.id) {
           const [walls, wheels, pollsData, triviaData] = await Promise.all([
             getFanWallsByHost(hostRow.id),
-
-            supabase
-              .from("prize_wheels")
-              .select("*")
-              .eq("host_id", hostRow.id)
-              .order("created_at", { ascending: false }),
-
-            supabase
-              .from("polls")
-              .select("*")
-              .eq("host_id", hostRow.id)
-              .order("created_at", { ascending: false }),
-
-            supabase
-              .from("trivia_cards")
-              .select("*")
-              .eq("host_id", hostRow.id)
-              .order("created_at", { ascending: false }),
+            supabase.from("prize_wheels").select("*").eq("host_id", hostRow.id).order("created_at", { ascending: false }),
+            supabase.from("polls").select("*").eq("host_id", hostRow.id).order("created_at", { ascending: false }),
+            supabase.from("trivia_cards").select("*").eq("host_id", hostRow.id).order("created_at", { ascending: false }),
           ]);
 
           setFanWalls(walls);
@@ -141,10 +108,6 @@ export default function DashboardPage() {
     load();
   }, []);
 
-  /* ------------------------------------------------------- */
-  /* REFRESH HELPERS                                         */
-  /* ------------------------------------------------------- */
-
   async function refreshFanWalls() {
     if (!host?.id) return;
     const updated = await getFanWallsByHost(host.id);
@@ -153,59 +116,39 @@ export default function DashboardPage() {
 
   async function refreshPrizeWheels() {
     if (!host?.id) return;
-    const { data } = await supabase
-      .from("prize_wheels")
-      .select("*")
-      .eq("host_id", host.id)
-      .order("created_at", { ascending: false });
-
+    const { data } = await supabase.from("prize_wheels").select("*").eq("host_id", host.id).order("created_at", { ascending: false });
     setPrizeWheels(data || []);
   }
 
   async function refreshPolls() {
     if (!host?.id) return;
-    const { data } = await supabase
-      .from("polls")
-      .select("*")
-      .eq("host_id", host.id)
-      .order("created_at", { ascending: false });
-
+    const { data } = await supabase.from("polls").select("*").eq("host_id", host.id).order("created_at", { ascending: false });
     setPolls(data || []);
   }
 
   async function refreshTrivia() {
     if (!host?.id) return;
-
-    const { data } = await supabase
-      .from("trivia_cards")
-      .select("*")
-      .eq("host_id", host.id)
-      .order("created_at", { ascending: false });
-
+    const { data } = await supabase.from("trivia_cards").select("*").eq("host_id", host.id).order("created_at", { ascending: false });
     setTriviaList(data || []);
   }
 
-  /* ------------------------------------------------------- */
-  /* RENDER                                                  */
-  /* ------------------------------------------------------- */
-
   if (loading)
     return (
-      <div className={cn("flex", "items-center", "justify-center", "h-screen", "bg-black", "text-white")}>
+      <div className={cn("flex items-center justify-center h-screen bg-black text-white")}>
         <p>Loading Dashboard…</p>
       </div>
     );
 
   return (
-    <div className={cn("min-h-screen", "bg-[#0b111d]", "text-white", "flex", "flex-col", "items-center", "p-8")}>
+    <div className={cn("min-h-screen bg-[#0b111d] text-white flex flex-col items-center p-2")}>
 
-      {/* HEADER */}
-      <div className={cn("w-full", "flex", "items-center", "justify-between", "mb-6")}>
-        <HostProfilePanel host={host} setHost={setHost} />
-        <div className="w-10" />
-      </div>
+      {/* ⭐⭐⭐ PATCHED HEADER (NO TITLE) ⭐⭐⭐ */}
+<div className={cn('w-full', 'flex', 'items-center', 'justify-end', 'mb-6')}>
+  <HostProfilePanel host={host} setHost={setHost} />
+</div>
+{/* ⭐⭐⭐ END PATCH ⭐⭐⭐ */}
 
-      {/* CREATE BUTTONS */}
+
       <DashboardHeader
         onCreateFanWall={() => setFanWallModalOpen(true)}
         onCreatePoll={() => setPollModalOpen(true)}
@@ -214,21 +157,8 @@ export default function DashboardPage() {
         onCreateTriviaGame={() => setTriviaModalOpen(true)}
       />
 
-      {/* ====================================================== */}
-      {/* 🧠 TRIVIA GAMES — FIRST ROW                           */}
-      {/* ====================================================== */}
-      <TriviaGrid
-        trivia={triviaList}
-        host={host}
-        refreshTrivia={refreshTrivia}
-        onOpenOptions={(trivia) => {
-          console.log("Trivia Options Clicked:", trivia);
-        }}
-      />
+      <TriviaGrid trivia={triviaList} host={host} refreshTrivia={refreshTrivia} onOpenOptions={() => {}} />
 
-      {/* ====================================================== */}
-      {/* 📸 FAN WALLS — SECOND ROW                             */}
-      {/* ====================================================== */}
       <FanWallGrid
         walls={fanWalls}
         host={host}
@@ -240,9 +170,6 @@ export default function DashboardPage() {
         }}
       />
 
-      {/* ====================================================== */}
-      {/* 🎡 PRIZE WHEELS — THIRD ROW                           */}
-      {/* ====================================================== */}
       <PrizeWheelGrid
         wheels={prizeWheels}
         host={host}
@@ -254,46 +181,20 @@ export default function DashboardPage() {
         }}
       />
 
-      {/* ====================================================== */}
-      {/* 📊 POLLS — FOURTH ROW                                 */}
-      {/* ====================================================== */}
       <PollGrid
         host={host}
         refreshPolls={refreshPolls}
         onOpenOptions={(poll) => {
           setSelectedWall(null);
           setSelectedPrizeWheel(null);
-          setPollModalOpen(false);
           setTimeout(() => setSelectedPoll(poll), 25);
         }}
       />
 
-      {/* ------------------------------------------------------ */}
-      {/* CREATE MODALS                                          */}
-      {/* ------------------------------------------------------ */}
-      <CreateFanWallModal
-        isOpen={isFanWallModalOpen}
-        onClose={() => setFanWallModalOpen(false)}
-        hostId={host?.id}
-        refreshFanWalls={refreshFanWalls}
-      />
+      <CreateFanWallModal isOpen={isFanWallModalOpen} onClose={() => setFanWallModalOpen(false)} hostId={host?.id} refreshFanWalls={refreshFanWalls} />
+      <CreatePrizeWheelModal isOpen={isPrizeWheelModalOpen} onClose={() => setPrizeWheelModalOpen(false)} hostId={host?.id} refreshPrizeWheels={refreshPrizeWheels} />
+      <CreatePollModal isOpen={isPollModalOpen} onClose={() => setPollModalOpen(false)} hostId={host?.id} refreshPolls={refreshPolls} onPollCreated={setSelectedPoll} />
 
-      <CreatePrizeWheelModal
-        isOpen={isPrizeWheelModalOpen}
-        onClose={() => setPrizeWheelModalOpen(false)}
-        hostId={host?.id}
-        refreshPrizeWheels={refreshPrizeWheels}
-      />
-
-      <CreatePollModal
-        isOpen={isPollModalOpen}
-        onClose={() => setPollModalOpen(false)}
-        hostId={host?.id}
-        refreshPolls={refreshPolls}
-        onPollCreated={setSelectedPoll}
-      />
-
-      {/* TRIVIA MODAL */}
       <TriviaCreationModal
         isOpen={isTriviaModalOpen}
         onClose={() => setTriviaModalOpen(false)}
@@ -302,33 +203,21 @@ export default function DashboardPage() {
             const res = await fetch("/trivia/ai-generate", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                ...payload,
-                hostId: host?.id,
-              }),
+              body: JSON.stringify({ ...payload, hostId: host?.id }),
             });
 
             const data = await res.json();
-
-            if (!data.success) {
-              alert("Trivia creation failed: " + data.error);
-              return;
-            }
-
-            console.log("Trivia created:", data.triviaId);
+            if (!data.success) return alert("Trivia creation failed: " + data.error);
 
             setTriviaModalOpen(false);
             await refreshTrivia();
           } catch (err) {
-            console.error("Error creating trivia:", err);
+            console.error(err);
             alert("Error creating trivia.");
           }
         }}
       />
 
-      {/* ------------------------------------------------------ */}
-      {/* OPTIONS MODALS                                         */}
-      {/* ------------------------------------------------------ */}
       {selectedWall && (
         <OptionsModalFanWall
           key={`fanwall-${selectedWall.id}`}
@@ -362,10 +251,7 @@ export default function DashboardPage() {
         />
       )}
 
-      {/* ADS */}
-      {isAdsModalOpen && (
-        <AdsManagerModal host={host} onClose={() => setAdsModalOpen(false)} />
-      )}
+      {isAdsModalOpen && <AdsManagerModal host={host} onClose={() => setAdsModalOpen(false)} />}
     </div>
   );
 }
