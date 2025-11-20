@@ -1,0 +1,145 @@
+'use client';
+
+import { cn } from "@/lib/utils";
+
+export default function TermsModal({
+  isOpen,
+  onClose,
+  hostTerms = "",
+  masterTerms = ""
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  hostTerms?: string;
+  masterTerms?: string;
+}) {
+  if (!isOpen) return null;
+
+  /* ------------------ HARD-CODED FANINTERACT TERMS ------------------ */
+  const fanInteractTerms = `
+# FanInteract Terms & Conditions
+
+By using this platform, you agree to the following:
+
+## 1. Content Ownership
+You retain ownership of photos, messages, and media you submit.  
+You grant FanInteract and event hosts a non-exclusive license to display your content on event screens.
+
+## 2. Safety & Respect
+You agree not to upload:
+- hateful content  
+- nudity or explicit imagery  
+- copyrighted material you do not own  
+- harmful or deceptive content  
+
+Violations may result in removal or permanent bans.
+
+## 3. Data Usage
+FanInteract collects minimal data for event functionality:
+- form fields you submit  
+- device ID (anonymous)  
+- analytics for improving performance  
+
+We do **not** sell personal information.
+
+## 4. Liability
+FanInteract is not responsible for:
+- lost prizes  
+- event-related injuries  
+- unauthorized content displayed by other guests  
+
+Our platform is provided *as-is*.
+
+## 5. Event Hosts
+Event hosts may add additional terms that apply to their venue or event.
+
+## 6. Acceptance
+Using this service means you accept these terms.
+  `.trim();
+
+  /* ------------------ MERGED TERMS IN DISPLAY ORDER ------------------ */
+  const combinedTerms = `
+${fanInteractTerms}
+
+${masterTerms ? "\n---\n\n# Master Account Terms\n" + masterTerms : ""}
+
+${hostTerms ? "\n---\n\n# Host Venue Terms\n" + hostTerms : ""}
+  `.trim();
+
+  /* ------------------ BASIC MARKDOWN → HTML ------------------ */
+  function markdownToHtml(md: string) {
+    return md
+      .replace(/^### (.*$)/gim, "<h3>$1</h3>")
+      .replace(/^## (.*$)/gim, "<h2>$1</h2>")
+      .replace(/^# (.*$)/gim, "<h1>$1</h1>")
+      .replace(/^- (.*$)/gim, "<li>$1</li>")
+      .replace(/\*\*(.*?)\*\*/gim, "<strong>$1</strong>")
+      .replace(/\*(.*?)\*/gim, "<em>$1</em>")
+      .replace(/__(.*?)__/gim, "<u>$1</u>")
+      .replace(/\n/g, "<br/>");
+  }
+
+  const html = markdownToHtml(combinedTerms);
+
+  /* ------------------ RENDER ------------------ */
+  return (
+    <div
+      className={cn(
+        "fixed inset-0 bg-black/70 backdrop-blur-md z-[9999]",
+        "flex items-center justify-center"
+      )}
+      onClick={onClose}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className={cn(
+          "relative w-full max-w-[900px] h-[80vh] rounded-2xl",
+          "border border-blue-500/30 shadow-[0_0_40px_rgba(0,140,255,0.45)]",
+          "bg-gradient-to-br from-[#0b0f1a]/95 to-[#111827]/95",
+          "p-6 text-white flex flex-col"
+        )}
+      >
+        {/* CLOSE BUTTON */}
+        <button
+          onClick={onClose}
+          className={cn(
+            "absolute top-3 right-3 text-white/80 hover:text-white text-xl"
+          )}
+        >
+          ✕
+        </button>
+
+        {/* TITLE */}
+        <h3 className={cn("text-center text-xl font-semibold mb-4")}>
+          📜 Terms & Conditions
+        </h3>
+
+        {/* TERMS CONTENT */}
+        <div
+          className={cn(
+            "flex-grow overflow-y-auto",
+            "bg-black/30 border border-white/10 rounded-lg p-5",
+            "prose prose-invert max-w-none"
+          )}
+          dangerouslySetInnerHTML={{ __html: html }}
+        />
+
+        {/* FOOTER BUTTON */}
+        <div
+          className={cn(
+            "flex justify-center pt-4 mt-4 border-t border-white/10"
+          )}
+        >
+          <button
+            onClick={onClose}
+            className={cn(
+              "px-6 py-2 rounded-md bg-white/10 hover:bg-white/20 text-sm"
+            )}
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}

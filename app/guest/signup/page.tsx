@@ -9,8 +9,10 @@ import { cn } from "@/lib/utils";
 import { getSupabaseClient } from "@/lib/supabaseClient";
 import { syncGuestProfile, getOrCreateGuestDeviceId } from "@/lib/syncGuest";
 
+import TermsModal from "@/components/TermsModal";
+
 /* ----------------------------------------------------------
- * 🔥 STATE OPTIONS — FIX FOR MISSING VARIABLE
+ * 🔥 STATE OPTIONS
  * ---------------------------------------------------------- */
 const stateOptions = [
   "AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA",
@@ -24,9 +26,6 @@ export default function GuestSignupPage() {
   const router = useRouter();
   const params = useSearchParams();
 
-  /* ----------------------------------------------------------
-   * READ URL PARAMETERS
-   * ---------------------------------------------------------- */
   const redirect = params.get("redirect");
   const wallId = params.get("wall");
   const wheelId = params.get("prizewheel");
@@ -37,7 +36,14 @@ export default function GuestSignupPage() {
   const [wall, setWall] = useState<any>(null);
   const [hostSettings, setHostSettings] = useState<any>(null);
 
-  // Form fields
+  const [hostTerms, setHostTerms] = useState("");
+  const [masterTerms, setMasterTerms] = useState("");
+
+  const [showTermsModal, setShowTermsModal] = useState(false);
+
+  /* ----------------------------------------------------------
+   * FORM
+   * ---------------------------------------------------------- */
   const [form, setForm] = useState({
     first_name: "",
     last_name: "",
@@ -61,7 +67,7 @@ export default function GuestSignupPage() {
   }, []);
 
   /* ----------------------------------------------------------
-   * LOAD HOST SETTINGS BASED ON TYPE
+   * LOAD HOST + MASTER TERMS
    * ---------------------------------------------------------- */
   useEffect(() => {
     async function loadHostForWall() {
@@ -73,7 +79,7 @@ export default function GuestSignupPage() {
         .single();
 
       setWall(data);
-      if (data?.host_id) loadHostSettings(data.host_id);
+      if (data?.host_id) loadHost(data.host_id);
     }
 
     async function loadHostForWheel() {
@@ -84,7 +90,7 @@ export default function GuestSignupPage() {
         .eq("id", wheelId)
         .single();
 
-      if (data?.host_id) loadHostSettings(data.host_id);
+      if (data?.host_id) loadHost(data.host_id);
     }
 
     async function loadHostForPoll() {
@@ -95,7 +101,7 @@ export default function GuestSignupPage() {
         .eq("id", pollId)
         .single();
 
-      if (data?.host_id) loadHostSettings(data.host_id);
+      if (data?.host_id) loadHost(data.host_id);
     }
 
     loadHostForWall();
@@ -103,26 +109,29 @@ export default function GuestSignupPage() {
     loadHostForPoll();
   }, [wallId, wheelId, pollId]);
 
-  /* ----------------------------------------------------------
-   * LOAD HOST FIELD REQUIREMENTS
-   * ---------------------------------------------------------- */
-  async function loadHostSettings(hostId: string) {
-    const { data } = await supabase
+  async function loadHost(hostId: string) {
+    const { data: host } = await supabase
       .from("hosts")
-      .select(`
-        require_last_name,
-        require_email,
-        require_phone,
-        require_street,
-        require_city,
-        require_state,
-        require_zip,
-        require_age
-      `)
+      .select("*, master_id")
       .eq("id", hostId)
       .single();
 
-    setHostSettings(data);
+    if (host?.host_terms_markdown) {
+      setHostTerms(host.host_terms_markdown);
+    }
+
+    setHostSettings(host);
+
+    if (host?.master_id) {
+      const { data: master } = await supabase
+        .from("master_accounts")
+        .select("master_terms_markdown")
+        .eq("id", host.master_id)
+        .single();
+
+      if (master?.master_terms_markdown)
+        setMasterTerms(master.master_terms_markdown);
+    }
   }
 
   /* ----------------------------------------------------------
@@ -145,7 +154,6 @@ export default function GuestSignupPage() {
         return;
       }
 
-      // 🔥 Correct forwarding logic
       if (redirect) return router.push(redirect);
       if (wallId) return router.push(`/wall/${wallId}/submit`);
       if (wheelId) return router.push(`/prizewheel/${wheelId}/submit`);
@@ -165,7 +173,6 @@ export default function GuestSignupPage() {
     setSubmitting(true);
 
     try {
-      // Determine target ID
       let targetId =
         wallId ||
         wheelId ||
@@ -175,19 +182,16 @@ export default function GuestSignupPage() {
       if (!targetId && redirect?.startsWith("/polls/"))
         targetId = redirect.split("/")[2];
 
-      // Determine type
       const type =
         wallId ? "wall" :
         wheelId ? "prizewheel" :
         pollId ? "poll" :
         "";
 
-      // Save profile
       const { profile } = await syncGuestProfile(type, targetId, form);
 
       localStorage.setItem("guest_profile", JSON.stringify(profile));
 
-      // 🔥 Redirect correctly
       if (redirect) router.push(redirect);
       else if (wallId) router.push(`/wall/${wallId}/submit`);
       else if (wheelId) router.push(`/prizewheel/${wheelId}/submit`);
@@ -202,7 +206,7 @@ export default function GuestSignupPage() {
   };
 
   /* ----------------------------------------------------------
-   * FIELD RENDER HELPER
+   * FORM FIELD HELPER
    * ---------------------------------------------------------- */
   const renderField = (
     key: string,
@@ -225,12 +229,9 @@ export default function GuestSignupPage() {
     />
   );
 
-  /* ----------------------------------------------------------
-   * WAIT FOR SETTINGS
-   * ---------------------------------------------------------- */
   if (!hostSettings)
     return (
-      <main className={cn('text-white', 'flex', 'items-center', 'justify-center', 'h-screen')}>
+      <main className={cn("text-white flex items-center justify-center h-screen")}>
         Loading…
       </main>
     );
@@ -239,10 +240,10 @@ export default function GuestSignupPage() {
    * RENDER PAGE
    * ---------------------------------------------------------- */
   return (
-    <main className={cn('relative', 'flex', 'items-center', 'justify-center', 'min-h-screen', 'w-full', 'text-white')}>
+    <main className={cn("relative flex items-center justify-center min-h-screen w-full text-white")}>
       {/* BACKGROUND */}
       <div
-        className={cn('absolute', 'inset-0', 'bg-cover', 'bg-center')}
+        className={cn("absolute inset-0 bg-cover bg-center")}
         style={{
           backgroundImage: wall?.background_value?.includes("http")
             ? `url(${wall.background_value})`
@@ -251,7 +252,7 @@ export default function GuestSignupPage() {
         }}
       />
 
-      <div className={cn('absolute', 'inset-0', 'bg-black/60', 'backdrop-blur-md')} />
+      <div className={cn("absolute inset-0 bg-black/60 backdrop-blur-md")} />
 
       {/* CARD */}
       <motion.div
@@ -265,13 +266,13 @@ export default function GuestSignupPage() {
         )}
       >
         {/* LOGO */}
-        <div className={cn('flex', 'justify-center', 'mb-6')}>
+        <div className={cn("flex justify-center mb-6")}>
           <Image
             src="/faninteractlogo.png"
             alt="FanInteract"
             width={360}
             height={120}
-            className={cn('w-[240px]', 'md:w-[320px]', 'drop-shadow-[0_0_32px_rgba(56,189,248,0.4)]')}
+            className={cn("w-[240px] md:w-[320px] drop-shadow-[0_0_32px_rgba(56,189,248,0.4)]")}
           />
         </div>
 
@@ -285,7 +286,7 @@ export default function GuestSignupPage() {
             ],
           }}
           transition={{ duration: 2, repeat: Infinity }}
-          className={cn('text-center', 'text-2xl', 'font-semibold', 'text-sky-300', 'mb-6')}
+          className={cn("text-center text-2xl font-semibold text-sky-300 mb-6")}
         >
           Join the Fan Zone
         </motion.h2>
@@ -318,7 +319,10 @@ export default function GuestSignupPage() {
               onChange={(e) =>
                 setForm({ ...form, state: e.target.value })
               }
-              className={cn('w-full', 'p-3', 'rounded-xl', 'bg-black/40', 'border', 'border-white/20', 'focus:border-sky-400', 'outline-none', 'text-white')}
+              className={cn(
+                "w-full p-3 rounded-xl bg-black/40 border border-white/20",
+                "focus:border-sky-400 outline-none text-white"
+              )}
             >
               <option value="">State *</option>
               {stateOptions.map((s) => (
@@ -335,17 +339,22 @@ export default function GuestSignupPage() {
           {hostSettings.require_age &&
             renderField("age", "Age *", "number", true)}
 
-          <label className={cn('flex', 'items-center', 'gap-2', 'text-sm', 'text-gray-300', 'mt-2')}>
+          {/* TERMS CHECKBOX WITH MODAL BUTTON */}
+          <label className={cn("flex items-center gap-2 text-sm text-gray-300 mt-2")}>
             <input
               type="checkbox"
-              className={cn('w-4', 'h-4', 'accent-sky-400')}
+              className={cn("w-4 h-4 accent-sky-400")}
               checked={agree}
               onChange={(e) => setAgree(e.target.checked)}
             />
             I agree to the{" "}
-            <a href="/terms" target="_blank" className={cn('text-sky-400', 'underline')}>
+            <button
+              type="button"
+              onClick={() => setShowTermsModal(true)}
+              className={cn("text-sky-400 underline")}
+            >
               Terms
-            </a>
+            </button>
           </label>
 
           <button
@@ -360,6 +369,14 @@ export default function GuestSignupPage() {
           </button>
         </form>
       </motion.div>
+
+      {/* TERMS MODAL */}
+      <TermsModal
+        isOpen={showTermsModal}
+        onClose={() => setShowTermsModal(false)}
+        hostTerms={hostTerms}
+        masterTerms={masterTerms}
+      />
     </main>
   );
 }

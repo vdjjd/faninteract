@@ -24,6 +24,7 @@ import {
 
 import ChangeEmailModal from "@/components/ChangeEmailModal";
 import ChangePasswordModal from "@/components/ChangePasswordModal";
+import HostTermsModal from "@/components/HostTermsModal";
 
 import Modal from "@/components/Modal";
 import { Switch } from "@/components/ui/switch";
@@ -39,10 +40,10 @@ export default function HostProfilePanel({
   setHost,
 }: HostProfilePanelProps) {
   const [isOpen, setIsOpen] = useState(false);
-
   const [showEmailModal, setShowEmailModal] = useState(false);
   const [showPassModal, setShowPassModal] = useState(false);
   const [showGuestModal, setShowGuestModal] = useState(false);
+  const [showTermsModal, setShowTermsModal] = useState(false);
 
   const [uploadingLogo, setUploadingLogo] = useState(false);
   const [logoPreview, setLogoPreview] = useState(host?.branding_logo_url || "");
@@ -59,9 +60,8 @@ export default function HostProfilePanel({
     setHost((prev: any) => ({ ...prev, [field]: value }));
   }
 
-  /* -------------------------------------------------------------
-     LOGO UPLOAD — convert to PNG, resize, upload, update DB
-  ------------------------------------------------------------- */
+  /* --------------------------- LOGO UPLOAD --------------------------- */
+
   async function handleLogoUpload(e: any) {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -70,7 +70,6 @@ export default function HostProfilePanel({
 
     try {
       const bitmap = await createImageBitmap(file);
-
       const maxSize = 1600;
       const size = Math.min(maxSize, bitmap.width, bitmap.height);
 
@@ -128,19 +127,15 @@ export default function HostProfilePanel({
     setUploadingLogo(false);
   }
 
-  /* -------------------------------------------------------------
-     DELETE LOGO — remove from bucket + clear DB
-  ------------------------------------------------------------- */
+  /* --------------------------- DELETE LOGO --------------------------- */
+
   async function handleDeleteLogo() {
     if (!host?.branding_logo_url) return;
 
     const url: string = host.branding_logo_url;
     const filename = url.split("/").pop()?.split("?")[0];
 
-    if (!filename) {
-      alert("Could not extract logo filename.");
-      return;
-    }
+    if (!filename) return alert("Could not extract logo filename.");
 
     const { error: deleteError } = await supabase.storage
       .from("host-logos")
@@ -161,7 +156,8 @@ export default function HostProfilePanel({
     setLogoPreview("");
   }
 
-  /* -------------------------  GUEST OPTIONS MODAL ------------------------ */
+  /* ------------------------- Guest Options Modal ------------------------ */
+
   const GuestOptionsModal = () => (
     <Modal isOpen={showGuestModal} onClose={() => setShowGuestModal(false)}>
       <div className="text-white">
@@ -172,9 +168,7 @@ export default function HostProfilePanel({
         <div className="space-y-4">
           <div className={cn('flex', 'items-center', 'justify-between', 'p-2', 'bg-black/40', 'rounded-lg', 'border', 'border-white/10')}>
             <span className={cn('font-medium', 'text-gray-200')}>First Name</span>
-            <span className={cn('text-gray-400', 'text-sm', 'italic')}>
-              (always required)
-            </span>
+            <span className={cn('text-gray-400', 'text-sm', 'italic')}>(always required)</span>
           </div>
 
           {[
@@ -203,6 +197,8 @@ export default function HostProfilePanel({
     </Modal>
   );
 
+  /* --------------------------- RENDER PANEL --------------------------- */
+
   if (!host) {
     return (
       <div className={cn('flex', 'items-center', 'justify-center', 'text-gray-400', 'text-sm', 'py-6')}>
@@ -217,8 +213,7 @@ export default function HostProfilePanel({
         <button className={cn('rounded-full', 'w-10', 'h-10', 'overflow-hidden', 'border', 'border-gray-500', 'hover:ring-2', 'hover:ring-blue-500', 'transition-all')}>
           <div className={cn('bg-gray-700', 'w-full', 'h-full', 'flex', 'items-center', 'justify-center', 'text-gray-200', 'font-bold')}>
             {host?.first_name?.[0]?.toUpperCase() ||
-              host?.venue_name?.[0]?.toUpperCase() ||
-              "H"}
+              host?.venue_name?.[0]?.toUpperCase() || "H"}
           </div>
         </button>
       </SheetTrigger>
@@ -234,6 +229,7 @@ export default function HostProfilePanel({
         </SheetHeader>
 
         <div className={cn('mt-5', 'flex', 'flex-col', 'gap-6')}>
+
           {/* ---------------------- ACCOUNT ----------------------- */}
           <section>
             <div className={cn('flex', 'items-center', 'justify-center', 'gap-3', 'mb-3', 'text-blue-400', 'font-semibold')}>
@@ -241,7 +237,8 @@ export default function HostProfilePanel({
             </div>
 
             <div className={cn('flex', 'flex-col', 'items-center', 'gap-3', 'text-center')}>
-              {/* Circle Avatar */}
+
+              {/* Avatar */}
               <div className={cn('w-24', 'h-24', 'rounded-full', 'overflow-hidden', 'border', 'border-gray-600', 'shadow-md', 'flex', 'items-center', 'justify-center', 'bg-gray-800')}>
                 <span className={cn('text-3xl', 'font-semibold', 'text-gray-300')}>
                   {host?.first_name?.[0]?.toUpperCase() || "H"}
@@ -257,9 +254,8 @@ export default function HostProfilePanel({
                 />
               )}
 
-              {/* Upload + Delete Buttons (compact) */}
+              {/* Upload + Delete */}
               <div className={cn('flex', 'gap-2', 'mt-2')}>
-                {/* Upload */}
                 <Button
                   onClick={() => fileInputRef.current?.click()}
                   className={cn('px-3', 'py-2', 'flex', 'items-center', 'gap-1', 'bg-blue-600', 'hover:bg-blue-700')}
@@ -270,7 +266,6 @@ export default function HostProfilePanel({
                   </span>
                 </Button>
 
-                {/* Delete */}
                 <Button
                   variant="destructive"
                   disabled={!logoPreview}
@@ -290,10 +285,8 @@ export default function HostProfilePanel({
                 onChange={handleLogoUpload}
               />
 
-              {/* Instructions */}
               <p className={cn('text-xs', 'text-gray-400', 'mt-1', 'text-center')}>
-                Best results:
-                <br />
+                Best results:<br />
                 <strong>1600 × 1600 PNG</strong> (transparent background)
               </p>
 
@@ -307,7 +300,7 @@ export default function HostProfilePanel({
                 <p className={cn('text-sm', 'text-gray-400')}>{host?.email}</p>
               </div>
 
-              {/* Email + Password */}
+              {/* Change Email + Password */}
               <div className={cn('flex', 'flex-col', 'gap-2', 'w-full', 'mt-4')}>
                 <Button variant="outline" onClick={() => setShowEmailModal(true)}>
                   Change Email
@@ -344,6 +337,15 @@ export default function HostProfilePanel({
               Guest Sign Up Options
             </Button>
 
+            {/* ⭐ TERMS BUTTON — now placed HERE */}
+            <Button
+              variant="outline"
+              className={cn('w-full', 'mt-2')}
+              onClick={() => setShowTermsModal(true)}
+            >
+              Terms & Conditions For Guests
+            </Button>
+
             <GuestOptionsModal />
           </section>
 
@@ -362,7 +364,11 @@ export default function HostProfilePanel({
             <div className={cn('flex', 'items-center', 'justify-center', 'gap-3', 'mb-3', 'text-blue-400', 'font-semibold')}>
               <LogOut className={cn('w-5', 'h-5')} /> Security
             </div>
-            <Button variant="destructive" className="w-full" onClick={handleLogout}>
+            <Button
+              variant="destructive"
+              className="w-full"
+              onClick={handleLogout}
+            >
               Logout
             </Button>
           </section>
@@ -370,15 +376,23 @@ export default function HostProfilePanel({
           <div className="h-8" />
         </div>
 
-        {/* Email Modal */}
+        {/* EMAIL MODAL */}
         <Modal isOpen={showEmailModal} onClose={() => setShowEmailModal(false)}>
           <ChangeEmailModal onClose={() => setShowEmailModal(false)} />
         </Modal>
 
-        {/* Password Modal */}
+        {/* PASSWORD MODAL */}
         <Modal isOpen={showPassModal} onClose={() => setShowPassModal(false)}>
           <ChangePasswordModal onClose={() => setShowPassModal(false)} />
         </Modal>
+
+        {/* ⭐ TERMS MODAL */}
+        <HostTermsModal
+          isOpen={showTermsModal}
+          onClose={() => setShowTermsModal(false)}
+          host={host}
+          setHost={setHost}
+        />
       </SheetContent>
     </Sheet>
   );
