@@ -38,14 +38,22 @@ const STYLE: Record<string, React.CSSProperties> = {
     borderRadius: '6px',
   },
 
+  /* ⭐ PATCH ADDED — BLACK OUTLINE */
   nickname: {
     fontSize: 'clamp(3rem,4vw,5rem)',
     fontWeight: 900,
     color: '#fff',
     textTransform: 'uppercase',
     margin: 0,
+    textShadow: `
+      2px 2px 2px #000,
+      -2px 2px 2px #000,
+      2px -2px 2px #000,
+      -2px -2px 2px #000
+    `,
   },
 
+  /* ⭐ PATCH ADDED — BLACK OUTLINE */
   message: {
     fontSize: 'clamp(4rem,1vw,2.4rem)',
     color: '#fff',
@@ -53,6 +61,12 @@ const STYLE: Record<string, React.CSSProperties> = {
     maxWidth: '90%',
     marginTop: '1.2vh',
     fontWeight: 600,
+    textShadow: `
+      2px 2px 2px #000,
+      -2px 2px 2px #000,
+      2px -2px 2px #000,
+      -2px -2px 2px #000
+    `,
   },
 
   scanText: {
@@ -133,7 +147,6 @@ const transitions: Record<string, any> = {
     transition: { duration: 0.9, ease: 'easeInOut' },
   },
 
-  /* ⭐ NEW — Flip (horizontal flip) */
   'Flip': {
     initial: { opacity: 0, rotateY: 90 },
     animate: { opacity: 1, rotateY: 0 },
@@ -141,7 +154,6 @@ const transitions: Record<string, any> = {
     transition: { duration: 0.9, ease: 'easeInOut' },
   },
 
-  /* ⭐ NEW — Rotate In / Rotate Out */
   'Rotate In / Rotate Out': {
     initial: { opacity: 0, rotate: -180 },
     animate: { opacity: 1, rotate: 0 },
@@ -149,7 +161,6 @@ const transitions: Record<string, any> = {
     transition: { duration: 0.9, ease: 'easeInOut' },
   },
 };
-
 
 const transitionKeys = Object.keys(transitions);
 
@@ -189,13 +200,13 @@ export default function SingleHighlightWall({
   const transitionType = event?.post_transition || 'Fade In / Fade Out';
   const displayDuration = speedMap[event?.transition_speed || 'Medium'];
 
-  /* Reset posts on load */
+  /* Reset posts when list changes */
   useEffect(() => {
     setLivePosts(posts || []);
     setCurrentIndex(0);
   }, [posts]);
 
-  /* Rotation Engine */
+  /* Automatic rotation engine */
   useEffect(() => {
     if (!livePosts.length) return;
 
@@ -215,10 +226,10 @@ export default function SingleHighlightWall({
     return () => clearInterval(interval);
   }, [livePosts.length, displayDuration, transitionType]);
 
-  /* Choose transition */
   const effectiveTransition = useMemo(() => {
     if (transitionType === 'Random')
       return transitions[randomTransition || 'Fade In / Fade Out'];
+
     return transitions[transitionType] || transitions['Fade In / Fade Out'];
   }, [transitionType, randomTransition]);
 
@@ -262,6 +273,7 @@ export default function SingleHighlightWall({
           display: 'flex',
         }}
       >
+        {/* Left Photo */}
         <div
           style={{
             position: 'absolute',
@@ -288,6 +300,7 @@ export default function SingleHighlightWall({
           </AnimatePresence>
         </div>
 
+        {/* Right Panel */}
         <div
           style={{
             flexGrow: 1,
@@ -298,6 +311,7 @@ export default function SingleHighlightWall({
             alignItems: 'center',
           }}
         >
+          {/* Logo */}
           <div
             style={{
               width: 'clamp(400px,28vw,380px)',
@@ -309,7 +323,6 @@ export default function SingleHighlightWall({
               background: 'transparent',
               overflow: 'hidden',
               padding: '6px',
-              marginBottom: '0vh',
             }}
           >
             <img
@@ -325,12 +338,15 @@ export default function SingleHighlightWall({
 
           <div style={STYLE.greyBar} />
 
+          {/* ⭐ NOW OUTLINED IN BLACK */}
           <p style={STYLE.nickname}>{current?.nickname || 'Guest'}</p>
 
+          {/* ⭐ NOW OUTLINED IN BLACK */}
           <p style={STYLE.message}>{current?.message || 'Be the first to post!'}</p>
         </div>
       </div>
 
+      {/* QR Code */}
       <div style={STYLE.qrContainer}>
         <p style={STYLE.scanText}>Scan Me To Join</p>
 

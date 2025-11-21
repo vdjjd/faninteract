@@ -23,7 +23,7 @@ const animSpeedMap: Record<string, number> = {
 };
 
 /* -------------------------------------- */
-/* FULL TRANSITION MAP (MATCHES OPTIONS)   */
+/* FULL TRANSITION MAP                     */
 /* -------------------------------------- */
 const transitions: Record<string, any> = {
   'Fade In / Fade Out': {
@@ -75,7 +75,6 @@ const transitions: Record<string, any> = {
     transition: { duration: 0.9, ease: 'easeInOut' },
   },
 
-  /* NEW — Flip */
   'Flip': {
     initial: { opacity: 0, rotateY: 90 },
     animate: { opacity: 1, rotateY: 0 },
@@ -83,7 +82,6 @@ const transitions: Record<string, any> = {
     transition: { duration: 0.9, ease: 'easeInOut' },
   },
 
-  /* NEW — Rotate In / Rotate Out */
   'Rotate In / Rotate Out': {
     initial: { opacity: 0, rotate: -180 },
     animate: { opacity: 1, rotate: 0 },
@@ -95,7 +93,7 @@ const transitions: Record<string, any> = {
 const transitionKeys = Object.keys(transitions);
 
 /* -------------------------------------- */
-/* POST ROW                                */
+/* POST ROW (PATCHED — OUTLINED TEXT)     */
 /* -------------------------------------- */
 function PostRow({ post, reversed = false }) {
   if (!post)
@@ -115,6 +113,13 @@ function PostRow({ post, reversed = false }) {
         Waiting for posts…
       </div>
     );
+
+  const textOutline = `
+    2px 2px 2px #000,
+    -2px 2px 2px #000,
+    2px -2px 2px #000,
+    -2px -2px 2px #000
+  `;
 
   const PhotoBlock = (
     <div
@@ -156,6 +161,7 @@ function PostRow({ post, reversed = false }) {
           margin: 0,
           fontWeight: 800,
           fontSize: '2.2rem',
+          textShadow: textOutline,
         }}
       >
         {post.nickname}
@@ -163,10 +169,12 @@ function PostRow({ post, reversed = false }) {
 
       <p
         style={{
-          color: '#ddd',
+          color: '#fff',
           textAlign: 'center',
           marginTop: '1vh',
           fontSize: '1.6rem',
+          fontWeight: 600,
+          textShadow: textOutline,
         }}
       >
         {post.message}
@@ -192,7 +200,7 @@ function PostRow({ post, reversed = false }) {
 }
 
 /* -------------------------------------- */
-/* GRID 2x2 WALL                          */
+/* GRID 2x2 WALL (FULL PAGE)              */
 /* -------------------------------------- */
 export default function Grid2x2Wall({
   event,
@@ -211,7 +219,6 @@ export default function Grid2x2Wall({
   const speedValue = event?.transition_speed || 'Medium';
   const displayDuration = speedMap[speedValue];
 
-  /* BACKGROUND, TITLE, LOGO */
   const [bg, setBg] = useState('');
   const [brightness, setBrightness] = useState(100);
   const [title, setTitle] = useState('Fan Zone Wall');
@@ -234,8 +241,8 @@ export default function Grid2x2Wall({
   }, [event]);
 
   /* -------------------------------------- */
-  /* QUAD ROTATION                           */
-  /* -------------------------------------- */
+  /* ROTATION ENGINE                         */
+/* -------------------------------------- */
   const [gridPosts, setGridPosts] = useState<any[]>([]);
 
   useEffect(() => {
@@ -282,7 +289,7 @@ export default function Grid2x2Wall({
 
   /* -------------------------------------- */
   /* RENDER                                 */
-  /* -------------------------------------- */
+/* -------------------------------------- */
   return (
     <div
       style={{
