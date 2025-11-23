@@ -178,7 +178,7 @@ export default function PrizeWheelSubmissionPage() {
     setErrorMsg("");
     setPassError("");
 
-    /* Validate passphrase if required */
+    /* Passcode */
     if (requirePasscode) {
       const wheelPass = wheel?.passphrase || "";
 
@@ -186,10 +186,12 @@ export default function PrizeWheelSubmissionPage() {
         setPassError("Please enter the passphrase.");
         return;
       }
+
       if (passInput.trim().toLowerCase() !== wheelPass.toLowerCase()) {
-        setPassError("Incorrect passphrase. Try again.");
+        setPassError("Incorrect passphrase.");
         return;
       }
+
       setRequirePasscode(false);
     }
 
@@ -203,7 +205,7 @@ export default function PrizeWheelSubmissionPage() {
     const hasPhone = profile?.phone?.trim();
 
     if (!hasEmail && !hasPhone) {
-      setErrorMsg("You must provide either an email or a phone number.");
+      setErrorMsg("You must provide either an email or phone number.");
       return;
     }
 
@@ -398,10 +400,13 @@ export default function PrizeWheelSubmissionPage() {
               style={{
                 width: "100%",
                 height: 260,
+                position: "relative",
                 borderRadius: 12,
                 overflow: "hidden",
                 marginBottom: 10,
                 background: "rgba(0,0,0,0.3)",
+                touchAction: "none",       // << FIX
+                zIndex: 1,
               }}
             >
               {imageSrc ? (
@@ -413,6 +418,11 @@ export default function PrizeWheelSubmissionPage() {
                   onCropChange={setCrop}
                   onZoomChange={setZoom}
                   onCropComplete={(_, c) => setCroppedAreaPixels(c)}
+                  style={{
+                    containerStyle: {
+                      touchAction: "none",  // << FIX
+                    },
+                  }}
                 />
               ) : (
                 <div
