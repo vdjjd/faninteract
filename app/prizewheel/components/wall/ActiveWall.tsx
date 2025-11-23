@@ -1,4 +1,4 @@
-'use client';
+"use client";
 
 import { useEffect, useRef } from "react";
 import { supabase } from "@/lib/supabaseClient";
@@ -83,25 +83,30 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
   const brightA = wheel?.tile_brightness_a ?? 100;
   const brightB = wheel?.tile_brightness_b ?? 100;
 
-  /* HOST LOGO */
   const logoUrl =
     wheel?.host?.branding_logo_url?.trim() !== ""
       ? wheel.host.branding_logo_url
       : "/faninteractlogo.png";
 
-  /* ASSIGN ENTRIES */
+  /* ===========================================================
+     🔥 FIXED ENTRY ASSIGNMENT (the duplication bug)
+     =========================================================== */
   function assignEntriesToTiles(normalized: any[]) {
     if (!normalized?.length) return;
 
-    if (!selectedEntriesRef.current) {
-      const shuffled = shuffleArray(normalized);
-      selectedEntriesRef.current = shuffled.slice(0, 16);
+    // Always pick the latest 16 entries (shuffled each update)
+    let selected = [];
+
+    if (normalized.length <= 16) {
+      selected = [...normalized];
+    } else {
+      selected = shuffleArray(normalized).slice(0, 16);
     }
 
-    const selected = selectedEntriesRef.current;
+    selectedEntriesRef.current = selected;
 
     wrapperRefs.current.forEach((wrap, i) => {
-      const entry = selected[i % selected.length];
+      const entry = selected[i] || selected[0];
 
       const imgHolder = wrap.querySelector(".imgHolder") as HTMLElement | null;
       const nameHolder = wrap.querySelector(".nameHolder") as HTMLElement | null;
@@ -173,6 +178,7 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
       ? document.documentElement.requestFullscreen().catch(() => {})
       : document.exitFullscreen();
 
+  /* GEOMETRY */
   const TILE_SIZE = 820;
   const TILE_COUNT = 16;
   const RADIUS = 2550;
@@ -371,6 +377,7 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
       wheelGroup.add(tile);
     }
 
+    // INITIAL TILE ASSIGNMENT
     assignEntriesToTiles(normalizeEntries(entries));
 
     function animate(time: number) {
@@ -435,10 +442,14 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
     };
   }, []);
 
-  /* UPDATE ENTRIES */
+  /* ===========================================================
+     🔥 FIXED ENTRY UPDATE (updates wheel tiles in real-time)
+     =========================================================== */
   useEffect(() => {
     if (!wrapperRefs.current.length) return;
-    assignEntriesToTiles(normalizeEntries(entries));
+
+    const normalized = normalizeEntries(entries);
+    assignEntriesToTiles(normalized);
   }, [entries]);
 
   /* ===========================================================
