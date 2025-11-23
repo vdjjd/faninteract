@@ -1,4 +1,3 @@
-// ✅ PrizeWheelSubmissionPage.tsx (FULLY PATCHED)
 "use client";
 
 import { useState, useEffect, useRef } from "react";
@@ -7,9 +6,7 @@ import Cropper from "react-easy-crop";
 import imageCompression from "browser-image-compression";
 import { getSupabaseClient } from "@/lib/supabaseClient";
 
-/* --------------------------------------------- */
-/* Load stored guest profile                     */
-/* --------------------------------------------- */
+/* Load stored guest profile */
 function getStoredGuestProfile() {
   try {
     const raw =
@@ -33,7 +30,7 @@ export default function PrizeWheelSubmissionPage() {
   const [wheel, setWheel] = useState<any>(null);
   const [profile, setProfile] = useState<any>(null);
 
-  /* Passcode UI */
+  /* Passcode */
   const [requirePasscode, setRequirePasscode] = useState(false);
   const [passInput, setPassInput] = useState("");
   const [passError, setPassError] = useState("");
@@ -41,33 +38,29 @@ export default function PrizeWheelSubmissionPage() {
   /* Remote spin */
   const [selectedForSpin, setSelectedForSpin] = useState(false);
 
-  /* Image state */
+  /* Image */
   const [imageSrc, setImageSrc] = useState<string | null>(null);
   const [crop, setCrop] = useState({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
   const [croppedAreaPixels, setCroppedAreaPixels] = useState(null);
 
-  /* Submission state */
+  /* Submission */
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
 
   const fileRef = useRef<HTMLInputElement>(null);
 
-  /* --------------------------------------------- */
-  /* Require signup                                 */
-  /* --------------------------------------------- */
+  /* Redirect if no profile */
   useEffect(() => {
     const p = getStoredGuestProfile();
     if (!p) {
-      router.replace(`/prizewheel/${wheelId}/signup`);
-    } else {
-      setProfile(p);
+      router.replace(`/guest/signup?prizewheel=${wheelId}`);
+      return;
     }
+    setProfile(p);
   }, [router, wheelId]);
 
-  /* --------------------------------------------- */
-  /* Load wheel details                             */
-  /* --------------------------------------------- */
+  /* Load wheel config */
   useEffect(() => {
     async function loadWheel() {
       const { data } = await supabase
@@ -87,9 +80,7 @@ export default function PrizeWheelSubmissionPage() {
     loadWheel();
   }, [wheelId]);
 
-  /* --------------------------------------------- */
-  /* Realtime: Remote spin selection                */
-  /* --------------------------------------------- */
+  /* Remote spin selection */
   useEffect(() => {
     if (!profile?.id || !wheelId) return;
 
@@ -109,7 +100,6 @@ export default function PrizeWheelSubmissionPage() {
     return () => supabase.removeChannel(channel);
   }, [profile?.id, wheelId]);
 
-  /* Trigger remote spin */
   const triggerRemoteSpin = async () => {
     if (!profile?.id) return;
 
@@ -122,7 +112,7 @@ export default function PrizeWheelSubmissionPage() {
     setSelectedForSpin(false);
   };
 
-  /* Camera click */
+  /* Camera */
   const openCamera = () => {
     if (fileRef.current) {
       fileRef.current.setAttribute("capture", "user");
@@ -130,9 +120,7 @@ export default function PrizeWheelSubmissionPage() {
     }
   };
 
-  /* --------------------------------------------- */
-  /* Handle file upload                             */
-  /* --------------------------------------------- */
+  /* File handler */
   const handleFile = async (e: any) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -148,19 +136,32 @@ export default function PrizeWheelSubmissionPage() {
     reader.readAsDataURL(compressed);
   };
 
-  /* --------------------------------------------- */
-  /* Upload Image                                    */
-  /* --------------------------------------------- */
+  /* Safe base64 → blob conversion */
+  function base64ToBlob(dataURL: string) {
+    const [header, base64] = dataURL.split(",");
+    const mime = header.match(/:(.*?);/)?.[1] || "image/jpeg";
+    const binary = atob(base64);
+    const len = binary.length;
+    const buffer = new ArrayBuffer(len);
+    const view = new Uint8Array(buffer);
+
+    for (let i = 0; i < len; i++) {
+      view[i] = binary.charCodeAt(i);
+    }
+
+    return new Blob([buffer], { type: mime });
+  }
+
+  /* Upload image */
   const uploadImage = async () => {
     if (!imageSrc) return null;
 
-    const blob = await (await fetch(imageSrc)).blob();
-    const file = new File([blob], "upload.jpg", { type: "image/jpeg" });
+    const blob = base64ToBlob(imageSrc);
     const fileName = `${profile.id}-${Date.now()}-wheel.jpg`;
 
     const { error } = await supabase.storage
       .from("guest_uploads")
-      .upload(fileName, file);
+      .upload(fileName, blob, { contentType: "image/jpeg" });
 
     if (error) return null;
 
@@ -171,33 +172,33 @@ export default function PrizeWheelSubmissionPage() {
     return data.publicUrl;
   };
 
-  /* --------------------------------------------- */
-  /* SUBMIT — with NEW VALIDATION                   */
-  /* --------------------------------------------- */
+  /* Submission */
   const submitEntry = async (e: any) => {
     e.preventDefault();
     setErrorMsg("");
+    setPassError("");
 
-    /* Validate passphrase */
+    /* Validate passphrase if required */
     if (requirePasscode) {
+      const wheelPass = wheel?.passphrase || "";
+
       if (!passInput.trim()) {
         setPassError("Please enter the passphrase.");
         return;
       }
-      if (passInput.trim().toLowerCase() !== wheel.passphrase.toLowerCase()) {
+      if (passInput.trim().toLowerCase() !== wheelPass.toLowerCase()) {
         setPassError("Incorrect passphrase. Try again.");
         return;
       }
       setRequirePasscode(false);
     }
 
-    /* PHOTO REQUIRED */
+    /* Photo required */
     if (!imageSrc) {
       setErrorMsg("You must upload a selfie to continue.");
       return;
     }
 
-    /* EMAIL OR PHONE REQUIRED */
     const hasEmail = profile?.email?.trim();
     const hasPhone = profile?.phone?.trim();
 
@@ -221,14 +222,9 @@ export default function PrizeWheelSubmissionPage() {
       },
     ]);
 
-    setTimeout(() => {
-      router.push(`/thanks/${wheelId}`);
-    }, 300);
+    router.push(`/thanks/${wheelId}`);
   };
 
-  /* --------------------------------------------- */
-  /* Render                                         */
-  /* --------------------------------------------- */
   if (!wheel || !profile) return null;
 
   const bg =
@@ -241,6 +237,8 @@ export default function PrizeWheelSubmissionPage() {
     wheel.host?.branding_logo_url?.trim()
       ? wheel.host.branding_logo_url
       : "/faninteractlogo.png";
+
+  /* ---------- UI ---------- */
 
   return (
     <div
@@ -262,190 +260,259 @@ export default function PrizeWheelSubmissionPage() {
         }}
       />
 
-      {/* Remote Spin Notice */}
-      <div
-        style={{
-          position: "relative",
-          zIndex: 50,
-          maxWidth: 480,
-          margin: "0 auto 20px",
-          padding: "12px 16px",
-          borderRadius: 12,
-          background: "rgba(0,0,0,0.55)",
-          border: "1px solid rgba(255,255,255,0.15)",
-          color: "#fff",
-          textAlign: "center",
-          fontSize: 15,
-        }}
-      >
-        <strong>Stay right here…</strong>
-        <br />
-        You may be chosen to <strong>SPIN THE WHEEL</strong> from your phone!
-      </div>
-
-      {/* Remote Spin Button */}
-      {selectedForSpin && (
-        <button
-          onClick={triggerRemoteSpin}
-          style={{
-            position: "relative",
-            zIndex: 60,
-            maxWidth: 480,
-            width: "100%",
-            margin: "0 auto 20px",
-            padding: "16px 0",
-            borderRadius: 14,
-            background: "linear-gradient(90deg,#22c55e,#16a34a)",
-            fontWeight: 800,
-            color: "#fff",
-            fontSize: 20,
-            animation: "glowRemote 1.5s infinite",
-          }}
-        >
-          🎰 Spin From Your Phone
-        </button>
-      )}
-
-      {/* MAIN FORM */}
-      <form
-        onSubmit={submitEntry}
-        style={{
-          position: "relative",
-          maxWidth: 480,
-          margin: "auto",
-          padding: 25,
-          textAlign: "center",
-          borderRadius: 18,
-          background: "rgba(0,0,0,0.55)",
-          boxShadow: "0 0 30px rgba(0,0,0,0.7)",
-          border: "1px solid rgba(255,255,255,0.15)",
-        }}
-      >
-        <img
-          src={logo}
-          style={{
-            width: "70%",
-            margin: "0 auto 12px",
-            display: "block",
-            filter: "drop-shadow(0 0 25px rgba(56,189,248,0.6))",
-          }}
-        />
-
-        <h2 style={{ marginBottom: 16 }}>{wheel.title || "Prize Wheel Entry"}</h2>
-
-        {/* Image Crop Box */}
+      {/* PASSCODE PROMPT */}
+      {requirePasscode && (
         <div
           style={{
-            width: "100%",
-            height: 260,
-            borderRadius: 12,
-            overflow: "hidden",
-            marginBottom: 10,
-            background: "rgba(0,0,0,0.3)",
+            position: "relative",
+            zIndex: 50,
+            maxWidth: 420,
+            margin: "80px auto",
+            padding: 24,
+            borderRadius: 16,
+            background: "rgba(0,0,0,0.7)",
+            textAlign: "center",
+            color: "#fff",
           }}
         >
-          {imageSrc ? (
-            <Cropper
-              image={imageSrc}
-              crop={crop}
-              zoom={zoom}
-              aspect={1}
-              onCropChange={setCrop}
-              onZoomChange={setZoom}
-              onCropComplete={(_, c) => setCroppedAreaPixels(c)}
-            />
-          ) : (
+          <h3 style={{ marginBottom: 12 }}>Enter Passphrase</h3>
+
+          <input
+            value={passInput}
+            onChange={(e) => setPassInput(e.target.value)}
+            placeholder="Passphrase"
+            style={{
+              width: "100%",
+              padding: 12,
+              borderRadius: 10,
+              marginBottom: 10,
+              textAlign: "center",
+              border: "1px solid #334155",
+            }}
+          />
+
+          {passError && (
             <div
               style={{
-                height: "100%",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                color: "#aaa",
+                color: "#ffb3b3",
+                marginBottom: 12,
+                fontWeight: 600,
               }}
             >
-              📸 No Photo Yet
+              {passError}
             </div>
           )}
-        </div>
 
-        {errorMsg && (
-          <div
+          <button
+            onClick={submitEntry}
             style={{
-              color: "#ffb3b3",
-              fontSize: 14,
-              marginBottom: 10,
-              fontWeight: 600,
+              width: "100%",
+              padding: 12,
+              borderRadius: 10,
+              background: "linear-gradient(90deg,#0284c7,#2563eb)",
+              color: "#fff",
             }}
           >
-            {errorMsg}
+            Continue
+          </button>
+        </div>
+      )}
+
+      {/* If passcode required, stop render below */}
+      {requirePasscode ? null : (
+        <>
+          {/* Remote spin notice */}
+          <div
+            style={{
+              position: "relative",
+              zIndex: 50,
+              maxWidth: 480,
+              margin: "0 auto 20px",
+              padding: "12px 16px",
+              borderRadius: 12,
+              background: "rgba(0,0,0,0.55)",
+              border: "1px solid rgba(255,255,255,0.15)",
+              color: "#fff",
+              textAlign: "center",
+              fontSize: 15,
+            }}
+          >
+            <strong>Stay right here…</strong>
+            <br />
+            You might be selected to spin from your phone!
           </div>
-        )}
 
-        <button
-          type="button"
-          onClick={openCamera}
-          style={{
-            width: "100%",
-            padding: 12,
-            borderRadius: 10,
-            background: "linear-gradient(90deg,#0284c7,#2563eb)",
-            color: "#fff",
-            marginBottom: 6,
-          }}
-        >
-          📸 Take Photo
-        </button>
+          {selectedForSpin && (
+            <button
+              onClick={triggerRemoteSpin}
+              style={{
+                position: "relative",
+                zIndex: 60,
+                maxWidth: 480,
+                width: "100%",
+                margin: "0 auto 20px",
+                padding: "16px 0",
+                borderRadius: 14,
+                background: "linear-gradient(90deg,#22c55e,#16a34a)",
+                fontWeight: 800,
+                color: "#fff",
+                fontSize: 20,
+                animation: "glowRemote 1.5s infinite",
+              }}
+            >
+              🎰 Spin From Your Phone
+            </button>
+          )}
 
-        <button
-          type="button"
-          onClick={() => fileRef.current?.click()}
-          style={{
-            width: "100%",
-            padding: 12,
-            borderRadius: 10,
-            background: "rgba(255,255,255,0.12)",
-            color: "#fff",
-            marginBottom: 10,
-          }}
-        >
-          📁 Choose File
-        </button>
+          {/* MAIN FORM */}
+          <form
+            onSubmit={submitEntry}
+            style={{
+              position: "relative",
+              maxWidth: 480,
+              margin: "auto",
+              padding: 25,
+              textAlign: "center",
+              borderRadius: 18,
+              background: "rgba(0,0,0,0.55)",
+              boxShadow: "0 0 30px rgba(0,0,0,0.7)",
+              border: "1px solid rgba(255,255,255,0.15)",
+            }}
+          >
+            <img
+              src={logo}
+              style={{
+                width: "70%",
+                margin: "0 auto 12px",
+                display: "block",
+                filter: "drop-shadow(0 0 25px rgba(56,189,248,0.6))",
+              }}
+            />
 
-        <input ref={fileRef} type="file" hidden accept="image/*" onChange={handleFile} />
+            <h2 style={{ marginBottom: 16 }}>
+              {wheel.title || "Prize Wheel Entry"}
+            </h2>
 
-        {/* Show saved name */}
-        <input
-          value={profile.first_name + " " + profile.last_name}
-          readOnly
-          style={{
-            width: "100%",
-            padding: 12,
-            background: "rgba(0,0,0,0.4)",
-            borderRadius: 10,
-            marginTop: 10,
-            color: "#fff",
-            textAlign: "center",
-            border: "1px solid #334155",
-          }}
-        />
+            {/* Cropper */}
+            <div
+              style={{
+                width: "100%",
+                height: 260,
+                borderRadius: 12,
+                overflow: "hidden",
+                marginBottom: 10,
+                background: "rgba(0,0,0,0.3)",
+              }}
+            >
+              {imageSrc ? (
+                <Cropper
+                  image={imageSrc}
+                  crop={crop}
+                  zoom={zoom}
+                  aspect={1}
+                  onCropChange={setCrop}
+                  onZoomChange={setZoom}
+                  onCropComplete={(_, c) => setCroppedAreaPixels(c)}
+                />
+              ) : (
+                <div
+                  style={{
+                    height: "100%",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    color: "#aaa",
+                  }}
+                >
+                  📸 No Photo Yet
+                </div>
+              )}
+            </div>
 
-        <button
-          disabled={submitting}
-          style={{
-            width: "100%",
-            padding: 12,
-            borderRadius: 10,
-            marginTop: 20,
-            fontWeight: 700,
-            color: "#fff",
-            background: "linear-gradient(90deg,#0284c7,#2563eb)",
-            opacity: submitting ? 0.6 : 1,
-          }}
-        >
-          {submitting ? "Submitting…" : "Enter Prize Wheel"}
-        </button>
-      </form>
+            {errorMsg && (
+              <div
+                style={{
+                  color: "#ffb3b3",
+                  fontSize: 14,
+                  marginBottom: 10,
+                  fontWeight: 600,
+                }}
+              >
+                {errorMsg}
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={openCamera}
+              style={{
+                width: "100%",
+                padding: 12,
+                borderRadius: 10,
+                background: "linear-gradient(90deg,#0284c7,#2563eb)",
+                color: "#fff",
+                marginBottom: 6,
+              }}
+            >
+              📸 Take Photo
+            </button>
+
+            <button
+              type="button"
+              onClick={() => fileRef.current?.click()}
+              style={{
+                width: "100%",
+                padding: 12,
+                borderRadius: 10,
+                background: "rgba(255,255,255,0.12)",
+                color: "#fff",
+                marginBottom: 10,
+              }}
+            >
+              📁 Choose File
+            </button>
+
+            <input
+              ref={fileRef}
+              type="file"
+              hidden
+              accept="image/*"
+              onChange={handleFile}
+            />
+
+            <input
+              value={profile.first_name + " " + profile.last_name}
+              readOnly
+              style={{
+                width: "100%",
+                padding: 12,
+                borderRadius: 10,
+                marginTop: 10,
+                background: "rgba(0,0,0,0.4)",
+                color: "#fff",
+                textAlign: "center",
+                border: "1px solid #334155",
+              }}
+            />
+
+            <button
+              disabled={submitting}
+              style={{
+                width: "100%",
+                padding: 12,
+                borderRadius: 10,
+                marginTop: 20,
+                background: "linear-gradient(90deg,#0284c7,#2563eb)",
+                color: "#fff",
+                fontWeight: 700,
+                opacity: submitting ? 0.6 : 1,
+              }}
+            >
+              {submitting ? "Submitting…" : "Enter Prize Wheel"}
+            </button>
+          </form>
+        </>
+      )}
 
       <style>{`
         @keyframes glowRemote {
