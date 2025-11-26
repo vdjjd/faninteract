@@ -1,12 +1,15 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams } from 'next/navigation';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Fullscreen, Minimize } from 'lucide-react';
 import { cn } from "../../../lib/utils";
 
+/* ===========================================
+   TRANSITIONS
+=========================================== */
 const transitions: Record<string, any> = {
   'Fade In / Fade Out': {
     initial: { opacity: 0 },
@@ -39,7 +42,7 @@ const transitions: Record<string, any> = {
     transition: { duration: 0.9, ease: 'easeInOut' },
   },
   'Zoom In / Zoom Out': {
-    initial: { opacity: 0, scale: 0.8 },
+    initial: { opacity: 0, scale: 0.85 },
     animate: { opacity: 1, scale: 1 },
     exit: { opacity: 0, scale: 1.15 },
     transition: { duration: 0.9, ease: 'easeInOut' },
@@ -47,7 +50,7 @@ const transitions: Record<string, any> = {
   'Zoom Out / Zoom In': {
     initial: { opacity: 0, scale: 0.7 },
     animate: { opacity: 1, scale: 1 },
-    exit: { opacity: 0, scale: 0.7 },
+    exit: { opacity: 0, scale: 0.85 },
     transition: { duration: 0.9, ease: 'easeInOut' },
   },
   'Flip': {
@@ -64,6 +67,9 @@ const transitions: Record<string, any> = {
   },
 };
 
+/* ===========================================
+   COMPONENT
+=========================================== */
 export default function SlideShowPlayer() {
   const supabase = createClientComponentClient();
   const { slideshowId } = useParams();
@@ -73,58 +79,97 @@ export default function SlideShowPlayer() {
   const [current, setCurrent] = useState(0);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
+  // Local refs for comparison (avoids loops)
+  const lastSlideIdsRef = useRef<string[]>([]);
+  const lastDurationRef = useRef<number>(0);
+  const lastTransitionRef = useRef<string>("");
+
   const duration = slideshow?.duration_seconds ?? 8;
-  const transitionType = slideshow?.transition ?? 'Fade In / Fade Out';
+  const transitionType = slideshow?.transition ?? "Fade In / Fade Out";
 
-  // ---------------------------
-  // Load slideshow
-  // ---------------------------
-  useEffect(() => {
-    const load = async () => {
-      const { data } = await supabase
-        .from('slide_shows')
-        .select('*')
-        .eq('id', slideshowId)
-        .single();
+  /* ===========================================
+     LOAD + REFRESH FUNCTION
+  ============================================ */
+  const loadSlideshow = useCallback(async () => {
+    const { data: show } = await supabase
+      .from("slide_shows")
+      .select("*")
+      .eq("id", slideshowId)
+      .single();
 
-      setSlideshow(data);
+    if (!show) return;
 
-      if (data?.slide_ids?.length) {
-        // Fetch slides and keep order
-        const { data: slideData } = await supabase
-          .from('ad_slides')
-          .select('*')
-          .in('id', data.slide_ids);
+    setSlideshow(show);
 
-        if (slideData) {
-          const ordered = data.slide_ids
-            .map((id: string) => slideData.find((s: any) => s.id === id))
-            .filter(Boolean);
+    const newIds = show.slide_ids || [];
 
-          setSlides(ordered);
-        }
+    // Check if slide list OR transition OR duration changed
+    const slideChanged =
+      JSON.stringify(newIds) !== JSON.stringify(lastSlideIdsRef.current);
+    const durationChanged = show.duration_seconds !== lastDurationRef.current;
+    const transitionChanged = show.transition !== lastTransitionRef.current;
+
+    // Update refs
+    lastSlideIdsRef.current = newIds;
+    lastDurationRef.current = show.duration_seconds;
+    lastTransitionRef.current = show.transition;
+
+    // Only reload slides if list changed
+    if (slideChanged) {
+      if (!newIds.length) {
+        setSlides([]);
+        return;
       }
-    };
 
-    load();
+      const { data: allSlides } = await supabase
+        .from("ad_slides")
+        .select("*")
+        .in("id", newIds);
+
+      if (!allSlides) return;
+
+      const ordered = newIds
+        .map((id: string) => allSlides.find((s: any) => s.id === id))
+        .filter(Boolean);
+
+      setSlides(ordered);
+
+      // Reset current index if removed slides cause out-of-range
+      setCurrent((c) => (ordered.length ? c % ordered.length : 0));
+    }
   }, [slideshowId, supabase]);
 
-  // ---------------------------
-  // Auto-rotation
-  // ---------------------------
+  /* ===========================================
+     INITIAL LOAD
+  ============================================ */
+  useEffect(() => {
+    loadSlideshow();
+  }, [loadSlideshow]);
+
+  /* ===========================================
+     POLLING — every 10 seconds
+  ============================================ */
+  useEffect(() => {
+    const interval = setInterval(loadSlideshow, 10000);
+    return () => clearInterval(interval);
+  }, [loadSlideshow]);
+
+  /* ===========================================
+     AUTO ROTATION
+  ============================================ */
   useEffect(() => {
     if (!slides.length) return;
 
     const timer = setInterval(() => {
-      setCurrent((prev) => (prev + 1) % slides.length);
+      setCurrent((c) => (c + 1) % slides.length);
     }, duration * 1000);
 
     return () => clearInterval(timer);
   }, [slides, duration]);
 
-  // ---------------------------
-  // Fullscreen
-  // ---------------------------
+  /* ===========================================
+     FULLSCREEN TOGGLE
+  ============================================ */
   const toggleFullscreen = useCallback(() => {
     if (!document.fullscreenElement) {
       document.documentElement.requestFullscreen();
@@ -136,44 +181,52 @@ export default function SlideShowPlayer() {
   }, []);
 
   const currentSlide = slides[current];
-  const transition = transitions[transitionType] || transitions['Fade In / Fade Out'];
+  const transition =
+    transitions[transitionType] || transitions["Fade In / Fade Out"];
 
   return (
     <div
-      className={cn('w-screen', 'h-screen', 'bg-black', 'overflow-hidden', 'relative', 'flex', 'items-center', 'justify-center')}
-      style={{ touchAction: 'none' }}
+      className={cn(
+        "w-screen h-screen bg-black overflow-hidden relative",
+        "flex items-center justify-center"
+      )}
+      style={{ touchAction: "none" }}
     >
       <AnimatePresence mode="wait">
         {currentSlide && (
           <motion.div
             key={currentSlide.id}
-            className={cn('absolute', 'inset-0', 'flex', 'items-center', 'justify-center')}
+            className={cn(
+              "absolute inset-0 flex items-center justify-center"
+            )}
             initial={transition.initial}
             animate={transition.animate}
             exit={transition.exit}
             transition={transition.transition}
-            style={{
-              perspective: '1200px',
-            }}
+            style={{ perspective: "1200px" }}
           >
             <img
-              src={currentSlide.flyer_url}
+              src={currentSlide.rendered_url || currentSlide.flyer_url}
               alt=""
-              className={cn('max-w-full', 'max-h-full', 'object-contain')}
+              className={cn("max-w-full max-h-full object-contain")}
             />
           </motion.div>
         )}
       </AnimatePresence>
 
-      {/* Fullscreen Button */}
+      {/* FULLSCREEN BUTTON */}
       <button
         onClick={toggleFullscreen}
-        className={cn('absolute', 'bottom-6', 'right-6', 'bg-white/20', 'hover:bg-white/30', 'text-white', 'p-3', 'rounded-xl', 'backdrop-blur-sm', 'transition')}
+        className={cn(
+          "absolute bottom-6 right-6",
+          "bg-white/20 hover:bg-white/30",
+          "text-white p-3 rounded-xl backdrop-blur-sm transition"
+        )}
       >
         {isFullscreen ? (
-          <Minimize className={cn('w-6', 'h-6')} />
+          <Minimize className={cn("w-6 h-6")} />
         ) : (
-          <Fullscreen className={cn('w-6', 'h-6')} />
+          <Fullscreen className={cn("w-6 h-6")} />
         )}
       </button>
     </div>

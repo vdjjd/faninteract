@@ -3,7 +3,6 @@
 import { useState, useEffect } from 'react';
 import { getSupabaseClient } from '@/lib/supabaseClient';
 import { cn } from "../lib/utils";
-import imageCompression from 'browser-image-compression';
 
 const supabase = getSupabaseClient();
 
@@ -14,27 +13,29 @@ export default function OptionsModalSlideShow({
   refreshSlideshows,
 }) {
   const [saving, setSaving] = useState(false);
-  const [uploading, setUploading] = useState(false);
   const [adsQueue, setAdsQueue] = useState<any[]>([]);
 
+  // IMPORTANT: slide_ids will now store SLIDE IDs (uuid)
   const [localShow, setLocalShow] = useState({
     ...show,
     name: show.name,
-    transition: show.transition || 'Fade In / Fade Out',
+    transition: show.transition || "Fade In / Fade Out",
     duration_seconds: show.duration_seconds || 8,
     slide_ids: show.slide_ids || [],
   });
 
-  /* ------------------------------------------------------ */
-  /* LOAD AD QUEUE (only rendered ads)                      */
-  /* ------------------------------------------------------ */
+  /* ===========================================================
+     LOAD BOTH CORPORATE + HOST ADS
+     Corporate ads → host_id = null
+     Local ads → host_id = hostId
+  =========================================================== */
   useEffect(() => {
     async function loadQueue() {
       const { data, error } = await supabase
         .from("ad_slides")
-        .select("id, name, rendered_url")
-        .eq("host_id", hostId)
+        .select("id, name, rendered_url, host_id")
         .not("rendered_url", "is", null)
+        .or(`host_id.eq.${hostId},host_id.is.null`)
         .order("created_at", { ascending: false });
 
       if (!error && data) setAdsQueue(data);
@@ -43,9 +44,9 @@ export default function OptionsModalSlideShow({
     loadQueue();
   }, [hostId]);
 
-  /* ------------------------------------------------------ */
-  /* SAVE SLIDESHOW                                         */
-  /* ------------------------------------------------------ */
+  /* ===========================================================
+     SAVE SLIDESHOW (USING slide_ids = IDs)
+  =========================================================== */
   async function handleSave() {
     try {
       setSaving(true);
@@ -54,7 +55,7 @@ export default function OptionsModalSlideShow({
         name: localShow.name.trim(),
         transition: localShow.transition,
         duration_seconds: localShow.duration_seconds,
-        slide_ids: localShow.slide_ids,
+        slide_ids: localShow.slide_ids, // IDs ONLY
         updated_at: new Date().toISOString(),
       };
 
@@ -74,50 +75,48 @@ export default function OptionsModalSlideShow({
     }
   }
 
-  /* ------------------------------------------------------ */
-  /* ADD AD TO ACTIVE SLIDES                                */
-  /* ------------------------------------------------------ */
-  function addQueueItem(ad) {
-    if (localShow.slide_ids.includes(ad.rendered_url)) return; // avoid duplicates
+  /* ===========================================================
+     ADD SLIDE TO SLIDESHOW (ADD BY ID)
+  =========================================================== */
+  function addQueueItem(ad: any) {
+    if (localShow.slide_ids.includes(ad.id)) return;
 
     setLocalShow({
       ...localShow,
-      slide_ids: [...localShow.slide_ids, ad.rendered_url],
+      slide_ids: [...localShow.slide_ids, ad.id],
     });
   }
 
-  /* ------------------------------------------------------ */
-  /* REMOVE / REORDER SLIDES                                 */
-  /* ------------------------------------------------------ */
-  function removeSlide(index) {
-    const newSlides = [...localShow.slide_ids];
-    newSlides.splice(index, 1);
+  /* ===========================================================
+     REMOVE / REORDER SLIDES
+  =========================================================== */
+  function removeSlide(index: number) {
+    const s = [...localShow.slide_ids];
+    s.splice(index, 1);
 
-    setLocalShow({
-      ...localShow,
-      slide_ids: newSlides,
-    });
+    setLocalShow({ ...localShow, slide_ids: s });
   }
 
-  function moveSlideUp(i) {
+  function moveSlideUp(i: number) {
     if (i === 0) return;
     const s = [...localShow.slide_ids];
     [s[i - 1], s[i]] = [s[i], s[i - 1]];
     setLocalShow({ ...localShow, slide_ids: s });
   }
 
-  function moveSlideDown(i) {
+  function moveSlideDown(i: number) {
     if (i === localShow.slide_ids.length - 1) return;
     const s = [...localShow.slide_ids];
     [s[i + 1], s[i]] = [s[i], s[i + 1]];
     setLocalShow({ ...localShow, slide_ids: s });
   }
 
-  /* ------------------------------------------------------ */
-  /* DELETE SLIDESHOW                                        */
-  /* ------------------------------------------------------ */
+  /* ===========================================================
+     DELETE SLIDESHOW
+  =========================================================== */
   async function deleteSlideshow() {
-    if (!confirm(`Delete slideshow "${localShow.name}"? This cannot be undone.`)) return;
+    if (!confirm(`Delete slideshow "${localShow.name}"? This cannot be undone.`))
+      return;
 
     const { error } = await supabase
       .from("slide_shows")
@@ -134,9 +133,17 @@ export default function OptionsModalSlideShow({
     onClose();
   }
 
-  /* ------------------------------------------------------ */
-  /* UI                                                     */
-  /* ------------------------------------------------------ */
+  /* ===========================================================
+     HELPER: PREVIEW LOOKUP (ID → URL)
+  =========================================================== */
+
+  function findSlideById(id: string) {
+    return adsQueue.find((ad) => ad.id === id);
+  }
+
+  /* ===========================================================
+     UI
+  =========================================================== */
   return (
     <div
       className={cn(
@@ -152,6 +159,7 @@ export default function OptionsModalSlideShow({
           "bg-gradient-to-br from-[#0b0f1a]/95 to-[#111827]/95 p-6 text-white"
         )}
       >
+        {/* HEADER */}
         <button
           onClick={onClose}
           className={cn("absolute top-3 right-3 text-white/80 hover:text-white text-xl")}
@@ -163,14 +171,12 @@ export default function OptionsModalSlideShow({
           🖼 Edit Slide Show
         </h3>
 
-        {/* -------------------------------------------------- */}
-        {/*      GRID: LEFT SETTINGS | RIGHT ACTIVE SLIDES     */}
-        {/* -------------------------------------------------- */}
+        {/* ======================================================
+            MAIN GRID: SETTINGS + ACTIVE SLIDES
+        ====================================================== */}
         <div className={cn('grid', 'grid-cols-2', 'gap-10')}>
-
-          {/* LEFT SETTINGS */}
+          {/* LEFT SIDE — SETTINGS */}
           <div className="space-y-5">
-
             {/* NAME */}
             <div>
               <label className={cn('block', 'text-sm', 'font-semibold', 'mb-1')}>Slideshow Name</label>
@@ -214,17 +220,19 @@ export default function OptionsModalSlideShow({
                 type="number"
                 min={1}
                 max={60}
-                className={cn('w-full', 'px-3', 'py-2', 'rounded-lg', 'bg-black/40', 'border', 'border-white/10')}
                 value={localShow.duration_seconds}
                 onChange={(e) =>
-                  setLocalShow({ ...localShow, duration_seconds: Number(e.target.value) })
+                  setLocalShow({
+                    ...localShow,
+                    duration_seconds: Number(e.target.value),
+                  })
                 }
+                className={cn('w-full', 'px-3', 'py-2', 'rounded-lg', 'bg-black/40', 'border', 'border-white/10')}
               />
             </div>
-
           </div>
 
-          {/* RIGHT: ACTIVE SLIDES */}
+          {/* RIGHT SIDE — ACTIVE SLIDES */}
           <div>
             <h4 className={cn('text-md', 'font-semibold', 'mb-2')}>Active Slides</h4>
 
@@ -234,55 +242,63 @@ export default function OptionsModalSlideShow({
                   No active slides. Add from the queue below.
                 </p>
               ) : (
-                localShow.slide_ids.map((url, i) => (
-                  <div
-                    key={i}
-                    className={cn('flex', 'items-center', 'justify-between', 'mb-3', 'p-2', 'rounded-md', 'bg-black/30', 'border', 'border-white/10')}
-                  >
-                    <img
-                      src={url}
-                      alt="slide"
-                      className={cn('w-20', 'h-14', 'object-cover', 'rounded-md', 'border', 'border-white/20')}
-                    />
+                localShow.slide_ids.map((slideId: string, i: number) => {
+                  const slide = findSlideById(slideId);
 
-                    <div className={cn('flex', 'gap-2')}>
-                      <button
-                        onClick={() => moveSlideUp(i)}
-                        className={cn('px-2', 'py-1', 'rounded', 'bg-gray-600', 'hover:bg-gray-700', 'text-white', 'text-xs')}
-                      >
-                        ↑
-                      </button>
+                  return (
+                    <div
+                      key={i}
+                      className={cn('flex', 'items-center', 'justify-between', 'mb-3', 'p-2', 'rounded-md', 'bg-black/30', 'border', 'border-white/10')}
+                    >
+                      {slide ? (
+                        <img
+                          src={slide.rendered_url}
+                          alt="slide"
+                          className={cn('w-20', 'h-14', 'object-cover', 'rounded-md', 'border', 'border-white/20')}
+                        />
+                      ) : (
+                        <div className={cn('w-20', 'h-14', 'bg-gray-700', 'rounded-md', 'flex', 'items-center', 'justify-center', 'text-xs')}>
+                          Missing
+                        </div>
+                      )}
 
-                      <button
-                        onClick={() => moveSlideDown(i)}
-                        className={cn('px-2', 'py-1', 'rounded', 'bg-gray-600', 'hover:bg-gray-700', 'text-white', 'text-xs')}
-                      >
-                        ↓
-                      </button>
+                      <div className={cn('flex', 'gap-2')}>
+                        <button
+                          onClick={() => moveSlideUp(i)}
+                          className={cn('px-2', 'py-1', 'rounded', 'bg-gray-600', 'hover:bg-gray-700', 'text-white', 'text-xs')}
+                        >
+                          ↑
+                        </button>
 
-                      <button
-                        onClick={() => removeSlide(i)}
-                        className={cn('px-2', 'py-1', 'rounded', 'bg-red-700', 'hover:bg-red-800', 'text-white', 'text-xs')}
-                      >
-                        🗑
-                      </button>
+                        <button
+                          onClick={() => moveSlideDown(i)}
+                          className={cn('px-2', 'py-1', 'rounded', 'bg-gray-600', 'hover:bg-gray-700', 'text-white', 'text-xs')}
+                        >
+                          ↓
+                        </button>
+
+                        <button
+                          onClick={() => removeSlide(i)}
+                          className={cn('px-2', 'py-1', 'rounded', 'bg-red-700', 'hover:bg-red-800', 'text-white', 'text-xs')}
+                        >
+                          🗑
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
           </div>
-
         </div>
 
-        {/* -------------------------------------------------- */}
-        {/*                     AD QUEUE                       */}
-        {/* -------------------------------------------------- */}
+        {/* ======================================================
+            AD QUEUE
+        ====================================================== */}
         <div className="mt-10">
           <h4 className={cn('text-md', 'font-semibold', 'mb-3')}>Ad Queue</h4>
 
           <div className={cn('max-h-[300px]', 'overflow-y-auto', 'p-2', 'bg-black/20', 'border', 'border-white/10', 'rounded-lg')}>
-
             {adsQueue.length === 0 && (
               <p className={cn('text-gray-400', 'text-sm', 'text-center', 'py-4')}>
                 No ads available yet.
@@ -311,11 +327,10 @@ export default function OptionsModalSlideShow({
                 </button>
               </div>
             ))}
-
           </div>
         </div>
 
-        {/* FOOTER */}
+        {/* FOOTER ACTIONS */}
         <div className={cn('flex', 'justify-center', 'items-center', 'gap-4', 'border-t', 'border-white/10', 'mt-8', 'pt-4')}>
           <button
             onClick={deleteSlideshow}
