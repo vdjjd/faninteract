@@ -10,7 +10,7 @@ import {
 
 /* ===========================================================
    HELPERS
-   =========================================================== */
+=========================================================== */
 
 function applyBrightness(bg: string, brightness: number) {
   return {
@@ -27,19 +27,15 @@ function normalizeEntries(list: any[] = []) {
       id: e.id,
       photo_url: e.photo_url?.trim() || null,
       first_name:
-        e.first_name ||
-        e?.guest_profiles?.first_name ||
-        "",
+        e.first_name || e?.guest_profiles?.first_name || "",
       last_name:
-        e.last_name ||
-        e?.guest_profiles?.last_name ||
-        "",
+        e.last_name || e?.guest_profiles?.last_name || "",
     }));
 }
 
 /* ===========================================================
    MAIN
-   =========================================================== */
+=========================================================== */
 
 export default function ActivePrizeWheel3D({ wheel, entries }) {
   const mountRef = useRef<HTMLDivElement | null>(null);
@@ -101,8 +97,15 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
       : "/faninteractlogo.png";
 
   /* ===========================================================
+     RESET LOCKED ENTRIES AFTER PAGE RELOAD
+=========================================================== */
+  useEffect(() => {
+    lockedEntriesRef.current = null;
+  }, []);
+
+  /* ===========================================================
      LOCK ONE TIME ONLY
-     =========================================================== */
+=========================================================== */
 
   function lockEntries(normalized: any[]) {
     if (lockedEntriesRef.current) return;
@@ -118,7 +121,7 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
 
   /* ===========================================================
      BACKGROUND WATCHER
-     =========================================================== */
+=========================================================== */
   useEffect(() => {
     if (!wheel?.id || !mountRef.current) return;
 
@@ -165,7 +168,7 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
 
   /* ===========================================================
      SPIN CHANNEL
-     =========================================================== */
+=========================================================== */
   useEffect(() => {
     if (!wheel?.id) return;
 
@@ -176,12 +179,32 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
       })
       .subscribe();
 
-    return () => supabase.removeChannel(ch);
+  return () => {
+  supabase.removeChannel(ch);
+};
+  }, [wheel?.id]);
+
+  /* ===========================================================
+     RELOAD CHANNEL (NEW)
+=========================================================== */
+  useEffect(() => {
+    if (!wheel?.id) return;
+
+    const ch = supabase
+      .channel(`prizewheel-${wheel.id}`)
+      .on("broadcast", { event: "reload_trigger" }, () => {
+        window.location.reload();
+      })
+      .subscribe();
+
+    return () => {
+  supabase.removeChannel(ch);
+};
   }, [wheel?.id]);
 
   /* ===========================================================
      THREE INIT
-     =========================================================== */
+=========================================================== */
   useEffect(() => {
     if (!mountRef.current) return;
 
@@ -232,7 +255,6 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
     wheelGroupRef.current = wheelGroup;
     scene.add(wheelGroup);
 
-    /* SPIN LOGIC */
     (window as any)._pw = {
       _spin: {
         start: () => {
@@ -264,7 +286,7 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
       },
     };
 
-    /* TILES */
+    /* CREATE TILES */
     tileRefs.current = [];
     wrapperRefs.current = [];
 
@@ -414,8 +436,8 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
   }, []);
 
   /* ===========================================================
-     POPULATE TILE CONTENT — AFTER DOM EXISTS
-     =========================================================== */
+     POPULATE TILES AFTER DOM BUILT
+=========================================================== */
   useEffect(() => {
     if (!wrapperRefs.current.length) return;
 
@@ -455,7 +477,7 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
 
   /* ===========================================================
      BULBS
-     =========================================================== */
+=========================================================== */
   const bulbColor = wheel?.tile_color_a || "#ffffff";
 
   function makeBulb(delay: number): React.CSSProperties {
@@ -519,7 +541,7 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
 
   /* ===========================================================
      RENDER
-     =========================================================== */
+=========================================================== */
 
   return (
     <div

@@ -52,6 +52,14 @@ async function broadcastRemoteSelection(wheelId: string, guestId: string) {
   });
 }
 
+async function broadcastReload(id: string) {
+  await supabase.channel(`prizewheel-${id}`).send({
+    type: 'broadcast',
+    event: 'reload_trigger',
+    payload: { id },
+  });
+}
+
 /* ------------------------------------------------------------
    COMPONENT
 ------------------------------------------------------------ */
@@ -67,9 +75,11 @@ export default function PrizeWheelCard({
 }: PrizeWheelCardProps) {
   if (!wheel?.id) {
     return (
-      <div className={cn(
-        'rounded-xl p-4 text-center bg-gray-700/20 text-gray-300 border border-white/10'
-      )}>
+      <div
+        className={cn(
+          'rounded-xl p-4 text-center bg-gray-700/20 text-gray-300 border border-white/10'
+        )}
+      >
         Loading wheel…
       </div>
     );
@@ -102,8 +112,8 @@ export default function PrizeWheelCard({
       return;
     }
 
-    setEntryCount(data.filter(e => e.status === 'approved').length);
-    setPendingCount(data.filter(e => e.status === 'pending').length);
+    setEntryCount(data.filter((e) => e.status === 'approved').length);
+    setPendingCount(data.filter((e) => e.status === 'pending').length);
   }
 
   /* ------------------------------------------------------------
@@ -129,7 +139,7 @@ export default function PrizeWheelCard({
       .subscribe();
 
     return () => {
-      supabase.removeChannel(channel); // ✔ SYNC cleanup
+      supabase.removeChannel(channel);
     };
   }, [wheel.id]);
 
@@ -148,7 +158,7 @@ export default function PrizeWheelCard({
       .subscribe();
 
     return () => {
-      supabase.removeChannel(ch); // ✔ FIXED
+      supabase.removeChannel(ch);
     };
   }, [wheel.id]);
 
@@ -166,7 +176,7 @@ export default function PrizeWheelCard({
       .subscribe();
 
     return () => {
-      supabase.removeChannel(ch); // ✔ FIXED
+      supabase.removeChannel(ch);
     };
   }, [wheel.id]);
 
@@ -445,6 +455,34 @@ export default function PrizeWheelCard({
           )}
         >
           🎰 Spin Now
+        </button>
+
+        {/* RELOAD WHEEL */}
+        <button
+          onClick={async () => {
+            await broadcastReload(wheel.id);
+
+            try {
+              const popup = window._activePrizeWheel;
+              popup?.location?.reload();
+            } catch {}
+
+            if (!window._activePrizeWheel || window._activePrizeWheel.closed) {
+              const url = `${window.location.origin}/prizewheel/${wheel.id}`;
+              const popup = window.open(
+                url,
+                '_blank',
+                'width=1280,height=800,resizable=yes,scrollbars=yes'
+              );
+              popup?.focus();
+              window._activePrizeWheel = popup;
+            }
+          }}
+          className={cn(
+            'px-3 py-1 rounded text-sm font-semibold bg-purple-600 hover:bg-purple-700 text-white'
+          )}
+        >
+          🔄 Reload Wheel
         </button>
 
         {/* OPTIONS */}
