@@ -220,8 +220,7 @@ export default function DashboardPage() {
 
       {/* SLIDESHOW GRID */}
       <div className={cn('w-full max-w-6xl mt-10')}>
-        <h2 className={cn('text-xl font-bold mb-4')}>🖼️ Slide Shows</h2>
-        <SlideshowGrid
+         <SlideshowGrid
           slideshows={slideshows}
           host={host}
           refreshSlideshows={refreshSlideshows}
