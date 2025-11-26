@@ -3,12 +3,13 @@
 import { useEffect, useRef } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import * as THREE from "three";
-
-// @ts-ignore — THREE has no types for CSS3DRenderer
-import { CSS3DRenderer, CSS3DObject } from "three/examples/jsm/renderers/CSS3DRenderer";
+import {
+  CSS3DRenderer,
+  CSS3DObject,
+} from "three/examples/jsm/renderers/CSS3DRenderer.js";
 
 /* ===========================================================
-   🔧 HELPER FUNCTIONS
+   HELPERS
    =========================================================== */
 
 function applyBrightness(bg: string, brightness: number) {
@@ -21,172 +22,59 @@ function applyBrightness(bg: string, brightness: number) {
 
 function normalizeEntries(list: any[] = []) {
   return list
-    .filter((e) => e.status === "approved")
+    .filter((e) => `${e.status}`.toLowerCase().trim() === "approved")
     .map((e) => ({
+      id: e.id,
       photo_url: e.photo_url?.trim() || null,
-      first_name: e.first_name || e?.guest_profiles?.first_name || null,
-      last_name: e.last_name || e?.guest_profiles?.last_name || null,
+      first_name:
+        e.first_name ||
+        e?.guest_profiles?.first_name ||
+        "",
+      last_name:
+        e.last_name ||
+        e?.guest_profiles?.last_name ||
+        "",
     }));
 }
 
-function shuffleArray(arr: any[]) {
-  const copy = [...arr];
-  for (let i = copy.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [copy[i], copy[j]] = [copy[j], copy[i]];
-  }
-  return copy;
-}
-
-function clearWinnerStyles(wrapper: HTMLElement) {
-  wrapper.style.border = "none";
-  wrapper.style.animation = "none";
-  wrapper.style.boxShadow = "";
-}
-
-function setWinnerStyles(wrapper: HTMLElement) {
-  wrapper.style.border = "12px solid gold";
-  wrapper.style.boxShadow =
-    "0 0 80px rgba(255,215,0,0.6), inset 0 0 20px rgba(255,215,0,0.4)";
-  wrapper.style.animation = "winnerHalo 1.4s ease-in-out infinite";
-}
-
 /* ===========================================================
-   MAIN COMPONENT
+   MAIN
    =========================================================== */
 
 export default function ActivePrizeWheel3D({ wheel, entries }) {
   const mountRef = useRef<HTMLDivElement | null>(null);
-  const currentWheelGroup = useRef<any>(null);
-  const tileRefs = useRef<any[]>([]);
-  const wrapperRefs = useRef<HTMLElement[]>([]);
 
-  const selectedEntriesRef = useRef<any[] | null>(null);
+  const wheelGroupRef = useRef<any>(null);
+  const wrapperRefs = useRef<HTMLElement[]>([]);
+  const tileRefs = useRef<any[]>([]);
+
+  const lockedEntriesRef = useRef<any[] | null>(null);
 
   const winnerRef = useRef({
-    winnerIndex: null as null | number,
-    freezeStart: 0,
+    index: null as null | number,
     isFrozen: false,
+    freezeStart: 0,
   });
 
   const bgRef = useRef<string>(
     wheel?.background_type === "image"
       ? `url(${wheel.background_value}) center/cover no-repeat`
       : wheel?.background_value ||
-        "linear-gradient(135deg, #1b2735, #090a0f)"
+          "linear-gradient(135deg,#1b2735,#090a0f)"
   );
 
-  const brightnessRef = useRef<number>(wheel?.background_brightness || 100);
+  const brightnessRef = useRef<number>(
+    wheel?.background_brightness || 100
+  );
 
-  const tileA = wheel?.tile_color_a || "#ffffff";
-  const tileB = wheel?.tile_color_b || "#ffffff";
-  const brightA = wheel?.tile_brightness_a ?? 100;
-  const brightB = wheel?.tile_brightness_b ?? 100;
-
-  const logoUrl =
-    wheel?.host?.branding_logo_url?.trim() !== ""
-      ? wheel.host.branding_logo_url
-      : "/faninteractlogo.png";
-
-  /* ===========================================================
-     🔥 FIXED ENTRY ASSIGNMENT (the duplication bug)
-     =========================================================== */
-  function assignEntriesToTiles(normalized: any[]) {
-    if (!normalized?.length) return;
-
-    // Always pick the latest 16 entries (shuffled each update)
-    let selected = [];
-
-    if (normalized.length <= 16) {
-      selected = [...normalized];
-    } else {
-      selected = shuffleArray(normalized).slice(0, 16);
-    }
-
-    selectedEntriesRef.current = selected;
-
-    wrapperRefs.current.forEach((wrap, i) => {
-      const entry = selected[i] || selected[0];
-
-      const imgHolder = wrap.querySelector(".imgHolder") as HTMLElement | null;
-      const nameHolder = wrap.querySelector(".nameHolder") as HTMLElement | null;
-
-      if (!imgHolder || !nameHolder) return;
-
-      if (entry.photo_url) {
-        imgHolder.style.background = `url(${entry.photo_url}) center/cover no-repeat`;
-        imgHolder.innerText = "";
-      } else {
-        imgHolder.style.background = "rgba(0,0,0,0.25)";
-        imgHolder.innerText = "IMG";
-      }
-
-      imgHolder.style.border = "4px solid rgba(255,255,255,0.5)";
-
-      if (entry.first_name) {
-        const ln = entry.last_name?.charAt(0)?.toUpperCase() || "";
-        nameHolder.innerText = `${entry.first_name} ${ln}.`;
-      } else {
-        nameHolder.innerText = "";
-      }
-    });
-  }
-
-  /* BACKGROUND WATCHER */
-  useEffect(() => {
-    if (!wheel?.id || !mountRef.current) return;
-
-    const apply = () => {
-      const container = mountRef.current?.parentElement?.parentElement;
-      if (!container) return;
-      Object.assign(container.style, applyBrightness(bgRef.current, brightnessRef.current));
-    };
-
-    apply();
-
-    const interval = setInterval(() => {
-      supabase
-        .from("prize_wheels")
-        .select("*")
-        .eq("id", wheel.id)
-        .single()
-        .then(({ data }) => {
-          if (!data) return;
-
-          bgRef.current =
-            data.background_type === "image"
-              ? `url(${data.background_value}) center/cover no-repeat`
-              : data.background_value;
-
-          brightnessRef.current =
-            typeof data.background_brightness === "number"
-              ? data.background_brightness
-              : brightnessRef.current;
-
-          apply();
-        });
-    }, 4000);
-
-    return () => {
-      clearInterval(interval);
-    };
-  }, [wheel?.id]);
-
-  /* FULLSCREEN */
-  const toggleFullscreen = () =>
-    !document.fullscreenElement
-      ? document.documentElement.requestFullscreen().catch(() => {})
-      : document.exitFullscreen();
-
-  /* GEOMETRY */
-  const TILE_SIZE = 820;
   const TILE_COUNT = 16;
+  const TILE_SIZE = 820;
   const RADIUS = 2550;
   const TILE_STEP = (2 * Math.PI) / TILE_COUNT;
 
   const spinRef = useRef({
     spinning: false,
-    startTime: 0,
+    start: 0,
     duration: 8000,
     startRot: 0,
     endRot: 0,
@@ -202,49 +90,118 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
 
   const ambientRef = useRef({ speed: 0.0025 });
 
-  function freezeOnWinner(tileIndex: number) {
-    const w = winnerRef.current;
-    w.winnerIndex = tileIndex;
-    w.freezeStart = performance.now();
-    w.isFrozen = true;
+  const tileA = wheel?.tile_color_a || "#ffffff";
+  const tileB = wheel?.tile_color_b || "#ffffff";
+  const brightA = wheel?.tile_brightness_a ?? 100;
+  const brightB = wheel?.tile_brightness_b ?? 100;
 
-    wrapperRefs.current.forEach(clearWinnerStyles);
+  const logoUrl =
+    wheel?.host?.branding_logo_url?.trim() !== ""
+      ? wheel.host.branding_logo_url
+      : "/faninteractlogo.png";
 
-    const winnerTile = wrapperRefs.current[tileIndex];
-    if (winnerTile) setWinnerStyles(winnerTile);
+  /* ===========================================================
+     LOCK ONE TIME ONLY
+     =========================================================== */
+
+  function lockEntries(normalized: any[]) {
+    if (lockedEntriesRef.current) return;
+
+    const shuffled = [...normalized];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+
+    lockedEntriesRef.current = shuffled.slice(0, 16);
   }
 
-  /* SPIN CHANNEL LISTENER */
+  /* ===========================================================
+     BACKGROUND WATCHER
+     =========================================================== */
+  useEffect(() => {
+    if (!wheel?.id || !mountRef.current) return;
+
+    const update = () => {
+      const cont = mountRef.current?.parentElement?.parentElement;
+      if (!cont) return;
+      Object.assign(
+        cont.style,
+        applyBrightness(bgRef.current, brightnessRef.current)
+      );
+    };
+
+    update();
+
+    const int = setInterval(async () => {
+      const { data } = await supabase
+        .from("prize_wheels")
+        .select("*")
+        .eq("id", wheel.id)
+        .single();
+
+      if (!data) return;
+
+      bgRef.current =
+        data.background_type === "image"
+          ? `url(${data.background_value}) center/cover no-repeat`
+          : data.background_value;
+
+      brightnessRef.current =
+        typeof data.background_brightness === "number"
+          ? data.background_brightness
+          : brightnessRef.current;
+
+      update();
+    }, 4000);
+
+    return () => clearInterval(int);
+  }, [wheel?.id]);
+
+  const toggleFullscreen = () =>
+    !document.fullscreenElement
+      ? document.documentElement.requestFullscreen().catch(() => {})
+      : document.exitFullscreen();
+
+  /* ===========================================================
+     SPIN CHANNEL
+     =========================================================== */
   useEffect(() => {
     if (!wheel?.id) return;
 
-    const channel = supabase
+    const ch = supabase
       .channel(`prizewheel-${wheel.id}`)
       .on("broadcast", { event: "spin_trigger" }, () => {
-        (window as any)._prizewheel?._spin?.start();
+        (window as any)._pw._spin.start();
       })
       .subscribe();
 
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    return () => supabase.removeChannel(ch);
   }, [wheel?.id]);
 
   /* ===========================================================
-     THREE.JS INIT
+     THREE INIT
      =========================================================== */
   useEffect(() => {
     if (!mountRef.current) return;
 
     const container = mountRef.current;
-    let width = container.clientWidth;
-    let height = container.clientHeight;
+    const width = container.clientWidth;
+    const height = container.clientHeight;
 
     const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(38, width / height, 1, 8000);
+    const camera = new THREE.PerspectiveCamera(
+      38,
+      width / height,
+      1,
+      8000
+    );
     camera.position.set(0, 0, 3800);
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    const renderer = new THREE.WebGLRenderer({
+      antialias: true,
+      alpha: true,
+    });
     renderer.setSize(width, height);
     renderer.setPixelRatio(window.devicePixelRatio);
     container.appendChild(renderer.domElement);
@@ -256,7 +213,7 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
     cssRenderer.domElement.style.left = "0";
     container.appendChild(cssRenderer.domElement);
 
-    function handleResize() {
+    function resize() {
       if (!mountRef.current) return;
 
       const w = mountRef.current.clientWidth;
@@ -264,107 +221,98 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
 
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
-
       renderer.setSize(w, h);
       cssRenderer.setSize(w, h);
     }
 
-    window.addEventListener("resize", handleResize);
-    document.addEventListener("fullscreenchange", handleResize);
+    window.addEventListener("resize", resize);
+    document.addEventListener("fullscreenchange", resize);
 
     const wheelGroup = new THREE.Group();
-    currentWheelGroup.current = wheelGroup;
-    wheelGroup.rotation.y = 0;
+    wheelGroupRef.current = wheelGroup;
     scene.add(wheelGroup);
 
-    (window as any)._prizewheel = {
+    /* SPIN LOGIC */
+    (window as any)._pw = {
       _spin: {
         start: () => {
           const spin = spinRef.current;
           const drift = driftRef.current;
+          const win = winnerRef.current;
 
           spin.spinning = false;
           drift.drifting = false;
+          win.isFrozen = false;
+          win.index = null;
 
-          const w = winnerRef.current;
-          w.isFrozen = false;
-          w.winnerIndex = null;
-
-          wrapperRefs.current.forEach(clearWinnerStyles);
+          wrapperRefs.current.forEach((w) => {
+            w.style.border = "none";
+            w.style.animation = "none";
+            w.style.boxShadow = "";
+          });
 
           spin.spinning = true;
-          spin.startTime = performance.now();
+          spin.start = performance.now();
           spin.duration = 8000 + Math.random() * 7000;
           spin.startRot = wheelGroup.rotation.y;
 
           const fullSpins = 6 + Math.random() * 4;
-          let rawEnd = spin.startRot + Math.PI * 2 * fullSpins;
+          const raw = spin.startRot + fullSpins * Math.PI * 2;
 
-          rawEnd = Math.round(rawEnd / TILE_STEP) * TILE_STEP;
-
-          spin.endRot = rawEnd;
+          spin.endRot = Math.round(raw / TILE_STEP) * TILE_STEP;
         },
       },
     };
 
+    /* TILES */
     tileRefs.current = [];
     wrapperRefs.current = [];
 
     for (let i = 0; i < TILE_COUNT; i++) {
-      const wrapper = document.createElement("div");
-
-      wrapper.style.width = `${TILE_SIZE}px`;
-      wrapper.style.height = `${TILE_SIZE}px`;
-      wrapper.style.borderRadius = "32px";
-      wrapper.style.display = "flex";
-      wrapper.style.flexDirection = "column";
-      wrapper.style.alignItems = "center";
-      wrapper.style.justifyContent = "center";
-      wrapper.style.position = "relative";
-      wrapper.style.overflow = "hidden";
+      const wrap = document.createElement("div");
+      wrap.style.width = `${TILE_SIZE}px`;
+      wrap.style.height = `${TILE_SIZE}px`;
+      wrap.style.borderRadius = "32px";
+      wrap.style.position = "relative";
+      wrap.style.overflow = "hidden";
+      wrap.style.display = "flex";
+      wrap.style.alignItems = "center";
+      wrap.style.justifyContent = "center";
 
       const isA = i % 2 === 0;
+      wrap.style.background = isA ? tileA : tileB;
+      wrap.style.filter = `brightness(${isA ? brightA : brightB}%)`;
 
-      wrapper.style.background = isA ? tileA : tileB;
-      wrapper.style.filter = `brightness(${isA ? brightA : brightB}%)`;
+      const img = document.createElement("div");
+      img.className = "imgHolder";
+      img.style.position = "absolute";
+      img.style.width = "70%";
+      img.style.height = "60%";
+      img.style.top = "20%";
+      img.style.left = "50%";
+      img.style.transform = "translateX(-50%)";
+      img.style.borderRadius = "22px";
+      img.style.background = "rgba(0,0,0,0.25)";
+      img.style.border = "4px solid rgba(255,255,255,0.5)";
+      img.style.display = "flex";
+      img.style.alignItems = "center";
+      img.style.justifyContent = "center";
+      img.style.color = "#fff";
+      img.innerText = "IMG";
+      wrap.appendChild(img);
 
-      const imgHolder = document.createElement("div");
-      imgHolder.className = "imgHolder";
-      imgHolder.style.position = "absolute";
-      imgHolder.style.width = "70%";
-      imgHolder.style.height = "60%";
-      imgHolder.style.top = "20%";
-      imgHolder.style.left = "50%";
-      imgHolder.style.transform = "translateX(-50%)";
-      imgHolder.style.borderRadius = "22px";
-      imgHolder.style.background = "rgba(0,0,0,0.25)";
-      imgHolder.style.border = "4px solid rgba(255,255,255,0.5)";
-      imgHolder.style.display = "flex";
-      imgHolder.style.alignItems = "center";
-      imgHolder.style.justifyContent = "center";
-      imgHolder.style.color = "#fff";
-      imgHolder.style.textShadow = "0 0 14px rgba(0,0,0,0.9)";
-      imgHolder.style.fontSize = "48px";
-      imgHolder.innerText = "IMG";
+      const name = document.createElement("div");
+      name.className = "nameHolder";
+      name.style.position = "absolute";
+      name.style.top = "82%";
+      name.style.left = "50%";
+      name.style.transform = "translateX(-50%)";
+      name.style.fontSize = "54px";
+      name.style.fontWeight = "900";
+      name.style.color = "#fff";
+      wrap.appendChild(name);
 
-      wrapper.appendChild(imgHolder);
-
-      const nameHolder = document.createElement("div");
-      nameHolder.className = "nameHolder";
-      nameHolder.style.position = "absolute";
-      nameHolder.style.top = "82%";
-      nameHolder.style.left = "50%";
-      nameHolder.style.transform = "translateX(-50%)";
-      nameHolder.style.fontSize = "54px";
-      nameHolder.style.fontWeight = "900";
-      nameHolder.style.color = "#fff";
-      nameHolder.style.textShadow = "0 0 18px rgba(0,0,0,0.8)";
-      nameHolder.innerText = "Name L.";
-
-      wrapper.appendChild(nameHolder);
-
-      const tile = new CSS3DObject(wrapper);
-
+      const tile = new CSS3DObject(wrap);
       const angle = i * TILE_STEP;
 
       tile.position.x = Math.sin(angle) * RADIUS;
@@ -372,56 +320,81 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
       tile.rotation.y = angle;
 
       tileRefs.current.push(tile);
-      wrapperRefs.current.push(wrapper);
+      wrapperRefs.current.push(wrap);
 
       wheelGroup.add(tile);
     }
 
-    // INITIAL TILE ASSIGNMENT
-    assignEntriesToTiles(normalizeEntries(entries));
+    lockEntries(normalizeEntries(entries));
 
-    function animate(time: number) {
+    function animate(t: number) {
       const spin = spinRef.current;
       const drift = driftRef.current;
-      const winner = winnerRef.current;
+      const win = winnerRef.current;
 
-      if (winner.isFrozen && time - winner.freezeStart > 15000) {
-        winner.isFrozen = false;
+      if (win.isFrozen && t - win.freezeStart > 15000) {
+        win.isFrozen = false;
       }
 
-      if (!spin.spinning && !drift.drifting && !winner.isFrozen) {
+      if (!spin.spinning && !drift.drifting && !win.isFrozen) {
         wheelGroup.rotation.y += ambientRef.current.speed;
       }
 
       if (spin.spinning) {
-        const t = Math.min((time - spin.startTime) / spin.duration, 1);
-        const eased = t * t * (3 - 2 * t);
+        const p = Math.min((t - spin.start) / spin.duration, 1);
+        const eased = p * p * (3 - 2 * p);
 
         wheelGroup.rotation.y =
           spin.startRot + (spin.endRot - spin.startRot) * eased;
 
-        if (t >= 1) {
+        if (p >= 1) {
           spin.spinning = false;
 
           drift.drifting = true;
           drift.start = performance.now();
           drift.from = wheelGroup.rotation.y;
 
-          const nearest = Math.round(drift.from / TILE_STEP);
-          drift.to = nearest * TILE_STEP;
+          drift.to =
+            Math.round(drift.from / TILE_STEP) * TILE_STEP;
 
-          freezeOnWinner(nearest);
+          const idx =
+            ((0 - Math.round(drift.to / TILE_STEP)) %
+              TILE_COUNT +
+              TILE_COUNT) %
+            TILE_COUNT;
+
+          win.index = idx;
+          win.isFrozen = true;
+          win.freezeStart = t;
+
+          wrapperRefs.current.forEach((w) => {
+            w.style.border = "none";
+            w.style.animation = "none";
+            w.style.boxShadow = "";
+          });
+
+          const wwrap = wrapperRefs.current[idx];
+          if (wwrap) {
+            wwrap.style.border = "12px solid gold";
+            wwrap.style.boxShadow =
+              "0 0 80px rgba(255,215,0,0.6), inset 0 0 20px rgba(255,215,0,0.4)";
+            wwrap.style.animation =
+              "winnerHalo 1.4s ease-in-out infinite";
+          }
         }
       }
 
       if (drift.drifting) {
-        const t = Math.min((time - drift.start) / drift.duration, 1);
-        const easeOut = 1 - Math.pow(1 - t, 3);
+        const p = Math.min(
+          (t - drift.start) / drift.duration,
+          1
+        );
+        const easeOut = 1 - Math.pow(1 - p, 3);
 
         wheelGroup.rotation.y =
           drift.from + (drift.to - drift.from) * easeOut;
 
-        if (t >= 1) drift.drifting = false;
+        if (p >= 1) drift.drifting = false;
       }
 
       renderer.render(scene, camera);
@@ -432,30 +405,57 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
     animate(0);
 
     return () => {
-      window.removeEventListener("resize", handleResize);
-      document.removeEventListener("fullscreenchange", handleResize);
-
+      window.removeEventListener("resize", resize);
+      document.removeEventListener("fullscreenchange", resize);
       container.removeChild(renderer.domElement);
       container.removeChild(cssRenderer.domElement);
-
       renderer.dispose();
     };
   }, []);
 
   /* ===========================================================
-     🔥 FIXED ENTRY UPDATE (updates wheel tiles in real-time)
+     POPULATE TILE CONTENT — AFTER DOM EXISTS
      =========================================================== */
   useEffect(() => {
     if (!wrapperRefs.current.length) return;
 
-    const normalized = normalizeEntries(entries);
-    assignEntriesToTiles(normalized);
+    if (!lockedEntriesRef.current) {
+      lockedEntriesRef.current = normalizeEntries(entries).slice(
+        0,
+        16
+      );
+    }
+
+    wrapperRefs.current.forEach((wrap, i) => {
+      const entry = lockedEntriesRef.current![i];
+      const img = wrap.querySelector(".imgHolder") as HTMLElement;
+      const name = wrap.querySelector(".nameHolder") as HTMLElement;
+
+      if (!entry) {
+        img.style.background = "rgba(0,0,0,0.25)";
+        img.innerText = "IMG";
+        name.innerText = "";
+        return;
+      }
+
+      if (entry.photo_url) {
+        img.style.background = `url(${entry.photo_url}) center/cover no-repeat`;
+        img.innerText = "";
+      } else {
+        img.style.background = "rgba(0,0,0,0.25)";
+        img.innerText = "IMG";
+      }
+
+      const ln = entry.last_name?.charAt(0)?.toUpperCase() || "";
+      name.innerText = entry.first_name
+        ? `${entry.first_name} ${ln}.`
+        : "";
+    });
   }, [entries]);
 
   /* ===========================================================
-     BULB LOGIC
+     BULBS
      =========================================================== */
-
   const bulbColor = wheel?.tile_color_a || "#ffffff";
 
   function makeBulb(delay: number): React.CSSProperties {
@@ -469,7 +469,7 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
       opacity: 0.7,
       animation: "twinkle 1.8s ease-in-out infinite",
       animationDelay: `${delay}s`,
-      pointerEvents: "none" as any,
+      pointerEvents: "none",
     };
   }
 
@@ -484,7 +484,7 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
           display: "flex",
           flexDirection: "column",
           justifyContent: "space-between",
-          pointerEvents: "none" as any,
+          pointerEvents: "none",
           zIndex: 5,
         }}
       >
@@ -506,7 +506,7 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
           width: "70vw",
           display: "flex",
           justifyContent: "space-between",
-          pointerEvents: "none" as any,
+          pointerEvents: "none",
           zIndex: 5,
         }}
       >
@@ -520,28 +520,35 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
   /* ===========================================================
      RENDER
      =========================================================== */
+
   return (
-    <div style={{ width: "100%", height: "100vh", position: "relative" }}>
+    <div
+      style={{
+        width: "100%",
+        height: "100vh",
+        position: "relative",
+      }}
+    >
       <style>
         {`
           @keyframes twinkle {
-            0%   { opacity: 0.45; transform: scale(0.92); }
-            50%  { opacity: 1;    transform: scale(1.06); }
-            100% { opacity: 0.45; transform: scale(0.92); }
+            0% { opacity: .45; transform: scale(.92);}
+            50% { opacity: 1; transform: scale(1.06);}
+            100% { opacity: .45; transform: scale(.92);}
           }
 
           @keyframes winnerHalo {
             0% {
-              box-shadow: 0 0 60px rgba(255,215,0,0.4),
-                          inset 0 0 10px rgba(255,215,0,0.6);
+              box-shadow: 0 0 60px rgba(255,215,0,.4),
+                          inset 0 0 10px rgba(255,215,0,.6);
             }
             50% {
               box-shadow: 0 0 150px rgba(255,215,0,1),
-                          inset 0 0 20px rgba(255,215,0,0.8);
+                          inset 0 0 20px rgba(255,215,0,.8);
             }
             100% {
-              box-shadow: 0 0 60px rgba(255,215,0,0.4),
-                          inset 0 0 10px rgba(255,215,0,0.6);
+              box-shadow: 0 0 60px rgba(255,215,0,.4),
+                          inset 0 0 10px rgba(255,215,0,.6);
             }
           }
         `}
@@ -557,17 +564,12 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
           top: "-1vh",
           left: "50%",
           transform: "translateX(-50%)",
-          color: "#ffffff",
+          color: "#fff",
           fontSize: "clamp(3rem,4vw,6rem)",
           fontWeight: 900,
-          textShadow: `
-            2px 2px 2px #000,
-            -2px 2px 2px #000,
-            2px -2px 2px #000,
-            -2px -2px 2px #000
-          `,
+          textShadow:
+            "2px 2px 2px #000,-2px 2px 2px #000,2px -2px 2px #000,-2px -2px 2px #000",
           zIndex: 20,
-          margin: 0,
           pointerEvents: "none",
         }}
       >
@@ -585,13 +587,16 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
           padding: 6,
           borderRadius: 24,
           backdropFilter: "blur(20px)",
-          background: "rgba(255,255,255,0.08)",
-          border: "1px solid rgba(255,255,255,0.15)",
-          boxShadow: "0 0 40px rgba(0,0,0,0.5)",
+          background: "rgba(255,255,255,.08)",
+          border: "1px solid rgba(255,255,255,.15)",
+          boxShadow: "0 0 40px rgba(0,0,0,.5)",
           overflow: "hidden",
         }}
       >
-        <div ref={mountRef} style={{ width: "100%", height: "100%" }} />
+        <div
+          ref={mountRef}
+          style={{ width: "100%", height: "100%" }}
+        />
       </div>
 
       <div
@@ -599,10 +604,9 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
           position: "absolute",
           bottom: "4.5vh",
           left: "2.25vw",
-          width: "clamp(140px, 14vw, 220px)",
-          height: "clamp(80px, 8vw, 140px)",
-          borderRadius: "12px",
-          background: "rgba(0,0,0,0.0)",
+          width: "clamp(140px,14vw,220px)",
+          height: "clamp(80px,8vw,140px)",
+          borderRadius: 12,
           overflow: "hidden",
           display: "flex",
           alignItems: "center",
@@ -616,7 +620,7 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
             width: "100%",
             height: "100%",
             objectFit: "contain",
-            filter: "drop-shadow(0 0 12px rgba(0,0,0,0.7))",
+            filter: "drop-shadow(0 0 12px rgba(0,0,0,.7))",
           }}
         />
       </div>
@@ -630,13 +634,13 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
           width: 48,
           height: 48,
           borderRadius: 10,
-          background: "rgba(255,255,255,0.1)",
+          background: "rgba(255,255,255,.1)",
           backdropFilter: "blur(6px)",
-          border: "1px solid rgba(255,255,255,0.25)",
+          border: "1px solid rgba(255,255,255,.25)",
           color: "#fff",
-          opacity: 0.25,
+          opacity: 0.3,
           cursor: "pointer",
-          transition: "0.25s",
+          transition: ".25s",
           fontSize: "1.4rem",
           zIndex: 20,
         }}
