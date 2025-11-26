@@ -79,16 +79,17 @@ export default function SlideShowPlayer() {
   const [current, setCurrent] = useState(0);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
-  // Local refs for comparison (avoids loops)
+  // Refs to track previous values
   const lastSlideIdsRef = useRef<string[]>([]);
   const lastDurationRef = useRef<number>(0);
   const lastTransitionRef = useRef<string>("");
+  const lastPlayingRef = useRef<boolean>(true);
 
   const duration = slideshow?.duration_seconds ?? 8;
   const transitionType = slideshow?.transition ?? "Fade In / Fade Out";
 
   /* ===========================================
-     LOAD + REFRESH FUNCTION
+     LOAD SLIDESHOW DATA
   ============================================ */
   const loadSlideshow = useCallback(async () => {
     const { data: show } = await supabase
@@ -102,19 +103,18 @@ export default function SlideShowPlayer() {
     setSlideshow(show);
 
     const newIds = show.slide_ids || [];
-
-    // Check if slide list OR transition OR duration changed
-    const slideChanged =
-      JSON.stringify(newIds) !== JSON.stringify(lastSlideIdsRef.current);
+    const slideChanged = JSON.stringify(newIds) !== JSON.stringify(lastSlideIdsRef.current);
     const durationChanged = show.duration_seconds !== lastDurationRef.current;
     const transitionChanged = show.transition !== lastTransitionRef.current;
+    const playingChanged = show.is_playing !== lastPlayingRef.current;
 
     // Update refs
     lastSlideIdsRef.current = newIds;
     lastDurationRef.current = show.duration_seconds;
     lastTransitionRef.current = show.transition;
+    lastPlayingRef.current = show.is_playing;
 
-    // Only reload slides if list changed
+    // Reload slides ONLY if needed
     if (slideChanged) {
       if (!newIds.length) {
         setSlides([]);
@@ -134,9 +134,10 @@ export default function SlideShowPlayer() {
 
       setSlides(ordered);
 
-      // Reset current index if removed slides cause out-of-range
+      // Fix out-of-range current index
       setCurrent((c) => (ordered.length ? c % ordered.length : 0));
     }
+
   }, [slideshowId, supabase]);
 
   /* ===========================================
@@ -155,17 +156,18 @@ export default function SlideShowPlayer() {
   }, [loadSlideshow]);
 
   /* ===========================================
-     AUTO ROTATION
+     AUTO ROTATION (only when playing)
   ============================================ */
   useEffect(() => {
     if (!slides.length) return;
+    if (!slideshow?.is_playing) return; // STOP → no rotation
 
     const timer = setInterval(() => {
       setCurrent((c) => (c + 1) % slides.length);
     }, duration * 1000);
 
     return () => clearInterval(timer);
-  }, [slides, duration]);
+  }, [slides, duration, slideshow?.is_playing]);
 
   /* ===========================================
      FULLSCREEN TOGGLE
