@@ -36,8 +36,7 @@ export default function DashboardHeader({
 
   return (
     <div className={cn('text-center', 'mb-0')}>
-      <h1 className={cn('text-2xl', 'font-bold', 'mb-1')}>🎛 Host Dashboard</h1>
-
+      
       {/* Top Row: Ads */}
       <div className={cn('flex', 'justify-center', 'w-full', 'mb-4', 'gap-3', 'flex-wrap')}>
 
