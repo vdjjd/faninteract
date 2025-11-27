@@ -154,20 +154,23 @@ export default function AdBuilderModal({ adId, hostId, onClose }: AdBuilderModal
   }, []);
 
   /* GENERATE QR */
-  async function generateQR() {
-    const url = `https://faninteract.com/lead/signup?ad=${adId}&host=${hostId}&src=qr`;
+async function generateQR() {
+  // FIXED — must use /priority-lead not /lead/signup
+  const url = `https://faninteract.com/priority-lead?ad=${adId}&host=${hostId}&src=qr`;
 
-    const qr = await QRCode.toDataURL(url, {
-      margin: 1,
-      color: {
-        dark: qrOptions.fg,
-        light: qrOptions.bg,
-      },
-    });
+  const qr = await QRCode.toDataURL(url, {
+    margin: 1,
+    color: {
+      dark: qrOptions.fg,
+      light: qrOptions.bg,
+    },
+  });
 
-    setQrDataUrl(qr);
+  setQrDataUrl(qr);
 
-    await supabase.from("ad_slides").update({
+  await supabase
+    .from("ad_slides")
+    .update({
       qr_layer: {
         dataUrl: qr,
         x: qrX,
@@ -175,8 +178,9 @@ export default function AdBuilderModal({ adId, hostId, onClose }: AdBuilderModal
         size: qrSize,
         ...qrOptions,
       },
-    }).eq("id", adId);
-  }
+    })
+    .eq("id", adId);
+}
 
   async function deleteQR() {
     setQrDataUrl(null);

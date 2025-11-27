@@ -373,13 +373,14 @@ export default function DashboardPage() {
       )}
 
       {/* NEW AD SLIDE BUILDER */}
-      {showBuilderModal && builderAdId && (
-        <AdBuilderModal
-          open={showBuilderModal}
-          onClose={() => setShowBuilderModal(false)}
-          adId={builderAdId}
-        />
-      )}
+{showBuilderModal && builderAdId && (
+  <AdBuilderModal
+    open={showBuilderModal}
+    onClose={() => setShowBuilderModal(false)}
+    adId={builderAdId}
+    hostId={host?.id}   // FIX APPLIED — required for QR + submit flows
+  />
+)}
 
     </div>
   );
