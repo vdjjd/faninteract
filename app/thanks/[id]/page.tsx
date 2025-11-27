@@ -22,7 +22,7 @@ export default function ThankYouPage() {
   const supabase = getSupabaseClient();
 
   /* ---------------------------------------------------------------
-     DEFINITIVE TYPE DETECTION — CORRECT 100% OF ROUTES
+     DETECT TYPE (NOW INCLUDES LEAD)
   ---------------------------------------------------------------- */
   const rawType = searchParams.get("type");
   const path =
@@ -36,7 +36,8 @@ export default function ThankYouPage() {
 
   if (rawType) detectedType = rawType.toLowerCase();
 
-  const type = detectedType || "wall";
+  // NEW: LEADS default to type "lead"
+  const type = detectedType || "lead";
 
   /* --------------------------------------------------------------- */
 
@@ -57,6 +58,12 @@ export default function ThankYouPage() {
   /* ----------------------------- fetch data ----------------------------- */
   useEffect(() => {
     if (!id) return;
+
+    // LEADS DO NOT FETCH FAN WALL / POLL / WHEEL TABLES  
+    if (type === "lead") {
+      setData({ background_value: null, host: { branding_logo_url: "/faninteractlogo.png" } });
+      return;
+    }
 
     async function fetchData() {
       const table =
@@ -141,18 +148,25 @@ export default function ThankYouPage() {
   }, [id, type, supabase, profile?.id, remoteEnabled]);
 
   /* ----------------------------- ui helpers ----------------------------- */
+
   const bg =
-    data?.background_value ||
-    "linear-gradient(135deg,#0a2540,#1b2b44,#000000)";
+    type === "lead"
+      ? "linear-gradient(135deg,#0a2540,#1b2b44,#000000)"
+      : data?.background_value ||
+        "linear-gradient(135deg,#0a2540,#1b2b44,#000000)";
 
   const displayLogo =
-    data?.host?.branding_logo_url &&
-    data.host.branding_logo_url.trim() !== ""
+    type === "lead"
+      ? "/faninteractlogo.png"
+      : data?.host?.branding_logo_url &&
+        data.host.branding_logo_url.trim() !== ""
       ? data.host.branding_logo_url
       : "/faninteractlogo.png";
 
   const message = useMemo(() => {
     switch (type) {
+      case "lead":
+        return "Your request has been submitted!";
       case "poll":
         return "Your vote has been recorded!";
       case "wheel":
@@ -287,7 +301,7 @@ export default function ThankYouPage() {
           {message}
         </p>
 
-        {/* 🔥 SHOW THIS ONLY FOR PRIZE WHEELS */}
+        {/* 🔥 ONLY SHOW FOR WHEELS */}
         {type === "wheel" && (
           <div
             style={{
@@ -310,7 +324,7 @@ export default function ThankYouPage() {
           </div>
         )}
 
-        {/* 🔥 REMOTE SPIN BUTTON — WHEEL ONLY */}
+        {/* 🔥 WHEEL REMOTE BUTTON */}
         {type === "wheel" && !isFanWall && remoteEnabled && armed && (
           <button
             onClick={handleRemotePress}
@@ -349,6 +363,7 @@ export default function ThankYouPage() {
         )}
       </div>
 
+      {/* ANIMATIONS */}
       <style>{`
         @keyframes pulseGlow {
           0%, 100% { filter: drop-shadow(0 0 15px rgba(255,120,40,0.5)); }
