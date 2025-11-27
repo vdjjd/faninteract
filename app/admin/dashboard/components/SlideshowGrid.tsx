@@ -1,6 +1,6 @@
 'use client';
 
-import SlideshowCard from './SlideshowCard';
+import SlideshowCard from 'app/admin/dashboard/components/SlideshowCard';
 import { cn } from "../../../../lib/utils";
 
 interface SlideshowGridProps {
