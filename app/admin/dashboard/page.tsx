@@ -220,7 +220,7 @@ export default function DashboardPage() {
 
       {/* SLIDESHOW GRID */}
       <div className={cn('w-full max-w-6xl mt-10')}>
-         <SlideshowGrid
+        <SlideshowGrid
           slideshows={slideshows}
           host={host}
           refreshSlideshows={refreshSlideshows}
@@ -233,44 +233,50 @@ export default function DashboardPage() {
         />
       </div>
 
-      {/* FAN WALLS */}
-      <FanWallGrid
-        walls={fanWalls}
-        host={host}
-        refreshFanWalls={refreshFanWalls}
-        onOpenOptions={(wall) => {
-          setSelectedPrizeWheel(null);
-          setSelectedPoll(null);
-          setSelectedSlideshow(null);
-          setTimeout(() => setSelectedWall(wall), 25);
-        }}
-      />
+      {/* FAN WALLS (FIXED WRAPPER) */}
+      <div className={cn('w-full max-w-6xl mt-10')}>
+        <FanWallGrid
+          walls={fanWalls}
+          host={host}
+          refreshFanWalls={refreshFanWalls}
+          onOpenOptions={(wall) => {
+            setSelectedPrizeWheel(null);
+            setSelectedPoll(null);
+            setSelectedSlideshow(null);
+            setTimeout(() => setSelectedWall(wall), 25);
+          }}
+        />
+      </div>
 
       {/* PRIZE WHEELS */}
-      <PrizeWheelGrid
-        wheels={prizeWheels}
-        host={host}
-        refreshPrizeWheels={refreshPrizeWheels}
-        onOpenOptions={(wheel) => {
-          setSelectedWall(null);
-          setSelectedPoll(null);
-          setSelectedSlideshow(null);
-          setTimeout(() => setSelectedPrizeWheel(wheel), 25);
-        }}
-      />
+      <div className={cn('w-full max-w-6xl mt-10')}>
+        <PrizeWheelGrid
+          wheels={prizeWheels}
+          host={host}
+          refreshPrizeWheels={refreshPrizeWheels}
+          onOpenOptions={(wheel) => {
+            setSelectedWall(null);
+            setSelectedPoll(null);
+            setSelectedSlideshow(null);
+            setTimeout(() => setSelectedPrizeWheel(wheel), 25);
+          }}
+        />
+      </div>
 
       {/* POLLS */}
-      <PollGrid
-        host={host}
-        polls={polls}
-        refreshPolls={refreshPolls}
-        onOpenOptions={(poll) => {
-          setSelectedWall(null);
-          setSelectedPrizeWheel(null);
-          setSelectedSlideshow(null);
-          setTimeout(() => setSelectedPoll(poll), 25);
-        }}
-      />
+      <div className={cn('w-full max-w-6xl mt-10')}>
+        <PollGrid
+          host={host}
+          polls={polls}
+          refreshPolls={refreshPolls}
+          onOpenOptions={(poll) => {
+            setSelectedWall(null);
+            setSelectedPrizeWheel(null);
+            setSelectedSlideshow(null);
+            setTimeout(() => setSelectedPoll(poll), 25);
+          }}
+        />
+      </div>
 
       {/* CREATION MODALS */}
       <CreateFanWallModal

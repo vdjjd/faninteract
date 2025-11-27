@@ -15,7 +15,7 @@ export default function OptionsModalSlideShow({
   const [saving, setSaving] = useState(false);
   const [adsQueue, setAdsQueue] = useState<any[]>([]);
 
-  // IMPORTANT: slide_ids will now store SLIDE IDs (uuid)
+  // slide_ids now store slide UUIDs
   const [localShow, setLocalShow] = useState({
     ...show,
     name: show.name,
@@ -24,16 +24,14 @@ export default function OptionsModalSlideShow({
     slide_ids: show.slide_ids || [],
   });
 
-  /* ===========================================================
-     LOAD BOTH CORPORATE + HOST ADS
-     Corporate ads → host_id = null
-     Local ads → host_id = hostId
-  =========================================================== */
+  /* ------------------------------------------------------------
+     LOAD HOST + CORPORATE ADS
+  ------------------------------------------------------------ */
   useEffect(() => {
     async function loadQueue() {
       const { data, error } = await supabase
         .from("ad_slides")
-        .select("id, name, rendered_url, host_id")
+        .select("id, name, rendered_url, flyer_url, host_id")
         .not("rendered_url", "is", null)
         .or(`host_id.eq.${hostId},host_id.is.null`)
         .order("created_at", { ascending: false });
@@ -44,9 +42,9 @@ export default function OptionsModalSlideShow({
     loadQueue();
   }, [hostId]);
 
-  /* ===========================================================
-     SAVE SLIDESHOW (USING slide_ids = IDs)
-  =========================================================== */
+  /* ------------------------------------------------------------
+     SAVE SLIDESHOW (slide_ids = IDs)
+  ------------------------------------------------------------ */
   async function handleSave() {
     try {
       setSaving(true);
@@ -55,7 +53,7 @@ export default function OptionsModalSlideShow({
         name: localShow.name.trim(),
         transition: localShow.transition,
         duration_seconds: localShow.duration_seconds,
-        slide_ids: localShow.slide_ids, // IDs ONLY
+        slide_ids: localShow.slide_ids,
         updated_at: new Date().toISOString(),
       };
 
@@ -75,9 +73,9 @@ export default function OptionsModalSlideShow({
     }
   }
 
-  /* ===========================================================
-     ADD SLIDE TO SLIDESHOW (ADD BY ID)
-  =========================================================== */
+  /* ------------------------------------------------------------
+     ADD SLIDE
+  ------------------------------------------------------------ */
   function addQueueItem(ad: any) {
     if (localShow.slide_ids.includes(ad.id)) return;
 
@@ -87,13 +85,12 @@ export default function OptionsModalSlideShow({
     });
   }
 
-  /* ===========================================================
-     REMOVE / REORDER SLIDES
-  =========================================================== */
+  /* ------------------------------------------------------------
+     REMOVE / REORDER
+  ------------------------------------------------------------ */
   function removeSlide(index: number) {
     const s = [...localShow.slide_ids];
     s.splice(index, 1);
-
     setLocalShow({ ...localShow, slide_ids: s });
   }
 
@@ -111,9 +108,9 @@ export default function OptionsModalSlideShow({
     setLocalShow({ ...localShow, slide_ids: s });
   }
 
-  /* ===========================================================
+  /* ------------------------------------------------------------
      DELETE SLIDESHOW
-  =========================================================== */
+  ------------------------------------------------------------ */
   async function deleteSlideshow() {
     if (!confirm(`Delete slideshow "${localShow.name}"? This cannot be undone.`))
       return;
@@ -133,17 +130,56 @@ export default function OptionsModalSlideShow({
     onClose();
   }
 
-  /* ===========================================================
-     HELPER: PREVIEW LOOKUP (ID → URL)
-  =========================================================== */
-
+  /* ------------------------------------------------------------
+     HELPER: Lookup slide by ID
+  ------------------------------------------------------------ */
   function findSlideById(id: string) {
     return adsQueue.find((ad) => ad.id === id);
   }
 
-  /* ===========================================================
+  /* ------------------------------------------------------------
+     DELETE AD FROM QUEUE (FULL DELETE)
+  ------------------------------------------------------------ */
+  async function deleteAdFromQueue(ad: any) {
+    if (!confirm(`Delete ad "${ad.name}" permanently?`)) return;
+
+    try {
+      const pathsToDelete: string[] = [];
+
+      // Extract bucket paths
+      const renderPath = ad.rendered_url?.split("/ad-slideshow-images/")[1];
+      const flyerPath = ad.flyer_url?.split("/ad-slideshow-images/")[1];
+
+      if (renderPath) pathsToDelete.push(renderPath);
+      if (flyerPath) pathsToDelete.push(flyerPath);
+
+      // delete files
+      if (pathsToDelete.length > 0) {
+        await supabase.storage
+          .from("ad-slideshow-images")
+          .remove(pathsToDelete);
+      }
+
+      // delete db row
+      await supabase.from("ad_slides").delete().eq("id", ad.id);
+
+      // remove from queue
+      setAdsQueue((q) => q.filter((x) => x.id !== ad.id));
+
+      // remove from slideshow if present
+      setLocalShow((prev) => ({
+        ...prev,
+        slide_ids: prev.slide_ids.filter((sid) => sid !== ad.id),
+      }));
+    } catch (err) {
+      console.error("Delete ad error:", err);
+      alert("Failed to delete ad.");
+    }
+  }
+
+  /* ------------------------------------------------------------
      UI
-  =========================================================== */
+  ------------------------------------------------------------ */
   return (
     <div
       className={cn(
@@ -159,7 +195,7 @@ export default function OptionsModalSlideShow({
           "bg-gradient-to-br from-[#0b0f1a]/95 to-[#111827]/95 p-6 text-white"
         )}
       >
-        {/* HEADER */}
+        {/* CLOSE BUTTON */}
         <button
           onClick={onClose}
           className={cn("absolute top-3 right-3 text-white/80 hover:text-white text-xl")}
@@ -172,16 +208,18 @@ export default function OptionsModalSlideShow({
         </h3>
 
         {/* ======================================================
-            MAIN GRID: SETTINGS + ACTIVE SLIDES
+            MAIN GRID
         ====================================================== */}
         <div className={cn('grid', 'grid-cols-2', 'gap-10')}>
-          {/* LEFT SIDE — SETTINGS */}
+          {/* LEFT SETTINGS */}
           <div className="space-y-5">
             {/* NAME */}
             <div>
-              <label className={cn('block', 'text-sm', 'font-semibold', 'mb-1')}>Slideshow Name</label>
+              <label className={cn('block text-sm font-semibold mb-1')}>Slideshow Name</label>
               <input
-                className={cn('w-full', 'px-3', 'py-2', 'rounded-lg', 'bg-black/40', 'border', 'border-white/10')}
+                className={cn(
+                  'w-full px-3 py-2 rounded-lg bg-black/40 border border-white/10'
+                )}
                 value={localShow.name}
                 onChange={(e) =>
                   setLocalShow({ ...localShow, name: e.target.value })
@@ -191,9 +229,11 @@ export default function OptionsModalSlideShow({
 
             {/* TRANSITION */}
             <div>
-              <label className={cn('block', 'text-sm', 'font-semibold', 'mb-1')}>Transition Style</label>
+              <label className={cn('block text-sm font-semibold mb-1')}>Transition Style</label>
               <select
-                className={cn('w-full', 'px-3', 'py-2', 'rounded-lg', 'bg-black/40', 'border', 'border-white/10')}
+                className={cn(
+                  'w-full px-3 py-2 rounded-lg bg-black/40 border border-white/10'
+                )}
                 value={localShow.transition}
                 onChange={(e) =>
                   setLocalShow({ ...localShow, transition: e.target.value })
@@ -213,7 +253,7 @@ export default function OptionsModalSlideShow({
 
             {/* DURATION */}
             <div>
-              <label className={cn('block', 'text-sm', 'font-semibold', 'mb-1')}>
+              <label className={cn('block text-sm font-semibold mb-1')}>
                 Slide Duration (seconds)
               </label>
               <input
@@ -227,18 +267,24 @@ export default function OptionsModalSlideShow({
                     duration_seconds: Number(e.target.value),
                   })
                 }
-                className={cn('w-full', 'px-3', 'py-2', 'rounded-lg', 'bg-black/40', 'border', 'border-white/10')}
+                className={cn(
+                  'w-full px-3 py-2 rounded-lg bg-black/40 border border-white/10'
+                )}
               />
             </div>
           </div>
 
-          {/* RIGHT SIDE — ACTIVE SLIDES */}
+          {/* RIGHT — ACTIVE SLIDES */}
           <div>
-            <h4 className={cn('text-md', 'font-semibold', 'mb-2')}>Active Slides</h4>
+            <h4 className={cn('text-md font-semibold mb-2')}>Active Slides</h4>
 
-            <div className={cn('max-h-[350px]', 'overflow-y-auto', 'p-2', 'bg-black/20', 'border', 'border-white/10', 'rounded-lg')}>
+            <div
+              className={cn(
+                'max-h-[350px] overflow-y-auto p-2 bg-black/20 border border-white/10 rounded-lg'
+              )}
+            >
               {localShow.slide_ids.length === 0 ? (
-                <p className={cn('text-gray-400', 'text-sm', 'text-center', 'py-4')}>
+                <p className={cn('text-gray-400 text-sm text-center py-4')}>
                   No active slides. Add from the queue below.
                 </p>
               ) : (
@@ -248,38 +294,52 @@ export default function OptionsModalSlideShow({
                   return (
                     <div
                       key={i}
-                      className={cn('flex', 'items-center', 'justify-between', 'mb-3', 'p-2', 'rounded-md', 'bg-black/30', 'border', 'border-white/10')}
+                      className={cn(
+                        'flex items-center justify-between mb-3 p-2 rounded-md bg-black/30 border border-white/10'
+                      )}
                     >
                       {slide ? (
                         <img
                           src={slide.rendered_url}
                           alt="slide"
-                          className={cn('w-20', 'h-14', 'object-cover', 'rounded-md', 'border', 'border-white/20')}
+                          className={cn(
+                            'w-20 h-14 object-cover rounded-md border border-white/20'
+                          )}
                         />
                       ) : (
-                        <div className={cn('w-20', 'h-14', 'bg-gray-700', 'rounded-md', 'flex', 'items-center', 'justify-center', 'text-xs')}>
+                        <div
+                          className={cn(
+                            'w-20 h-14 bg-gray-700 rounded-md flex items-center justify-center text-xs'
+                          )}
+                        >
                           Missing
                         </div>
                       )}
 
-                      <div className={cn('flex', 'gap-2')}>
+                      <div className={cn('flex gap-2')}>
                         <button
                           onClick={() => moveSlideUp(i)}
-                          className={cn('px-2', 'py-1', 'rounded', 'bg-gray-600', 'hover:bg-gray-700', 'text-white', 'text-xs')}
+                          className={cn(
+                            'px-2 py-1 rounded bg-gray-600 hover:bg-gray-700 text-white text-xs'
+                          )}
                         >
                           ↑
                         </button>
 
                         <button
                           onClick={() => moveSlideDown(i)}
-                          className={cn('px-2', 'py-1', 'rounded', 'bg-gray-600', 'hover:bg-gray-700', 'text-white', 'text-xs')}
+                          className={cn(
+                            'px-2 py-1 rounded bg-gray-600 hover:bg-gray-700 text-white text-xs'
+                          )}
                         >
                           ↓
                         </button>
 
                         <button
                           onClick={() => removeSlide(i)}
-                          className={cn('px-2', 'py-1', 'rounded', 'bg-red-700', 'hover:bg-red-800', 'text-white', 'text-xs')}
+                          className={cn(
+                            'px-2 py-1 rounded bg-red-700 hover:bg-red-800 text-white text-xs'
+                          )}
                         >
                           🗑
                         </button>
@@ -293,14 +353,18 @@ export default function OptionsModalSlideShow({
         </div>
 
         {/* ======================================================
-            AD QUEUE
+            AD QUEUE — WITH DELETE BUTTON
         ====================================================== */}
         <div className="mt-10">
-          <h4 className={cn('text-md', 'font-semibold', 'mb-3')}>Ad Queue</h4>
+          <h4 className={cn('text-md font-semibold mb-3')}>Ad Queue</h4>
 
-          <div className={cn('max-h-[300px]', 'overflow-y-auto', 'p-2', 'bg-black/20', 'border', 'border-white/10', 'rounded-lg')}>
+          <div
+            className={cn(
+              'max-h-[300px] overflow-y-auto p-2 bg-black/20 border border-white/10 rounded-lg'
+            )}
+          >
             {adsQueue.length === 0 && (
-              <p className={cn('text-gray-400', 'text-sm', 'text-center', 'py-4')}>
+              <p className={cn('text-gray-400 text-sm text-center py-4')}>
                 No ads available yet.
               </p>
             )}
@@ -308,40 +372,67 @@ export default function OptionsModalSlideShow({
             {adsQueue.map((ad) => (
               <div
                 key={ad.id}
-                className={cn('flex', 'items-center', 'justify-between', 'mb-3', 'p-2', 'rounded-md', 'bg-black/30', 'border', 'border-white/10')}
+                className={cn(
+                  'flex items-center justify-between mb-3 p-2 rounded-md bg-black/30 border border-white/10'
+                )}
               >
-                <div className={cn('flex', 'items-center', 'gap-3')}>
+                <div className={cn('flex items-center gap-3')}>
                   <img
                     src={ad.rendered_url}
                     alt="ad"
-                    className={cn('w-20', 'h-14', 'object-cover', 'rounded-md', 'border', 'border-white/20')}
+                    className={cn(
+                      'w-20 h-14 object-cover rounded-md border border-white/20'
+                    )}
                   />
                   <span className="text-sm">{ad.name}</span>
                 </div>
 
-                <button
-                  onClick={() => addQueueItem(ad)}
-                  className={cn('px-3', 'py-1', 'bg-blue-600', 'hover:bg-blue-700', 'rounded', 'text-white', 'text-xs', 'font-semibold')}
-                >
-                  ➕ Add
-                </button>
+                <div className={cn('flex', 'gap-2')}>
+                  {/* ADD */}
+                  <button
+                    onClick={() => addQueueItem(ad)}
+                    className={cn(
+                      'px-3 py-1 bg-blue-600 hover:bg-blue-700 rounded text-white text-xs font-semibold'
+                    )}
+                  >
+                    ➕ Add
+                  </button>
+
+                  {/* DELETE */}
+                  <button
+                    onClick={() => deleteAdFromQueue(ad)}
+                    className={cn(
+                      'px-3 py-1 bg-red-600 hover:bg-red-700 rounded text-white text-xs font-semibold'
+                    )}
+                  >
+                    🗑 Delete
+                  </button>
+                </div>
               </div>
             ))}
           </div>
         </div>
 
-        {/* FOOTER ACTIONS */}
-        <div className={cn('flex', 'justify-center', 'items-center', 'gap-4', 'border-t', 'border-white/10', 'mt-8', 'pt-4')}>
+        {/* FOOTER */}
+        <div
+          className={cn(
+            'flex justify-center items-center gap-4 border-t border-white/10 mt-8 pt-4'
+          )}
+        >
           <button
             onClick={deleteSlideshow}
-            className={cn('px-4', 'py-2', 'rounded-md', 'text-sm', 'bg-red-600/80', 'hover:bg-red-700')}
+            className={cn(
+              'px-4 py-2 rounded-md text-sm bg-red-600/80 hover:bg-red-700'
+            )}
           >
             Delete Slideshow
           </button>
 
           <button
             onClick={onClose}
-            className={cn('px-4', 'py-2', 'rounded-md', 'text-sm', 'bg-white/10', 'hover:bg-white/15')}
+            className={cn(
+              'px-4 py-2 rounded-md text-sm bg-white/10 hover:bg-white/15'
+            )}
           >
             Cancel
           </button>

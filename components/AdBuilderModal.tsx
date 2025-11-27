@@ -86,7 +86,7 @@ export default function AdBuilderModal({ adId, hostId, onClose }: AdBuilderModal
     load();
   }, [adId]);
 
-  /* HANDLE BACKGROUND */
+  /* BACKGROUND UPLOAD */
   async function handleBackgroundUpload(e: any) {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -121,7 +121,7 @@ export default function AdBuilderModal({ adId, hostId, onClose }: AdBuilderModal
     setBackgroundUrl(urlData.publicUrl);
   }
 
-  /* AUTO-SIZE CANVAS */
+  /* AUTO CANVAS SCALING */
   const centerRef = useRef<HTMLDivElement>(null);
   const [canvasSize, setCanvasSize] = useState({ w: 100, h: 56 });
 
@@ -200,6 +200,7 @@ export default function AdBuilderModal({ adId, hostId, onClose }: AdBuilderModal
     if (!isDragging) return;
     const rect = e.target.closest(".canvas-box")?.getBoundingClientRect();
     if (!rect) return;
+
     setQrX(e.clientX - rect.left - qrSize / 2);
     setQrY(e.clientY - rect.top - qrSize / 2);
   }
@@ -214,6 +215,7 @@ export default function AdBuilderModal({ adId, hostId, onClose }: AdBuilderModal
     if (!resizeMode) return;
     const rect = e.target.closest(".canvas-box")?.getBoundingClientRect();
     if (!rect) return;
+
     const dx = e.clientX - (rect.left + qrX);
     const dy = e.clientY - (rect.top + qrY);
     const size = Math.max(80, Math.max(dx, dy));
@@ -238,7 +240,7 @@ export default function AdBuilderModal({ adId, hostId, onClose }: AdBuilderModal
     alert("Draft Saved");
   }
 
-  /* FINAL RENDER */
+  /* FINAL RENDER — FIXED QR POSITION */
   async function renderFinal() {
     if (!backgroundUrl) return alert("Upload a background first.");
 
@@ -251,6 +253,7 @@ export default function AdBuilderModal({ adId, hostId, onClose }: AdBuilderModal
     const bgImg = new Image();
     bgImg.crossOrigin = "anonymous";
     bgImg.src = backgroundUrl;
+
     await new Promise((res) => (bgImg.onload = res));
     ctx.drawImage(bgImg, 0, 0, 1920, 1080);
 
@@ -260,24 +263,30 @@ export default function AdBuilderModal({ adId, hostId, onClose }: AdBuilderModal
       qrImg.src = qrDataUrl;
       await new Promise((res) => (qrImg.onload = res));
 
+      /* SCALE FROM PREVIEW → REAL CANVAS */
+      const scaleX = 1920 / canvasSize.w;
+      const scaleY = 1080 / canvasSize.h;
+
+      const realX = qrX * scaleX;
+      const realY = qrY * scaleY;
+      const realSize = qrSize * scaleX;
+
       ctx.save();
 
-      /* Glow */
       if (qrOptions.glowRadius > 0) {
         ctx.shadowColor = qrOptions.glowColor;
         ctx.shadowBlur = qrOptions.glowRadius;
       }
 
-      /* Border */
       if (qrOptions.borderThickness > 0) {
         ctx.lineWidth = qrOptions.borderThickness;
         ctx.strokeStyle = qrOptions.fg;
-        ctx.strokeRect(qrX, qrY, qrSize, qrSize);
+        ctx.strokeRect(realX, realY, realSize, realSize);
       }
 
       ctx.restore();
 
-      ctx.drawImage(qrImg, qrX, qrY, qrSize, qrSize);
+      ctx.drawImage(qrImg, realX, realY, realSize, realSize);
     }
 
     const blob = await new Promise<Blob | null>((resolve) =>
@@ -305,6 +314,7 @@ export default function AdBuilderModal({ adId, hostId, onClose }: AdBuilderModal
     alert("Rendered image saved!");
   }
 
+  /* RENDER UI */
   return (
     <div
       className={cn(
@@ -324,13 +334,10 @@ export default function AdBuilderModal({ adId, hostId, onClose }: AdBuilderModal
           "flex flex-col overflow-hidden"
         )}
       >
-        {/* CLOSE */}
+        {/* CLOSE BUTTON */}
         <button
           onClick={onClose}
-          className={cn(
-            "absolute top-3 right-4 z-[999]",
-            "text-white hover:text-red-400 transition"
-          )}
+          className={cn("absolute top-3 right-4 z-[999] text-white hover:text-red-400 transition")}
         >
           <X size={30} />
         </button>
@@ -340,15 +347,21 @@ export default function AdBuilderModal({ adId, hostId, onClose }: AdBuilderModal
           <h2 className={cn("text-xl font-semibold text-white")}>✏️ Editing Ad</h2>
 
           <div className={cn("flex gap-3 pr-16")}>
-            <button onClick={saveDraft} className={cn("px-4 py-2 rounded-lg bg-white/10 text-white text-sm hover:bg-white/20 transition")}>Save Draft</button>
+            <button onClick={saveDraft} className={cn("px-4 py-2 rounded-lg bg-white/10 text-white text-sm hover:bg-white/20 transition")}>
+              Save Draft
+            </button>
 
-            <button onClick={renderFinal} className={cn("px-4 py-2 rounded-lg bg-green-600 text-white text-sm font-semibold hover:bg-green-700 transition")}>Render Final Image</button>
+            <button onClick={renderFinal} className={cn("px-4 py-2 rounded-lg bg-green-600 text-white text-sm font-semibold hover:bg-green-700 transition")}>
+              Render Final Image
+            </button>
 
-            <button onClick={saveDraft} className={cn("px-4 py-2 rounded-lg bg-cyan-600 text-white text-sm font-semibold hover:bg-cyan-700 transition")}>Save</button>
+            <button onClick={saveDraft} className={cn("px-4 py-2 rounded-lg bg-cyan-600 text-white text-sm font-semibold hover:bg-cyan-700 transition")}>
+              Save
+            </button>
           </div>
         </div>
 
-        {/* CONTENT */}
+        {/* BODY */}
         <div className={cn("flex flex-1 overflow-hidden")}>
 
           {/* LEFT PANEL */}
@@ -366,16 +379,18 @@ export default function AdBuilderModal({ adId, hostId, onClose }: AdBuilderModal
             <p className={cn('text-xs text-white/50')}>Must be 1920×1080.</p>
           </div>
 
-          {/* CANVAS */}
-          <div ref={centerRef}
-               className={cn("flex-1 bg-black flex items-center justify-center overflow-hidden")}>
-            <div className={cn("canvas-box relative bg-black overflow-hidden border border-white/10 shadow-xl")}
+          {/* CANVAS PREVIEW */}
+          <div ref={centerRef} className={cn("flex-1 bg-black flex items-center justify-center overflow-hidden")}>
+            <div
+              className={cn("canvas-box relative bg-black overflow-hidden border border-white/10 shadow-xl")}
               style={{ width: canvasSize.w, height: canvasSize.h }}
               onMouseMove={resizeMode ? onResize : undefined}
             >
               {backgroundUrl && (
-                <img src={backgroundUrl}
-                     className={cn("absolute inset-0 w-full h-full object-cover pointer-events-none")} />
+                <img
+                  src={backgroundUrl}
+                  className={cn("absolute inset-0 w-full h-full object-cover pointer-events-none")}
+                />
               )}
 
               {qrDataUrl && (
@@ -393,7 +408,11 @@ export default function AdBuilderModal({ adId, hostId, onClose }: AdBuilderModal
                     borderRadius: qrOptions.borderRadius,
                   }}
                 >
-                  <img src={qrDataUrl} className={cn("w-full h-full")} draggable={false} />
+                  <img
+                    src={qrDataUrl}
+                    className={cn("w-full h-full")}
+                    draggable={false}
+                  />
 
                   <div
                     onMouseDown={startResize}
@@ -415,56 +434,79 @@ export default function AdBuilderModal({ adId, hostId, onClose }: AdBuilderModal
           </div>
 
           {/* QR OPTIONS PANEL */}
-          <div className={cn("border-l border-white/10 bg-white/5 overflow-y-auto p-3 text-white")}
-               style={{ width: RIGHT_PANEL_WIDTH, minWidth: RIGHT_PANEL_WIDTH }}>
-
+          <div
+            className={cn("border-l border-white/10 bg-white/5 overflow-y-auto p-3 text-white")}
+            style={{ width: RIGHT_PANEL_WIDTH, minWidth: RIGHT_PANEL_WIDTH }}
+          >
             <h3 className={cn('text-sm font-semibold mb-3')}>QR Code Options</h3>
 
-            {/* FOREGROUND */}
             <label className={cn("text-xs text-white/70")}>Foreground Color</label>
-            <input type="color" value={qrOptions.fg}
+            <input
+              type="color"
+              value={qrOptions.fg}
               onChange={(e) => setQrOptions({ ...qrOptions, fg: e.target.value })}
-              className={cn("w-full h-8 mb-3")} />
+              className={cn("w-full h-8 mb-3")}
+            />
 
-            {/* BACKGROUND */}
             <label className={cn("text-xs text-white/70")}>Background Color</label>
-            <input type="color" value={qrOptions.bg}
+            <input
+              type="color"
+              value={qrOptions.bg}
               onChange={(e) => setQrOptions({ ...qrOptions, bg: e.target.value })}
-              className={cn("w-full h-8 mb-3")} />
+              className={cn("w-full h-8 mb-3")}
+            />
 
-            {/* GLOW COLOR */}
             <label className={cn("text-xs text-white/70")}>Glow Color</label>
-            <input type="color" value={qrOptions.glowColor}
+            <input
+              type="color"
+              value={qrOptions.glowColor}
               onChange={(e) => setQrOptions({ ...qrOptions, glowColor: e.target.value })}
-              className={cn("w-full h-8 mb-3")} />
+              className={cn("w-full h-8 mb-3")}
+            />
 
-            {/* GLOW RADIUS */}
             <label className={cn("text-xs text-white/70")}>Glow Radius</label>
-            <input type="number" min={0} max={50} value={qrOptions.glowRadius}
+            <input
+              type="number"
+              min={0}
+              max={50}
+              value={qrOptions.glowRadius}
               onChange={(e) => setQrOptions({ ...qrOptions, glowRadius: Number(e.target.value) })}
-              className={cn("w-full px-2 py-1 mb-3 bg-black/30 border border-white/30 rounded")} />
+              className={cn("w-full px-2 py-1 mb-3 bg-black/30 border border-white/30 rounded")}
+            />
 
-            {/* CORNER RADIUS */}
             <label className={cn("text-xs text-white/70")}>Corner Radius</label>
-            <input type="number" min={0} max={50} value={qrOptions.cornerRadius}
+            <input
+              type="number"
+              min={0}
+              max={50}
+              value={qrOptions.cornerRadius}
               onChange={(e) => setQrOptions({ ...qrOptions, cornerRadius: Number(e.target.value) })}
-              className={cn("w-full px-2 py-1 mb-3 bg-black/30 border border-white/30 rounded")} />
+              className={cn("w-full px-2 py-1 mb-3 bg-black/30 border border-white/30 rounded")}
+            />
 
-            {/* BORDER THICKNESS */}
             <label className={cn("text-xs text-white/70")}>Border Thickness</label>
-            <input type="number" min={0} max={20} value={qrOptions.borderThickness}
+            <input
+              type="number"
+              min={0}
+              max={20}
+              value={qrOptions.borderThickness}
               onChange={(e) => setQrOptions({ ...qrOptions, borderThickness: Number(e.target.value) })}
-              className={cn("w-full px-2 py-1 mb-3 bg-black/30 border border-white/30 rounded")} />
+              className={cn("w-full px-2 py-1 mb-3 bg-black/30 border border-white/30 rounded")}
+            />
 
-            {/* BORDER RADIUS */}
             <label className={cn("text-xs text-white/70")}>Border Radius</label>
-            <input type="number" min={0} max={50} value={qrOptions.borderRadius}
+            <input
+              type="number"
+              min={0}
+              max={50}
+              value={qrOptions.borderRadius}
               onChange={(e) => setQrOptions({ ...qrOptions, borderRadius: Number(e.target.value) })}
-              className={cn("w-full px-2 py-1 mb-3 bg-black/30 border border-white/30 rounded")} />
+              className={cn("w-full px-2 py-1 mb-3 bg-black/30 border border-white/30 rounded")}
+            />
 
-            {/* DOT STYLE */}
             <label className={cn("text-xs text-white/70")}>Dot Style</label>
-            <select value={qrOptions.dotStyle}
+            <select
+              value={qrOptions.dotStyle}
               onChange={(e) =>
                 setQrOptions({ ...qrOptions, dotStyle: e.target.value as "square" | "round" })
               }
@@ -474,7 +516,6 @@ export default function AdBuilderModal({ adId, hostId, onClose }: AdBuilderModal
               <option value="round">Round</option>
             </select>
 
-            {/* GENERATE / DELETE */}
             {!qrDataUrl && (
               <button
                 onClick={generateQR}
@@ -492,7 +533,6 @@ export default function AdBuilderModal({ adId, hostId, onClose }: AdBuilderModal
                 Delete QR Code
               </button>
             )}
-
           </div>
         </div>
       </div>
