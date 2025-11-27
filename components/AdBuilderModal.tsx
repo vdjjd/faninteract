@@ -156,7 +156,7 @@ export default function AdBuilderModal({ adId, hostId, onClose }: AdBuilderModal
   /* GENERATE QR */
 async function generateQR() {
   // FIXED — must use /priority-lead not /lead/signup
-  const url = `https://faninteract.com/priority-lead?ad=${adId}&host=${hostId}&src=qr`;
+  const url = `https://www.faninteract.com/lead/signup?ad=${adId}&host=${hostId}&src=qr`;
 
   const qr = await QRCode.toDataURL(url, {
     margin: 1,
