@@ -56,7 +56,7 @@ export default function LandingPage() {
           'justify-center',
           'h-screen',
           'w-full',
-          'px-6'
+          'px-0'
         )}
       >
         <motion.div
@@ -85,8 +85,8 @@ export default function LandingPage() {
               width={420}
               height={180}
               className={cn(
-                'w-[300px]',
-                'md:w-[420px]',
+                'w-[150px]',
+                'md:w-[225px]',
                 'h-auto',
                 'object-contain',
                 'drop-shadow-[0_0_30px_rgba(56,189,248,0.3)]'

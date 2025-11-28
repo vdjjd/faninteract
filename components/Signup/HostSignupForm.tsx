@@ -96,9 +96,9 @@ export default function HostSignupForm() {
           <Image
             src="/faninteractlogo.png"
             alt="FanInteract"
-            width={360}
-            height={150}
-            className={cn('w-[300px] md:w-[360px] drop-shadow-[0_0_30px_rgba(56,189,248,0.35)]')}
+            width={120}
+            height={75}
+            className={cn('w-[120px] md:w-[100px] drop-shadow-[0_0_30px_rgba(56,189,248,0.35)]')}
           />
         </div>
 

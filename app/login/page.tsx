@@ -82,7 +82,7 @@ export default function LoginPage() {
               alt="FanInteract"
               width={360}
               height={150}
-              className={cn('w-[300px]', 'md:w-[360px]', 'drop-shadow-[0_0_30px_rgba(56,189,248,0.35)]')}
+              className={cn('w-[150px]', 'md:w-[120px]', 'drop-shadow-[0_0_30px_rgba(56,189,248,0.35)]')}
             />
           </div>
 
