@@ -217,20 +217,43 @@ export default function SlideShowPlayer() {
       </AnimatePresence>
 
       {/* FULLSCREEN BUTTON */}
-      <button
+      <div
+        style={{
+          position: 'fixed',
+          bottom: '30px',
+          right: '30px',
+          width: 40,
+          height: 40,
+          borderRadius: 12,
+          background: 'rgba(255,255,255,0.08)',
+          border: '1px solid rgba(255,255,255,0.2)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          cursor: 'pointer',
+          opacity: 0.10,
+          transition: 'opacity 0.2s ease',
+          zIndex: 999999999,
+        }}
+        onMouseEnter={e => (e.currentTarget.style.opacity = '1')}
+        onMouseLeave={e => (e.currentTarget.style.opacity = '0.35')}
         onClick={toggleFullscreen}
-        className={cn(
-          "absolute bottom-6 right-6",
-          "bg-white/20 hover:bg-white/30",
-          "text-white p-3 rounded-xl backdrop-blur-sm transition"
-        )}
       >
-        {isFullscreen ? (
-          <Minimize className={cn("w-6 h-6")} />
-        ) : (
-          <Fullscreen className={cn("w-6 h-6")} />
-        )}
-      </button>
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          stroke="white"
+          fill="none"
+          viewBox="0 0 24 24"
+          strokeWidth={1.5}
+          style={{ width: 28, height: 28 }}
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            d="M3 9V4h5M21 9V4h-5M3 15v5h5M21 15v5h-5"
+          />
+        </svg>
+      </div>
     </div>
   );
 }
