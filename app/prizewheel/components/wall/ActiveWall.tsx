@@ -26,8 +26,10 @@ function normalizeEntries(list: any[] = []) {
     .map((e) => ({
       id: e.id,
       photo_url: e.photo_url?.trim() || null,
-      first_name: e.first_name || e?.guest_profiles?.first_name || "",
-      last_name: e.last_name || e?.guest_profiles?.last_name || "",
+      first_name:
+        e.first_name || e?.guest_profiles?.first_name || "",
+      last_name:
+        e.last_name || e?.guest_profiles?.last_name || "",
     }));
 }
 
@@ -53,10 +55,13 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
   const bgRef = useRef<string>(
     wheel?.background_type === "image"
       ? `url(${wheel.background_value}) center/cover no-repeat`
-      : wheel?.background_value || "linear-gradient(135deg,#1b2735,#090a0f)"
+      : wheel?.background_value ||
+          "linear-gradient(135deg,#1b2735,#090a0f)"
   );
 
-  const brightnessRef = useRef<number>(wheel?.background_brightness || 100);
+  const brightnessRef = useRef<number>(
+    wheel?.background_brightness || 100
+  );
 
   const TILE_COUNT = 16;
   const TILE_SIZE = 820;
@@ -102,11 +107,11 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
      LOCK ONE TIME ONLY
 =========================================================== */
 
-  function lockEntries(normalized: any[]) {
+  function lockEntries(normalize: any[]) {
     if (lockedEntriesRef.current) return;
 
-    const shuffled = [...normalized];
-    for (let i = shuffled.length - i > 0; i--) {
+    const shuffled = [...normalize];
+    for (let i = shuffled.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
     }
@@ -123,7 +128,10 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
     const update = () => {
       const cont = mountRef.current?.parentElement?.parentElement;
       if (!cont) return;
-      Object.assign(cont.style, applyBrightness(bgRef.current, brightnessRef.current));
+      Object.assign(
+        cont.style,
+        applyBrightness(bgRef.current, brightnessRef.current)
+      );
     };
 
     update();
@@ -171,13 +179,13 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
       })
       .subscribe();
 
-    return () => {
-      supabase.removeChannel(ch);
-    };
+  return () => {
+  supabase.removeChannel(ch);
+};
   }, [wheel?.id]);
 
   /* ===========================================================
-     RELOAD CHANNEL
+     RELOAD CHANNEL (NEW)
 =========================================================== */
   useEffect(() => {
     if (!wheel?.id) return;
@@ -190,8 +198,8 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
       .subscribe();
 
     return () => {
-      supabase.removeChannel(ch);
-    };
+  supabase.removeChannel(ch);
+};
   }, [wheel?.id]);
 
   /* ===========================================================
@@ -205,7 +213,12 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
     const height = container.clientHeight;
 
     const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(38, width / height, 1, 8000);
+    const camera = new THREE.PerspectiveCamera(
+      38,
+      width / height,
+      1,
+      8000
+    );
     camera.position.set(0, 0, 3800);
 
     const renderer = new THREE.WebGLRenderer({
@@ -225,8 +238,10 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
 
     function resize() {
       if (!mountRef.current) return;
+
       const w = mountRef.current.clientWidth;
       const h = mountRef.current.clientHeight;
+
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
       renderer.setSize(w, h);
@@ -351,7 +366,8 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
         const p = Math.min((t - spin.start) / spin.duration, 1);
         const eased = p * p * (3 - 2 * p);
 
-        wheelGroup.rotation.y = spin.startRot + (spin.endRot - spin.startRot) * eased;
+        wheelGroup.rotation.y =
+          spin.startRot + (spin.endRot - spin.startRot) * eased;
 
         if (p >= 1) {
           spin.spinning = false;
@@ -360,10 +376,12 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
           drift.start = performance.now();
           drift.from = wheelGroup.rotation.y;
 
-          drift.to = Math.round(drift.from / TILE_STEP) * TILE_STEP;
+          drift.to =
+            Math.round(drift.from / TILE_STEP) * TILE_STEP;
 
           const idx =
-            ((0 - Math.round(drift.to / TILE_STEP)) % TILE_COUNT + TILE_COUNT) %
+            ((0 - Math.round(drift.to / TILE_STEP)) % TILE_COUNT +
+              TILE_COUNT) %
             TILE_COUNT;
 
           win.index = idx;
@@ -381,16 +399,21 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
             wwrap.style.border = "12px solid gold";
             wwrap.style.boxShadow =
               "0 0 80px rgba(255,215,0,0.6), inset 0 0 20px rgba(255,215,0,0.4)";
-            wwrap.style.animation = "winnerHalo 1.4s ease-in-out infinite";
+            wwrap.style.animation =
+              "winnerHalo 1.4s ease-in-out infinite";
           }
         }
       }
 
       if (drift.drifting) {
-        const p = Math.min((t - drift.start) / drift.duration, 1);
+        const p = Math.min(
+          (t - drift.start) / drift.duration,
+          1
+        );
         const easeOut = 1 - Math.pow(1 - p, 3);
 
-        wheelGroup.rotation.y = drift.from + (drift.to - drift.from) * easeOut;
+        wheelGroup.rotation.y =
+          drift.from + (drift.to - drift.from) * easeOut;
 
         if (p >= 1) drift.drifting = false;
       }
@@ -412,13 +435,16 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
   }, []);
 
   /* ===========================================================
-     POPULATE TILES
+     POPULATE TILES AFTER DOM BUILT
 =========================================================== */
   useEffect(() => {
     if (!wrapperRefs.current.length) return;
 
     if (!lockedEntriesRef.current) {
-      lockedEntriesRef.current = normalizeEntries(entries).slice(0, 16);
+      lockedEntriesRef.current = normalizeEntries(entries).slice(
+        0,
+        16
+      );
     }
 
     wrapperRefs.current.forEach((wrap, i) => {
@@ -441,8 +467,10 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
         img.innerText = "IMG";
       }
 
-      const ln = entry.last_name?.charAt(0)?.toUpperCase() || "";
-      name.innerText = entry.first_name ? `${entry.first_name} ${ln}.` : "";
+      const ln = entry.last_name?.charAhenderit odit
+      name.innerText = entry.first_name
+        ? `${entry.first_name} ${ln}.`
+        : "";
     });
   }, [entries]);
 
@@ -551,9 +579,6 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
       <BulbColumn side="right" />
       <BulbBottom />
 
-      {/* =====================================================
-           🔥 TITLE FIX — long titles stay on ONE line
-      ===================================================== */}
       <h1
         style={{
           position: "absolute",
@@ -567,18 +592,11 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
             "2px 2px 2px #000,-2px 2px 2px #000,2px -2px 2px #000,-2px -2px 2px #000",
           zIndex: 20,
           pointerEvents: "none",
-
-          /* 🔥 Title Fix */
-          maxWidth: "92vw",
-          whiteSpace: "nowrap",
-          overflow: "hidden",
-          textOverflow: "ellipsis",
         }}
       >
         {wheel.title || "Prize Wheel"}
       </h1>
 
-      {/* Wheel container */}
       <div
         style={{
           position: "absolute",
@@ -596,10 +614,12 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
           overflow: "hidden",
         }}
       >
-        <div ref={mountRef} style={{ width: "100%", height: "100%" }} />
+        <div
+          ref={mountRef}
+          style={{ width: "100%", height: "100%" }}
+        />
       </div>
 
-      {/* Logo */}
       <div
         style={{
           position: "absolute",
@@ -626,7 +646,6 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
         />
       </div>
 
-      {/* Fullscreen Button */}
       <button
         onClick={toggleFullscreen}
         style={{
