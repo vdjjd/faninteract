@@ -80,20 +80,21 @@ export default function LandingPage() {
             transition={{ duration: 7, repeat: Infinity, ease: 'easeInOut' }}
           >
             <Image
-              src="/faninteractlogo.png"
-              alt="FanInteract Logo"
-              width={420}
-              height={180}
-              className={cn(
-                'w-[150px]',
-                'md:w-[225px]',
-                'h-auto',
-                'object-contain',
-                'drop-shadow-[0_0_30px_rgba(56,189,248,0.3)]'
-              )}
-              priority
-              unoptimized
-            />
+  src="/faninteractlogo.png"
+  alt="FanInteract Logo"
+  width={420}
+  height={180}
+  sizes="(max-width: 768px) 150px, 225px"   // ⭐ Fix #3 applied
+  className={cn(
+    'w-[150px]',
+    'md:w-[225px]',
+    'h-auto',
+    'object-contain',
+    'drop-shadow-[0_0_30px_rgba(56,189,248,0.3)]'
+  )}
+  priority
+  unoptimized
+/>
           </motion.div>
 
           {/* Headline */}
