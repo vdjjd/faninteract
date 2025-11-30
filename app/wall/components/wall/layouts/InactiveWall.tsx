@@ -296,3 +296,4 @@ export default function InactiveWall({ wall }) {
     </div>
   );
 }
+

@@ -581,22 +581,23 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
       <BulbBottom />
 
       <h1
-        style={{
-          position: "absolute",
-          top: "-1vh",
-          left: "50%",
-          transform: "translateX(-50%)",
-          color: "#fff",
-          fontSize: "clamp(3rem,4vw,6rem)",
-          fontWeight: 900,
-          textShadow:
-            "2px 2px 2px #000,-2px 2px 2px #000,2px -2px 2px #000,-2px -2px 2px #000",
-          zIndex: 20,
-          pointerEvents: "none",
-        }}
-      >
-        {wheel.title || "Prize Wheel"}
-      </h1>
+  style={{
+    position: "absolute",
+    top: "-2vh",
+    left: "50%",
+    transform: "translateX(-50%)",
+    color: "#fff",
+    fontSize: "clamp(3rem,4vw,6rem)",
+    fontWeight: 900,
+    whiteSpace: "nowrap",     // 🚀 forces single line
+    textShadow:
+      "2px 2px 2px #000,-2px 2px 2px #000,2px -2px 2px #000,-2px -2px 2px #000",
+    zIndex: 20,
+    pointerEvents: "none",
+  }}
+>
+  {wheel.title || "Prize Wheel"}
+</h1>
 
       <div
         style={{

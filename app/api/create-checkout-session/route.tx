@@ -1,0 +1,57 @@
+import { NextResponse } from "next/server";
+import Stripe from "stripe";
+import { createClient } from "@supabase/supabase-js";
+
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
+  apiVersion: "2023-10-16",
+});
+
+export async function POST(req: Request) {
+  const { userId } = await req.json();
+
+  // Supabase server client
+  const supabase = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_KEY!
+  );
+
+  // Get host profile
+  const { data: host } = await supabase
+    .from("hosts")
+    .select("*")
+    .eq("id", userId)
+    .single();
+
+  // Create Stripe customer if not exists
+  let customerId = host.stripe_customer_id;
+
+  if (!customerId) {
+    const customer = await stripe.customers.create({
+      email: host.email,
+      metadata: { supabaseHostId: host.id },
+    });
+
+    customerId = customer.id;
+
+    await supabase
+      .from("hosts")
+      .update({ stripe_customer_id: customerId })
+      .eq("id", host.id);
+  }
+
+  // Create Checkout Session
+  const session = await stripe.checkout.sessions.create({
+    mode: "subscription",
+    customer: customerId,
+    line_items: [
+      {
+        price: process.env.STRIPE_PRICE_ID!,
+        quantity: 1,
+      },
+    ],
+    success_url: `${process.env.NEXT_PUBLIC_URL}/dashboard?success=true`,
+    cancel_url: `${process.env.NEXT_PUBLIC_URL}/pricing?canceled=true`,
+  });
+
+  return NextResponse.json({ url: session.url });
+}
