@@ -1,4 +1,9 @@
-'use client';
+// ⛔ FORCE VERCEL TO NEVER CACHE THIS PAGE
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+export const fetchCache = "force-no-store";
+export const runtime = "nodejs"; // blocks edge-optimization cache
+// 'use client';
 
 import { useState } from 'react';
 import { motion } from 'framer-motion';
