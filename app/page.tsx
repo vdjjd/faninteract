@@ -7,8 +7,6 @@ import Link from 'next/link';
 import Modal from '@/components/Modal';
 import HostSignupForm from '@/components/Signup/HostSignupForm';
 import { cn } from "../lib/utils";
-import "./globals.css";
-
 
 export default function LandingPage() {
   const [showSignup, setShowSignup] = useState(false);
