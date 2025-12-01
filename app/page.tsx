@@ -14,19 +14,18 @@ export default function LandingPage() {
     <main
       className={cn(
         "relative",
-        "min-h-screen",
-        "w-full",
         "flex",
         "flex-col",
         "items-center",
-        "justify-start",
-        "overflow-x-hidden",
-        "overflow-y-auto",
+        "justify-center",
+        "w-full",
+        "h-screen",          // FORCE 1 PAGE ALWAYS
+        "overflow-hidden",   // NO SCROLLING
         "text-white",
         "text-center"
       )}
     >
-      {/* Background Layers */}
+      {/* Background */}
       <div
         className={cn(
           "absolute inset-0",
@@ -42,10 +41,10 @@ export default function LandingPage() {
         )}
       />
 
-      {/* HERO SECTION */}
-      <div className={cn('relative', 'z-10', 'w-full', 'flex', 'flex-col', 'items-center', 'pt-[80px]', 'pb-[40px]', 'gap-8')}>
-        
-        {/* LOGO (WYSIWYG - FIXED DESKTOP WIDTH, RESPONSIVE MOBILE) */}
+      {/* HERO CONTENT */}
+      <div className={cn('relative', 'z-10', 'w-full', 'flex', 'flex-col', 'items-center', 'gap-6')}>
+
+        {/* LOGO — slightly smaller */}
         <motion.div
           animate={{ scale: [1, 1.06, 1] }}
           transition={{ duration: 7, repeat: Infinity, ease: "easeInOut" }}
@@ -53,8 +52,8 @@ export default function LandingPage() {
           <div
             className={cn('mx-auto', 'drop-shadow-[0_0_30px_rgba(56,189,248,0.3)]')}
             style={{
-              width: "360px",     // FIXED DESKTOP WIDTH
-              maxWidth: "90%",     // MOBILE SHRINK
+              width: "300px",     // 🔥 Smaller to match live perfectly
+              maxWidth: "90%",     // Mobile shrink
             }}
           >
             <img
@@ -88,7 +87,7 @@ export default function LandingPage() {
           Turn Crowds Into Communities
         </h1>
 
-        {/* SUBTEXT */}
+        {/* SUBTEXT — NEVER WRAPS */}
         <p
           className={cn(
             "text-lg",
@@ -96,14 +95,19 @@ export default function LandingPage() {
             "text-gray-300",
             "leading-relaxed",
             "inline-block",
-            "whitespace-nowrap"
+            "whitespace-nowrap",   // 🔥 FORCE ONE LINE
+            "max-w-none"           // 🔥 DO NOT SHRINK
           )}
+          style={{
+            overflow: "visible",
+            whiteSpace: "nowrap",  // 🔥 Double lock
+          }}
         >
           FanInteract lets your audience post, vote, and play live — all on one wall.
         </p>
 
         {/* BUTTONS */}
-        <div className={cn('flex', 'flex-wrap', 'justify-center', 'gap-6', 'pt-4')}>
+        <div className={cn('flex', 'flex-wrap', 'justify-center', 'gap-6', 'pt-2')}>
           <button
             onClick={() => setShowSignup(true)}
             className={cn(
@@ -150,11 +154,11 @@ export default function LandingPage() {
         <HostSignupForm />
       </Modal>
 
-      {/* FOOTER */}
+      {/* FOOTER — still on the bottom but does NOT cause scroll */}
       <footer
         className={cn(
           "absolute bottom-0 left-0 w-full py-6 text-center",
-          "bg-[#0b111d]",
+          "bg-[#0b111d]/80 backdrop-blur-sm",
           "border-t border-blue-900/40",
           "z-20"
         )}
