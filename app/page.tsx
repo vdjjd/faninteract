@@ -19,10 +19,9 @@ export default function LandingPage() {
         'flex-col',
         'items-center',
         'justify-start',
-        'min-h-screen',
         'w-full',
-        'overflow-x-hidden',
-        'overflow-y-auto',
+        'h-screen',         // ⭐ full screen, no scroll
+        'overflow-hidden',   // ⭐ prevent ALL scrolling
         'text-white',
         'text-center'
       )}
@@ -43,8 +42,10 @@ export default function LandingPage() {
         )}
       />
 
-      {/* ⭐ HERO SECTION (scroll-friendly, universal layout) */}
-      <div className={cn('relative', 'w-full', 'flex', 'flex-col', 'items-center', 'pt-[120px]', 'pb-[80px]', 'gap-10', 'z-10')}>
+      {/* ⭐ HERO SECTION — pixel-perfect layout */}
+      <div
+        className={cn('relative', 'z-10', 'w-full', 'flex', 'flex-col', 'items-center', 'pt-[80px]', '/*', '⭐', 'balanced', 'top', 'spacing', '*/', 'pb-[40px]', '/*', '⭐', 'balanced', 'bottom', 'spacing', '*/', 'gap-8', 'h-full')}
+      >
 
         {/* LOGO */}
         <motion.div
@@ -58,13 +59,17 @@ export default function LandingPage() {
             height={180}
             sizes="(max-width: 768px) 150px, 225px"
             className={cn(
-              '!w-[150px]',       // mobile
-              'md:!w-[225px]',    // desktop
-              '!max-w-none',      // ⭐ FIX FOR LIVE — disables intrinsic auto-scaling
+              '!w-[150px]',         // mobile
+              'md:!w-[225px]',      // desktop
+              '!max-w-none',        // ⭐ required to prevent Vercel scaling
               '!h-auto',
               'object-contain',
               'drop-shadow-[0_0_30px_rgba(56,189,248,0.3)]'
             )}
+            style={{
+              maxWidth: 'none',      // ⭐ hydration-safe fix
+              height: 'auto'
+            }}
             priority
             unoptimized
           />
@@ -72,14 +77,14 @@ export default function LandingPage() {
 
         {/* HEADLINE */}
         <h1
-          className={cn('text-5xl', 'md:text-7xl', 'font-extrabold', 'tracking-tight', 'bg-clip-text', 'text-transparent', 'bg-gradient-to-r', 'from-sky-400', 'via-blue-500', 'to-indigo-400', 'drop-shadow-[0_0_30px_rgba(56,189,248,0.25)]')}
+          className={cn('text-4xl', 'md:text-6xl', 'font-extrabold', 'tracking-tight', 'bg-clip-text', 'text-transparent', 'bg-gradient-to-r', 'from-sky-400', 'via-blue-500', 'to-indigo-400', 'drop-shadow-[0_0_30px_rgba(56,189,248,0.25)]')}
         >
           Turn Crowds Into Communities
         </h1>
 
-        {/* SUBTEXT (one line guaranteed) */}
+        {/* SUBTEXT — guaranteed one line */}
         <p
-          className={cn('text-lg', 'md:text-2xl', 'text-gray-300', 'leading-relaxed', 'whitespace-nowrap', 'inline-block')}
+          className={cn('text-lg', 'md:text-2xl', 'text-gray-300', 'whitespace-nowrap', '/*', '⭐', 'never', 'wraps', '*/', 'inline-block', 'leading-relaxed')}
         >
           FanInteract lets your audience post, vote, and play live — all on one wall.
         </p>
@@ -109,7 +114,7 @@ export default function LandingPage() {
 
       {/* FOOTER */}
       <footer
-        className={cn('relative', 'z-10', 'w-full', 'py-10', 'text-center', 'bg-[#0b111d]', 'border-t', 'border-blue-900/40')}
+        className={cn('absolute', 'bottom-0', 'left-0', 'w-full', 'py-6', 'text-center', 'bg-[#0b111d]', 'border-t', 'border-blue-900/40', 'z-20')}
       >
         <p className={cn('text-gray-500', 'text-sm')}>
           © {new Date().getFullYear()} FanInteract. All rights reserved.
