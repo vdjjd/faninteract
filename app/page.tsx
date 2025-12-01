@@ -1,16 +1,13 @@
-// ⛔ FORCE VERCEL TO NEVER CACHE THIS PAGE
-export const dynamic = "force-dynamic";
-export const revalidate = 0;
-export const fetchCache = "force-no-store";
-export const runtime = "nodejs"; // blocks edge-optimization cache
-// 'use client';
+"use client";
 
-import { useState } from 'react';
-import { motion } from 'framer-motion';
-import Image from 'next/image';
-import Link from 'next/link';
-import Modal from '@/components/Modal';
-import HostSignupForm from '@/components/Signup/HostSignupForm';
+export const runtime = "nodejs";
+
+import { useState } from "react";
+import { motion } from "framer-motion";
+import Image from "next/image";
+import Link from "next/link";
+import Modal from "@/components/Modal";
+import HostSignupForm from "@/components/Signup/HostSignupForm";
 import { cn } from "../lib/utils";
 
 export default function LandingPage() {
