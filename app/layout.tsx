@@ -1,4 +1,3 @@
-// ✅ Prevent static rendering for dynamic runtime pages
 export const dynamic = 'force-dynamic';
 
 import './globals.css';
@@ -12,11 +11,7 @@ export const metadata: Metadata = {
   description: 'Turn crowds into communities with live walls, trivia, and polling.',
 };
 
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
       <body
@@ -24,12 +19,12 @@ export default function RootLayout({
         className={cn(
           'min-h-screen',
           'w-full',
-          'text-white',
-          'overflow-hidden',   // ⭐ FIXED: removes ALL scrollbars live/local
+          'text-white'
+          // ❌ NO overflow-hidden here!
         )}
         style={{
-          margin: 0,            // ⭐ FIXED: stops Chrome from adding 8px margin
-          padding: 0,           // ⭐ FIXED: ensures layout matches local
+          margin: 0,
+          padding: 0,
         }}
       >
         <SupabaseRealtimeProvider>

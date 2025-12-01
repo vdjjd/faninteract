@@ -14,7 +14,6 @@ html, body {
   min-height: 100%;
   width: 100%;
   overflow-x: hidden !important;
-  overflow-y: hidden !important; /* 🧨 removes scrollbar */
   color: white;
   background: transparent !important;
 }
