@@ -1,11 +1,8 @@
 /** @type {import('tailwindcss').Config} */
 module.exports = {
   content: [
-    "./app/**/*.{js,ts,jsx,tsx,mdx,css}",       // ⭐ scan everything
-    "./components/**/*.{js,ts,jsx,tsx,mdx,css}",
-    "./pages/**/*.{js,ts,jsx,tsx,mdx,css}",
-    "./src/**/*.{js,ts,jsx,tsx,mdx,css}",       // ⭐ safety catch
-    "./globals.css"                             // ⭐ FORCE Tailwind to keep your global CSS
+    "./app/**/*.{js,ts,jsx,tsx,mdx}",
+    "./components/**/*.{js,ts,jsx,tsx,mdx}",
   ],
   theme: {
     extend: {
@@ -14,9 +11,9 @@ module.exports = {
       },
       keyframes: {
         "gradient-slow": {
-          "0%": { "background-position": "0% 50%" },
-          "50%": { "background-position": "100% 50%" },
-          "100%": { "background-position": "0% 50%" },
+          "0%": { backgroundPosition: "0% 50%" },
+          "50%": { backgroundPosition: "100% 50%" },
+          "100%": { backgroundPosition: "0% 50%" },
         },
       },
     },
