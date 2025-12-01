@@ -71,7 +71,7 @@ export default function LandingPage() {
             'items-center',
             'justify-center',
             'space-y-5',   // ⭐ Reduced gap (was space-y-12)
-            'mt-[-30px]'   // ⭐ Less offset (was -60px)
+            'mt-[-200px]'   // ⭐ Less offset (was -60px)
           )}
         >
           {/* Logo */}
@@ -117,17 +117,18 @@ export default function LandingPage() {
           </h1>
 
           {/* Subtext */}
-          <p
-            className={cn(
-              'text-lg',
-              'md:text-2xl',
-              'text-gray-300',
-              'max-w-2xl',
-              'leading-relaxed'
-            )}
-          >
-            FanInteract lets your audience post, vote, and play live — all on one wall.
-          </p>
+         <p
+  className={cn(
+    'text-lg',
+    'md:text-2xl',
+    'text-gray-300',
+    'max-w-2xl',
+    'leading-relaxed',
+    'whitespace-nowrap' // ⭐ forces one line
+  )}
+>
+  FanInteract lets your audience post, vote, and play live — all on one wall.
+</p>
 
           {/* Buttons */}
           <div
