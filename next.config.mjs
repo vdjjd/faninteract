@@ -1,18 +1,20 @@
-/** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  // 🚨 Force Vercel to NOT use any caching
+  generateEtags: false,
+  onDemandEntries: {
+    maxInactiveAge: 0,
+    pagesBufferLength: 0,
+  },
 
-  // 🚫 Skip ESLint errors during builds
   eslint: {
     ignoreDuringBuilds: true,
   },
 
-  // 🚫 Skip TypeScript type errors during production build
   typescript: {
     ignoreBuildErrors: true,
   },
 
-  // ✅ Allow Supabase storage images for Next/Image
   images: {
     remotePatterns: [
       {
