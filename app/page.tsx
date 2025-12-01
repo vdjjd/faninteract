@@ -84,11 +84,11 @@ export default function LandingPage() {
   alt="FanInteract Logo"
   width={420}
   height={180}
-  sizes="(max-width: 768px) 150px, 225px"   // ⭐ Fix #3 applied
+  sizes="(max-width: 768px) 150px, 225px"
   className={cn(
-    'w-[150px]',
-    'md:w-[225px]',
-    'h-auto',
+    '!w-[150px]',        // ⭐ force override on mobile
+    'md:!w-[225px]',     // ⭐ force override on desktop
+    '!h-auto',           // ⭐ ensure height stays proportional
     'object-contain',
     'drop-shadow-[0_0_30px_rgba(56,189,248,0.3)]'
   )}
