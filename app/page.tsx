@@ -14,13 +14,13 @@ export default function LandingPage() {
     <main
       className={cn(
         "relative",
+        "w-full",
+        "h-screen",          // Force exact screen fit
         "flex",
         "flex-col",
         "items-center",
-        "justify-center",
-        "w-full",
-        "h-screen",          // FORCE 1 PAGE ALWAYS
-        "overflow-hidden",   // NO SCROLLING
+        "justify-center",    // Perfect centering
+        "overflow-hidden",   // No scroll ever
         "text-white",
         "text-center"
       )}
@@ -42,22 +42,23 @@ export default function LandingPage() {
       />
 
       {/* HERO CONTENT */}
-      <div className={cn('relative', 'z-10', 'w-full', 'flex', 'flex-col', 'items-center', 'gap-6')}>
+      <div className={cn('relative', 'z-10', 'flex', 'flex-col', 'items-center', 'gap-4')}>
 
-        {/* LOGO — slightly smaller */}
+        {/* LOGO — New file, pixel-perfect sizing */}
         <motion.div
           animate={{ scale: [1, 1.06, 1] }}
           transition={{ duration: 7, repeat: Infinity, ease: "easeInOut" }}
         >
           <div
-            className={cn('mx-auto', 'drop-shadow-[0_0_30px_rgba(56,189,248,0.3)]')}
+  className={cn('mx-auto', 'drop-shadow-[0_0_30px_rgba(56,189,248,0.3)]', 'mt-[-175px]')}
             style={{
-              width: "300px",     // 🔥 Smaller to match live perfectly
-              maxWidth: "90%",     // Mobile shrink
+              width: "300px",     // 🔥 Perfect desktop size
+              maxWidth: "90%",     // 🔥 Mobile auto-resize
+              height: "auto",
             }}
           >
             <img
-              src="/faninteractlogo.png"
+              src="/faninteractlogo-landing.png"
               alt="FanInteract Logo"
               style={{
                 width: "100%",
@@ -87,20 +88,19 @@ export default function LandingPage() {
           Turn Crowds Into Communities
         </h1>
 
-        {/* SUBTEXT — NEVER WRAPS */}
+        {/* SUBTEXT — Never wraps */}
         <p
           className={cn(
             "text-lg",
             "md:text-2xl",
             "text-gray-300",
             "leading-relaxed",
-            "inline-block",
-            "whitespace-nowrap",   // 🔥 FORCE ONE LINE
-            "max-w-none"           // 🔥 DO NOT SHRINK
+            "whitespace-nowrap",   // 🔥 Lock in one line
+            "max-w-none"
           )}
           style={{
             overflow: "visible",
-            whiteSpace: "nowrap",  // 🔥 Double lock
+            whiteSpace: "nowrap",
           }}
         >
           FanInteract lets your audience post, vote, and play live — all on one wall.
@@ -149,12 +149,12 @@ export default function LandingPage() {
         </div>
       </div>
 
-      {/* SIGNUP MODAL */}
+      {/* Sign-up Modal */}
       <Modal isOpen={showSignup} onClose={() => setShowSignup(false)}>
         <HostSignupForm />
       </Modal>
 
-      {/* FOOTER — still on the bottom but does NOT cause scroll */}
+      {/* FOOTER — always pinned, no scroll */}
       <footer
         className={cn(
           "absolute bottom-0 left-0 w-full py-6 text-center",
