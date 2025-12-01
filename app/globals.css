@@ -9,11 +9,11 @@
 /* Global Defaults (NO @apply → fixed errors)                     */
 /* ------------------------------------------------------------- */
 html, body {
-  height: 100%;
+  min-height: 100%;
   width: 100%;
   overflow-x: hidden;
   color: white;
-  background: transparent !important; /* allow wall backgrounds to show */
+  background: transparent !important;
 }
 
 /* Smooth scrolling & UI polish */
