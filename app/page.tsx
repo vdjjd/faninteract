@@ -19,9 +19,10 @@ export default function LandingPage() {
         'flex-col',
         'items-center',
         'justify-start',
-        'w-full',
         'min-h-screen',
-        'overflow-hidden',
+        'w-full',
+        'overflow-x-hidden',
+        'overflow-y-auto',
         'text-white',
         'text-center'
       )}
@@ -42,8 +43,8 @@ export default function LandingPage() {
         )}
       />
 
-      {/* ⭐ HERO CONTAINER — natural scroll, centered */}
-      <div className={cn('relative', 'w-full', 'flex', 'flex-col', 'items-center', 'pt-[12vh]', 'pb-[10vh]', 'gap-8', 'z-10')}>
+      {/* ⭐ HERO SECTION (scroll-friendly, universal layout) */}
+      <div className={cn('relative', 'w-full', 'flex', 'flex-col', 'items-center', 'pt-[120px]', 'pb-[80px]', 'gap-10', 'z-10')}>
 
         {/* LOGO */}
         <motion.div
@@ -57,8 +58,9 @@ export default function LandingPage() {
             height={180}
             sizes="(max-width: 768px) 150px, 225px"
             className={cn(
-              '!w-[150px]',
-              'md:!w-[225px]',
+              '!w-[150px]',       // mobile
+              'md:!w-[225px]',    // desktop
+              '!max-w-none',      // ⭐ FIX FOR LIVE — disables intrinsic auto-scaling
               '!h-auto',
               'object-contain',
               'drop-shadow-[0_0_30px_rgba(56,189,248,0.3)]'
@@ -75,8 +77,10 @@ export default function LandingPage() {
           Turn Crowds Into Communities
         </h1>
 
-        {/* SUBTEXT */}
-        <p className={cn('text-lg', 'md:text-2xl', 'text-gray-300', 'leading-relaxed', 'whitespace-nowrap')}>
+        {/* SUBTEXT (one line guaranteed) */}
+        <p
+          className={cn('text-lg', 'md:text-2xl', 'text-gray-300', 'leading-relaxed', 'whitespace-nowrap', 'inline-block')}
+        >
           FanInteract lets your audience post, vote, and play live — all on one wall.
         </p>
 
@@ -96,7 +100,6 @@ export default function LandingPage() {
             Login
           </Link>
         </div>
-
       </div>
 
       {/* Signup Modal */}
@@ -112,7 +115,6 @@ export default function LandingPage() {
           © {new Date().getFullYear()} FanInteract. All rights reserved.
         </p>
       </footer>
-
     </main>
   );
 }
