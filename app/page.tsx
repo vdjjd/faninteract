@@ -1,10 +1,7 @@
 "use client";
 
-export const runtime = "nodejs";
-
 import { useState } from "react";
 import { motion } from "framer-motion";
-import Image from "next/image";
 import Link from "next/link";
 import Modal from "@/components/Modal";
 import HostSignupForm from "@/components/Signup/HostSignupForm";
@@ -17,19 +14,19 @@ export default function LandingPage() {
     <main
       className={cn(
         "relative",
+        "min-h-screen",
+        "w-full",
         "flex",
         "flex-col",
         "items-center",
         "justify-start",
-        "w-full",
-        "min-h-screen",      // FIXED — allows natural layout, identical dev/prod
         "overflow-x-hidden",
         "overflow-y-auto",
         "text-white",
         "text-center"
       )}
     >
-      {/* Background */}
+      {/* Background Layers */}
       <div
         className={cn(
           "absolute inset-0",
@@ -46,37 +43,28 @@ export default function LandingPage() {
       />
 
       {/* HERO SECTION */}
-      <div
-        className={cn(
-          "relative",
-          "z-10",
-          "w-full",
-          "flex",
-          "flex-col",
-          "items-center",
-          "pt-[80px]",
-          "pb-[40px]",
-          "gap-8"
-        )}
-      >
-        {/* LOGO — UNIVERSAL, FIXED, DEV/PROD IDENTICAL */}
+      <div className={cn('relative', 'z-10', 'w-full', 'flex', 'flex-col', 'items-center', 'pt-[80px]', 'pb-[40px]', 'gap-8')}>
+        
+        {/* LOGO (WYSIWYG - FIXED DESKTOP WIDTH, RESPONSIVE MOBILE) */}
         <motion.div
           animate={{ scale: [1, 1.06, 1] }}
           transition={{ duration: 7, repeat: Infinity, ease: "easeInOut" }}
         >
           <div
-            className={cn('relative', 'mx-auto', 'drop-shadow-[0_0_30px_rgba(56,189,248,0.3)]')}
+            className={cn('mx-auto', 'drop-shadow-[0_0_30px_rgba(56,189,248,0.3)]')}
             style={{
-              width: "340px",   // EXACT localhost correct size
-              height: "145px"   // Perfect aspect ratio for your logo
+              width: "360px",     // FIXED DESKTOP WIDTH
+              maxWidth: "90%",     // MOBILE SHRINK
             }}
           >
-            <Image
+            <img
               src="/faninteractlogo.png"
               alt="FanInteract Logo"
-              fill
-              priority
-              className="object-contain"
+              style={{
+                width: "100%",
+                height: "auto",
+                display: "block",
+              }}
             />
           </div>
         </motion.div>
@@ -106,16 +94,16 @@ export default function LandingPage() {
             "text-lg",
             "md:text-2xl",
             "text-gray-300",
-            "whitespace-nowrap",
+            "leading-relaxed",
             "inline-block",
-            "leading-relaxed"
+            "whitespace-nowrap"
           )}
         >
           FanInteract lets your audience post, vote, and play live — all on one wall.
         </p>
 
         {/* BUTTONS */}
-        <div className={cn("flex", "flex-wrap", "justify-center", "gap-6", "pt-4")}>
+        <div className={cn('flex', 'flex-wrap', 'justify-center', 'gap-6', 'pt-4')}>
           <button
             onClick={() => setShowSignup(true)}
             className={cn(
@@ -157,7 +145,7 @@ export default function LandingPage() {
         </div>
       </div>
 
-      {/* Signup Modal */}
+      {/* SIGNUP MODAL */}
       <Modal isOpen={showSignup} onClose={() => setShowSignup(false)}>
         <HostSignupForm />
       </Modal>
@@ -165,15 +153,9 @@ export default function LandingPage() {
       {/* FOOTER */}
       <footer
         className={cn(
-          "absolute",
-          "bottom-0",
-          "left-0",
-          "w-full",
-          "py-6",
-          "text-center",
+          "absolute bottom-0 left-0 w-full py-6 text-center",
           "bg-[#0b111d]",
-          "border-t",
-          "border-blue-900/40",
+          "border-t border-blue-900/40",
           "z-20"
         )}
       >
