@@ -9,9 +9,12 @@
 /* Global Defaults (NO @apply → fixed errors)                     */
 /* ------------------------------------------------------------- */
 html, body {
+  margin: 0 !important;         /* 🧨 REQUIRED — this fixes live Chrome spacing */
+  padding: 0 !important;        /* 🧨 REQUIRED */
   min-height: 100%;
   width: 100%;
-  overflow-x: hidden;
+  overflow-x: hidden !important;
+  overflow-y: hidden !important; /* 🧨 removes scrollbar */
   color: white;
   background: transparent !important;
 }
