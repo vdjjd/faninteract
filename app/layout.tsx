@@ -21,10 +21,15 @@ export default function RootLayout({
     <html lang="en">
       <body
         suppressHydrationWarning
-        className={cn('min-h-screen', 'w-full', 'text-white', 'overflow-x-hidden')}
+        className={cn(
+          'min-h-screen',
+          'w-full',
+          'text-white',
+          'overflow-hidden',   // ⭐ FIXED: removes ALL scrollbars live/local
+        )}
         style={{
-          // ❗️ DO NOT set background here — guest wall pages need control
-          margin: 0,
+          margin: 0,            // ⭐ FIXED: stops Chrome from adding 8px margin
+          padding: 0,           // ⭐ FIXED: ensures layout matches local
         }}
       >
         <SupabaseRealtimeProvider>
