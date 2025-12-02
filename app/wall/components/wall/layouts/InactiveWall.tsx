@@ -261,21 +261,34 @@ export default function InactiveWall({ wall }) {
 
           {/* Starting Soon */}
           <p
-            className="pulseSoon"
-            style={{
-              position: 'absolute',
-              top: '67%',
-              left: '53%',
-              transform: 'translateX(-50%)',
-              color: '#bcd9ff',
-              fontSize: 'clamp(2.8rem,2.4vw,3.2rem)',
-              fontWeight: 700,
-              textAlign: 'center',
-              margin: 0,
-            }}
-          >
-            Starting Soon!!
-          </p>
+  className="pulseSoon"
+  style={{
+    position: 'absolute',
+    top: '67%',
+    left: '53%',
+    transform: 'translateX(-50%)',
+    color: '#bcd9ff',
+    fontWeight: 700,
+    margin: 0,
+
+    /* 🔥 Keep ONE line — no wrapping */
+    whiteSpace: 'nowrap',
+
+    /* 🔥 Auto-scale smoothly */
+    fontSize: 'clamp(1.8rem, 3vw, 3.2rem)',
+
+    /* Optional outline so it's readable on all backgrounds */
+    textShadow: `
+      2px 2px 2px #000,
+      -2px 2px 2px #000,
+      2px -2px 2px #000,
+      -2px -2px 2px #000
+    `,
+  }}
+>
+  Starting Soon!!
+</p>
+
 
           {/* Countdown */}
           <div
