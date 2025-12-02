@@ -29,6 +29,9 @@ interface QROptions {
 
 export default function AdBuilderModal({ adId, hostId, onClose }: AdBuilderModalProps) {
   const [backgroundUrl, setBackgroundUrl] = useState<string | null>(null);
+  const [tempVideoUrl, setTempVideoUrl] = useState<string | null>(null);
+  const [tempVideoMeta, setTempVideoMeta] = useState<any>(null);
+
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
   const [qrX, setQrX] = useState(100);
   const [qrY, setQrY] = useState(100);
@@ -48,7 +51,7 @@ export default function AdBuilderModal({ adId, hostId, onClose }: AdBuilderModal
     dotStyle: "square",
   });
 
-  /* LOAD AD */
+  /* LOAD EXISTING AD */
   useEffect(() => {
     async function load() {
       const { data } = await supabase
@@ -59,9 +62,20 @@ export default function AdBuilderModal({ adId, hostId, onClose }: AdBuilderModal
 
       if (!data) return;
 
-      setBackgroundUrl(data.flyer_url ?? null);
+      // Determine initial display (image or video)
+      if (data.file_type === "video" && data.video_url) {
+        setTempVideoUrl(data.video_url);
+        setTempVideoMeta({
+          url: data.video_url,
+          duration: data.video_duration
+        });
+        setBackgroundUrl(null);
+      } else {
+        setBackgroundUrl(data.flyer_url ?? null);
+        setTempVideoUrl(null);
+      }
 
-      /* RESTORE FULL OPTIONS */
+      /* RESTORE QR */
       if (data.qr_layer) {
         const q = data.qr_layer;
 
@@ -86,7 +100,7 @@ export default function AdBuilderModal({ adId, hostId, onClose }: AdBuilderModal
     load();
   }, [adId]);
 
-  /* BACKGROUND UPLOAD */
+  /* IMAGE UPLOAD (1920×1080) */
   async function handleBackgroundUpload(e: any) {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -109,19 +123,72 @@ export default function AdBuilderModal({ adId, hostId, onClose }: AdBuilderModal
 
     if (error) return alert(error.message);
 
-    const { data: urlData } = supabase.storage
+    const { data: urlData } = supabase
+      .storage
       .from("ad-slideshow-images")
       .getPublicUrl(path);
 
-    await supabase
-      .from("ad_slides")
-      .update({ flyer_url: urlData.publicUrl })
-      .eq("id", adId);
-
     setBackgroundUrl(urlData.publicUrl);
+    setTempVideoUrl(null);
+    setTempVideoMeta(null);
+
+    alert("Image uploaded! Click SAVE to finalize.");
   }
 
-  /* AUTO CANVAS SCALING */
+  /* VIDEO UPLOAD (1920×1080 + duration detect) */
+  async function handleVideoUpload(e: any) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!file.type.includes("mp4")) {
+      alert("Only MP4 videos are supported.");
+      return;
+    }
+
+    const video = document.createElement("video");
+    video.preload = "metadata";
+    video.src = URL.createObjectURL(file);
+
+    await new Promise(resolve => (video.onloadedmetadata = resolve));
+
+    const width = video.videoWidth;
+    const height = video.videoHeight;
+    const duration = Math.round(video.duration);
+
+    if (width !== 1920 || height !== 1080) {
+      alert(`MP4 must be 1920×1080 — yours is ${width}×${height}`);
+      return;
+    }
+
+    const ext = file.name.split(".").pop();
+    const path = `${hostId}/ads/${adId}/video.${ext}`;
+
+    const { error } = await supabase.storage
+      .from("ad-slideshow-images")
+      .upload(path, file, { upsert: true, contentType: file.type });
+
+    if (error) {
+      alert(error.message);
+      return;
+    }
+
+    const { data: urlData } = supabase
+      .storage
+      .from("ad-slideshow-images")
+      .getPublicUrl(path);
+
+    // store locally until Save button is clicked
+    setTempVideoUrl(urlData.publicUrl);
+    setTempVideoMeta({
+      url: urlData.publicUrl,
+      duration
+    });
+
+    setBackgroundUrl(null);
+    alert("Video uploaded! Click SAVE to finalize.");
+  }
+
+  /* AUTO CANVAS SIZE */
   const centerRef = useRef<HTMLDivElement>(null);
   const [canvasSize, setCanvasSize] = useState({ w: 100, h: 56 });
 
@@ -154,52 +221,33 @@ export default function AdBuilderModal({ adId, hostId, onClose }: AdBuilderModal
   }, []);
 
   /* GENERATE QR */
-async function generateQR() {
-  // FIXED — must use /priority-lead not /lead/signup
-  const url = `https://www.faninteract.com/lead/signup?ad=${adId}&host=${hostId}&src=qr`;
+  async function generateQR() {
+    const url = `https://www.faninteract.com/lead/signup?ad=${adId}&host=${hostId}&src=qr`;
 
-  const qr = await QRCode.toDataURL(url, {
-    margin: 1,
-    color: {
-      dark: qrOptions.fg,
-      light: qrOptions.bg,
-    },
-  });
-
-  setQrDataUrl(qr);
-
-  await supabase
-    .from("ad_slides")
-    .update({
-      qr_layer: {
-        dataUrl: qr,
-        x: qrX,
-        y: qrY,
-        size: qrSize,
-        ...qrOptions,
+    const qr = await QRCode.toDataURL(url, {
+      margin: 1,
+      color: {
+        dark: qrOptions.fg,
+        light: qrOptions.bg,
       },
-    })
-    .eq("id", adId);
-}
+    });
+
+    setQrDataUrl(qr);
+  }
 
   async function deleteQR() {
     setQrDataUrl(null);
-    await supabase.from("ad_slides")
-      .update({ qr_layer: null })
-      .eq("id", adId);
   }
 
-  /* DRAG */
+  /* DRAG + RESIZE */
   function startDrag(e: any) {
     setIsDragging(true);
     e.stopPropagation();
   }
-
   function stopDrag() {
     setIsDragging(false);
     setResizeMode(false);
   }
-
   function onDrag(e: any) {
     if (!isDragging) return;
     const rect = e.target.closest(".canvas-box")?.getBoundingClientRect();
@@ -209,7 +257,6 @@ async function generateQR() {
     setQrY(e.clientY - rect.top - qrSize / 2);
   }
 
-  /* RESIZE */
   function startResize(e: any) {
     e.stopPropagation();
     setResizeMode(true);
@@ -226,10 +273,9 @@ async function generateQR() {
     setQrSize(size);
   }
 
-  /* SAVE DRAFT */
-  async function saveDraft() {
-    await supabase.from("ad_slides").update({
-      flyer_url: backgroundUrl,
+  /* FINAL SAVE & CLOSE */
+  async function finalizeSlide() {
+    let updates: any = {
       qr_layer: qrDataUrl
         ? {
             dataUrl: qrDataUrl,
@@ -239,86 +285,36 @@ async function generateQR() {
             ...qrOptions,
           }
         : null,
-    }).eq("id", adId);
+    };
 
-    alert("Draft Saved");
-  }
-
-  /* FINAL RENDER — FIXED QR POSITION */
-  async function renderFinal() {
-    if (!backgroundUrl) return alert("Upload a background first.");
-
-    const canvas = document.createElement("canvas");
-    canvas.width = 1920;
-    canvas.height = 1080;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-
-    const bgImg = new Image();
-    bgImg.crossOrigin = "anonymous";
-    bgImg.src = backgroundUrl;
-
-    await new Promise((res) => (bgImg.onload = res));
-    ctx.drawImage(bgImg, 0, 0, 1920, 1080);
-
-    if (qrDataUrl) {
-      const qrImg = new Image();
-      qrImg.crossOrigin = "anonymous";
-      qrImg.src = qrDataUrl;
-      await new Promise((res) => (qrImg.onload = res));
-
-      /* SCALE FROM PREVIEW → REAL CANVAS */
-      const scaleX = 1920 / canvasSize.w;
-      const scaleY = 1080 / canvasSize.h;
-
-      const realX = qrX * scaleX;
-      const realY = qrY * scaleY;
-      const realSize = qrSize * scaleX;
-
-      ctx.save();
-
-      if (qrOptions.glowRadius > 0) {
-        ctx.shadowColor = qrOptions.glowColor;
-        ctx.shadowBlur = qrOptions.glowRadius;
-      }
-
-      if (qrOptions.borderThickness > 0) {
-        ctx.lineWidth = qrOptions.borderThickness;
-        ctx.strokeStyle = qrOptions.fg;
-        ctx.strokeRect(realX, realY, realSize, realSize);
-      }
-
-      ctx.restore();
-
-      ctx.drawImage(qrImg, realX, realY, realSize, realSize);
+    if (tempVideoUrl && tempVideoMeta) {
+      updates = {
+        ...updates,
+        file_type: "video",
+        video_url: tempVideoMeta.url,
+        video_duration: tempVideoMeta.duration,
+        flyer_url: null,
+        rendered_url: null,
+      };
+    } else if (backgroundUrl) {
+      updates = {
+        ...updates,
+        file_type: "image",
+        flyer_url: backgroundUrl,
+        video_url: null,
+        video_duration: null,
+      };
     }
-
-    const blob = await new Promise<Blob | null>((resolve) =>
-      canvas.toBlob(resolve, "image/png")
-    );
-    if (!blob) return alert("Render failed.");
-
-    const filePath = `${hostId}/ads/${adId}/render.png`;
-
-    const { error } = await supabase.storage
-      .from("ad-slideshow-images")
-      .upload(filePath, blob, { upsert: true });
-
-    if (error) return alert(error.message);
-
-    const { data: urlData } = supabase.storage
-      .from("ad-slideshow-images")
-      .getPublicUrl(filePath);
 
     await supabase
       .from("ad_slides")
-      .update({ rendered_url: urlData.publicUrl })
+      .update(updates)
       .eq("id", adId);
 
-    alert("Rendered image saved!");
+    onClose();
   }
 
-  /* RENDER UI */
+  /* UI */
   return (
     <div
       className={cn(
@@ -347,20 +343,22 @@ async function generateQR() {
         </button>
 
         {/* TOP BAR */}
-        <div className={cn("w-full h-14 flex items-center justify-between px-6 border-b border-white/10 bg-white/5")}>
+        <div
+          className={cn(
+            "w-full h-14 flex items-center justify-between px-6",
+            "border-b border-white/10 bg-white/5"
+          )}
+        >
           <h2 className={cn("text-xl font-semibold text-white")}>✏️ Editing Ad</h2>
 
           <div className={cn("flex gap-3 pr-16")}>
-            <button onClick={saveDraft} className={cn("px-4 py-2 rounded-lg bg-white/10 text-white text-sm hover:bg-white/20 transition")}>
-              Save Draft
-            </button>
-
-            <button onClick={renderFinal} className={cn("px-4 py-2 rounded-lg bg-green-600 text-white text-sm font-semibold hover:bg-green-700 transition")}>
-              Render Final Image
-            </button>
-
-            <button onClick={saveDraft} className={cn("px-4 py-2 rounded-lg bg-cyan-600 text-white text-sm font-semibold hover:bg-cyan-700 transition")}>
-              Save
+            <button
+              onClick={finalizeSlide}
+              className={cn(
+                "px-4 py-2 rounded-lg bg-cyan-600 text-white text-sm font-semibold hover:bg-cyan-700 transition"
+              )}
+            >
+              Save & Close
             </button>
           </div>
         </div>
@@ -370,33 +368,98 @@ async function generateQR() {
 
           {/* LEFT PANEL */}
           <div
-            className={cn("border-r border-white/10 bg-white/5 overflow-y-auto p-3 text-white")}
+            className={cn(
+              "border-r border-white/10 bg-white/5 overflow-y-auto p-3 text-white"
+            )}
             style={{ width: LEFT_PANEL_WIDTH, minWidth: LEFT_PANEL_WIDTH }}
           >
-            <h3 className={cn('text-sm font-semibold mb-3')}>Layers</h3>
+            <h3 className={cn("text-sm font-semibold mb-3")}>Layers</h3>
 
-            <label className={cn('block w-full px-3 py-2 mb-3 bg-cyan-600 rounded-lg text-center cursor-pointer hover:bg-cyan-700 transition')}>
-              Upload Background
-              <input type="file" accept="image/*" onChange={handleBackgroundUpload} className="hidden" />
+            {/* IMAGE UPLOAD */}
+            <label
+              className={cn(
+                "block w-full px-3 py-2 mb-3 bg-cyan-600 rounded-lg text-center cursor-pointer hover:bg-cyan-700 transition"
+              )}
+            >
+              Upload Background (Image)
+              <input
+                type="file"
+                accept="image/*"
+                onChange={handleBackgroundUpload}
+                className="hidden"
+              />
             </label>
 
-            <p className={cn('text-xs text-white/50')}>Must be 1920×1080.</p>
+            <p className={cn('text-xs', 'text-white/50', 'mb-4')}>
+              Must be 1920×1080.
+            </p>
+
+            {/* VIDEO UPLOAD */}
+            <label
+              className={cn(
+                "block w-full px-3 py-2 mb-3 bg-purple-600 rounded-lg text-center cursor-pointer hover:bg-purple-700 transition"
+              )}
+            >
+              Upload MP4 Video
+              <input
+                type="file"
+                accept="video/mp4"
+                onChange={handleVideoUpload}
+                className="hidden"
+              />
+            </label>
+
+            <p className={cn('text-xs', 'text-white/50', 'mb-4')}>
+              Must be 1920×1080 MP4.
+            </p>
+
+            {/* VIDEO META */}
+            {tempVideoMeta && (
+              <p className={cn('text-xs', 'text-white/70', 'mb-3')}>
+                Video Duration: <strong>{tempVideoMeta.duration}s</strong>
+              </p>
+            )}
           </div>
 
           {/* CANVAS PREVIEW */}
-          <div ref={centerRef} className={cn("flex-1 bg-black flex items-center justify-center overflow-hidden")}>
+          <div
+            ref={centerRef}
+            className={cn(
+              "flex-1 bg-black flex items-center justify-center overflow-hidden"
+            )}
+          >
             <div
-              className={cn("canvas-box relative bg-black overflow-hidden border border-white/10 shadow-xl")}
+              className={cn(
+                "canvas-box relative bg-black overflow-hidden border border-white/10 shadow-xl"
+              )}
               style={{ width: canvasSize.w, height: canvasSize.h }}
               onMouseMove={resizeMode ? onResize : undefined}
             >
-              {backgroundUrl && (
+              {/* IMAGE PREVIEW */}
+              {backgroundUrl && !tempVideoUrl && (
                 <img
                   src={backgroundUrl}
-                  className={cn("absolute inset-0 w-full h-full object-cover pointer-events-none")}
+                  className={cn(
+                    "absolute inset-0 w-full h-full object-cover pointer-events-none"
+                  )}
                 />
               )}
 
+              {/* VIDEO PREVIEW */}
+              {tempVideoUrl && (
+                <video
+                  src={tempVideoUrl}
+                  autoPlay
+                  loop
+                  muted
+                  playsInline
+                  className={cn(
+                    "absolute inset-0 w-full h-full object-cover pointer-events-none"
+                  )}
+                />
+              )}
+
+              {/* QR OVERLAY */}
               {qrDataUrl && (
                 <div
                   onMouseDown={startDrag}
@@ -414,10 +477,11 @@ async function generateQR() {
                 >
                   <img
                     src={qrDataUrl}
-                    className={cn("w-full h-full")}
+                    className={cn('w-full', 'h-full')}
                     draggable={false}
                   />
 
+                  {/* Resize Handle */}
                   <div
                     onMouseDown={startResize}
                     style={{
@@ -439,82 +503,124 @@ async function generateQR() {
 
           {/* QR OPTIONS PANEL */}
           <div
-            className={cn("border-l border-white/10 bg-white/5 overflow-y-auto p-3 text-white")}
+            className={cn(
+              "border-l border-white/10 bg-white/5 overflow-y-auto p-3 text-white"
+            )}
             style={{ width: RIGHT_PANEL_WIDTH, minWidth: RIGHT_PANEL_WIDTH }}
           >
-            <h3 className={cn('text-sm font-semibold mb-3')}>QR Code Options</h3>
+            <h3 className={cn("text-sm font-semibold mb-3")}>QR Code Options</h3>
 
-            <label className={cn("text-xs text-white/70")}>Foreground Color</label>
+            {/* FULL QR EDITING OPTIONS */}
+            <label className={cn('text-xs', 'text-white/70')}>Foreground Color</label>
             <input
               type="color"
               value={qrOptions.fg}
-              onChange={(e) => setQrOptions({ ...qrOptions, fg: e.target.value })}
+              onChange={(e) =>
+                setQrOptions({ ...qrOptions, fg: e.target.value })
+              }
               className={cn("w-full h-8 mb-3")}
             />
 
-            <label className={cn("text-xs text-white/70")}>Background Color</label>
+            <label className={cn('text-xs', 'text-white/70')}>Background Color</label>
             <input
               type="color"
               value={qrOptions.bg}
-              onChange={(e) => setQrOptions({ ...qrOptions, bg: e.target.value })}
+              onChange={(e) =>
+                setQrOptions({ ...qrOptions, bg: e.target.value })
+              }
               className={cn("w-full h-8 mb-3")}
             />
 
-            <label className={cn("text-xs text-white/70")}>Glow Color</label>
+            <label className={cn('text-xs', 'text-white/70')}>Glow Color</label>
             <input
               type="color"
               value={qrOptions.glowColor}
-              onChange={(e) => setQrOptions({ ...qrOptions, glowColor: e.target.value })}
+              onChange={(e) =>
+                setQrOptions({ ...qrOptions, glowColor: e.target.value })
+              }
               className={cn("w-full h-8 mb-3")}
             />
 
-            <label className={cn("text-xs text-white/70")}>Glow Radius</label>
+            <label className={cn('text-xs', 'text-white/70')}>Glow Radius</label>
             <input
               type="number"
               min={0}
               max={50}
               value={qrOptions.glowRadius}
-              onChange={(e) => setQrOptions({ ...qrOptions, glowRadius: Number(e.target.value) })}
-              className={cn("w-full px-2 py-1 mb-3 bg-black/30 border border-white/30 rounded")}
+              onChange={(e) =>
+                setQrOptions({
+                  ...qrOptions,
+                  glowRadius: Number(e.target.value),
+                })
+              }
+              className={cn(
+                "w-full px-2 py-1 mb-3 bg-black/30 border border-white/30 rounded"
+              )}
             />
 
-            <label className={cn("text-xs text-white/70")}>Corner Radius</label>
+            <label className={cn('text-xs', 'text-white/70')}>Corner Radius</label>
             <input
               type="number"
               min={0}
               max={50}
               value={qrOptions.cornerRadius}
-              onChange={(e) => setQrOptions({ ...qrOptions, cornerRadius: Number(e.target.value) })}
-              className={cn("w-full px-2 py-1 mb-3 bg-black/30 border border-white/30 rounded")}
+              onChange={(e) =>
+                setQrOptions({
+                  ...qrOptions,
+                  cornerRadius: Number(e.target.value),
+                })
+              }
+              className={cn(
+                "w-full px-2 py-1 mb-3 bg-black/30 border border-white/30 rounded"
+              )}
             />
 
-            <label className={cn("text-xs text-white/70")}>Border Thickness</label>
+            <label className={cn('text-xs', 'text-white/70')}>Border Thickness</label>
             <input
               type="number"
               min={0}
               max={20}
               value={qrOptions.borderThickness}
-              onChange={(e) => setQrOptions({ ...qrOptions, borderThickness: Number(e.target.value) })}
-              className={cn("w-full px-2 py-1 mb-3 bg-black/30 border border-white/30 rounded")}
+              onChange={(e) =>
+                setQrOptions({
+                  ...qrOptions,
+                  borderThickness: Number(e.target.value),
+                })
+              }
+              className={cn(
+                "w-full px-2 py-1 mb-3 bg-black/30 border border-white/30 rounded"
+              )}
             />
 
-            <label className={cn("text-xs text-white/70")}>Border Radius</label>
+            <label className={cn('text-xs', 'text-white/70')}>Border Radius</label>
             <input
               type="number"
               min={0}
               max={50}
               value={qrOptions.borderRadius}
-              onChange={(e) => setQrOptions({ ...qrOptions, borderRadius: Number(e.target.value) })}
-              className={cn("w-full px-2 py-1 mb-3 bg-black/30 border border-white/30 rounded")}
+              onChange={(e) =>
+                setQrOptions({
+                  ...qrOptions,
+                  borderRadius: Number(e.target.value),
+                })
+              }
+              className={cn(
+                "w-full px-2 py-1 mb-3 bg-black/30 border border-white/30 rounded"
+              )}
             />
 
-            <label className={cn("text-xs text-white/70")}>Dot Style</label>
+            <label className={cn('text-xs', 'text-white/70')}>Dot Style</label>
             <select
               value={qrOptions.dotStyle}
               onChange={(e) =>
-                setQrOptions({ ...qrOptions, dotStyle: e.target.value as "square" | "round" })
+                setQrOptions({
+                  ...qrOptions,
+                  dotStyle: e.target.value as "square" | "round",
+                })
               }
-              className={cn("w-full px-2 py-1 mb-4 bg-black/30 border border-white/30 rounded text-white")}
+              className={cn(
+                "w-full px-2 py-1 mb-4 bg-black/30 border border-white/30 rounded text-white"
+              )}
             >
               <option value="square">Square</option>
               <option value="round">Round</option>
@@ -523,7 +629,9 @@ async function generateQR() {
             {!qrDataUrl && (
               <button
                 onClick={generateQR}
-                className={cn("w-full px-4 py-2 mb-2 bg-green-600 rounded-lg hover:bg-green-700 text-white")}
+                className={cn(
+                  "w-full px-4 py-2 mb-2 bg-green-600 rounded-lg hover:bg-green-700 text-white"
+                )}
               >
                 Create QR Code
               </button>
@@ -532,7 +640,9 @@ async function generateQR() {
             {qrDataUrl && (
               <button
                 onClick={deleteQR}
-                className={cn("w-full px-4 py-2 bg-red-600 rounded-lg hover:bg-red-700 text-white")}
+                className={cn(
+                  "w-full px-4 py-2 bg-red-600 rounded-lg hover:bg-red-700 text-white"
+                )}
               >
                 Delete QR Code
               </button>
