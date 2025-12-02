@@ -17,7 +17,7 @@ export default function HostSignupForm() {
   const [venueName, setVenueName] = useState("");
   const [masterId, setMasterId] = useState("");
   const [firstName, setFirstName] = useState("");
-  const [lastName, setLastName] = useState("");   // ✔ correct
+  const [lastName, setLastName] = useState(""); 
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -120,13 +120,19 @@ export default function HostSignupForm() {
 
         {/* Form */}
         <form onSubmit={handleSignUp} className="space-y-3">
+
+          {/* UPDATED ACCOUNT TYPE SELECT */}
           <select
             value={accountType}
-            onChange={(e) => setAccountType(e.target.value as "master" | "host")}
+            onChange={() => setAccountType("host")} // Force host only
             className={cn('w-full p-3 rounded-xl bg-black/40 border border-white/20 focus:border-sky-400 outline-none')}
           >
             <option value="host">Host Account</option>
-            <option value="master">Master Account</option>
+
+            {/* 🔒 Disabled + greyed out */}
+            <option value="master" disabled style={{ color: "#777" }}>
+              Master Account (Unavailable)
+            </option>
           </select>
 
           {accountType === "master" ? (
@@ -160,7 +166,6 @@ export default function HostSignupForm() {
 
           <input type="text" placeholder="First Name" value={firstName} onChange={(e)=>setFirstName(e.target.value)} className={cn('w-full p-3 rounded-xl bg-black/40 border border-white/20')} required />
 
-          {/* ❗ FIX APPLIED RIGHT HERE */}
           <input type="text" placeholder="Last Name" value={lastName} onChange={(e)=>setLastName(e.target.value)} className={cn('w-full p-3 rounded-xl bg-black/40 border border-white/20')} required />
 
           <input type="text" placeholder="Username" value={username} onChange={(e)=>setUsername(e.target.value)} className={cn('w-full p-3 rounded-xl bg-black/40 border border-white/20')} required />
