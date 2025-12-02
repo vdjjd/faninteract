@@ -104,16 +104,24 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
   }, []);
 
   /* ===========================================================
-     LOCK ONE TIME ONLY
+     LOCK ONE TIME ONLY — PATCHED!!
 =========================================================== */
 
   function lockEntries(normalized: any[]) {
     if (lockedEntriesRef.current) return;
 
     const shuffled = [...normalized];
+
+    // Shuffle entries
     for (let i = shuffled.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+
+    // PATCH — if fewer than 16, fill with random repeats
+    while (shuffled.length < 16 && normalized.length > 0) {
+      const random = normalized[Math.floor(Math.random() * normalized.length)];
+      shuffled.push(random);
     }
 
     lockedEntriesRef.current = shuffled.slice(0, 16);
@@ -179,13 +187,13 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
       })
       .subscribe();
 
-  return () => {
-  supabase.removeChannel(ch);
-};
+    return () => {
+      supabase.removeChannel(ch);
+    };
   }, [wheel?.id]);
 
   /* ===========================================================
-     RELOAD CHANNEL (NEW)
+     RELOAD CHANNEL
 =========================================================== */
   useEffect(() => {
     if (!wheel?.id) return;
@@ -198,8 +206,8 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
       .subscribe();
 
     return () => {
-  supabase.removeChannel(ch);
-};
+      supabase.removeChannel(ch);
+    };
   }, [wheel?.id]);
 
   /* ===========================================================
@@ -291,6 +299,7 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
     wrapperRefs.current = [];
 
     for (let i = 0; i < TILE_COUNT; i++) {
+
       const wrap = document.createElement("div");
       wrap.style.width = `${TILE_SIZE}px`;
       wrap.style.height = `${TILE_SIZE}px`;
@@ -324,21 +333,21 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
       wrap.appendChild(img);
 
       const name = document.createElement("div");
-name.className = "nameHolder";
-name.style.position = "absolute";
-name.style.top = "82%";
-name.style.left = "50%";
-name.style.transform = "translateX(-50%)";
-name.style.fontSize = "54px";
-name.style.fontWeight = "900";
-name.style.color = "#fff";
-name.style.textShadow = `
-  2px 2px 2px #000,
-  -2px 2px 2px #000,
-  2px -2px 2px #000,
-  -2px -2px 2px #000
-`;
-wrap.appendChild(name);
+      name.className = "nameHolder";
+      name.style.position = "absolute";
+      name.style.top = "82%";
+      name.style.left = "50%";
+      name.style.transform = "translateX(-50%)";
+      name.style.fontSize = "54px";
+      name.style.fontWeight = "900";
+      name.style.color = "#fff";
+      name.style.textShadow = `
+        2px 2px 2px #000,
+        -2px 2px 2px #000,
+        2px -2px 2px #000,
+        -2px -2px 2px #000
+      `;
+      wrap.appendChild(name);
 
       const tile = new CSS3DObject(wrap);
       const angle = i * TILE_STEP;
@@ -448,10 +457,16 @@ wrap.appendChild(name);
     if (!wrapperRefs.current.length) return;
 
     if (!lockedEntriesRef.current) {
-      lockedEntriesRef.current = normalizeEntries(entries).slice(
-        0,
-        16
-      );
+      // fallback — still includes the repeat-to-16 patch
+      const norm = normalizeEntries(entries);
+      const list = [...norm];
+
+      while (list.length < 16 && norm.length > 0) {
+        const r = norm[Math.floor(Math.random() * norm.length)];
+        list.push(r);
+      }
+
+      lockedEntriesRef.current = list.slice(0, 16);
     }
 
     wrapperRefs.current.forEach((wrap, i) => {
@@ -587,23 +602,23 @@ wrap.appendChild(name);
       <BulbBottom />
 
       <h1
-  style={{
-    position: "absolute",
-    top: "-2vh",
-    left: "50%",
-    transform: "translateX(-50%)",
-    color: "#fff",
-    fontSize: "clamp(3rem,4vw,6rem)",
-    fontWeight: 900,
-    whiteSpace: "nowrap",     // 🚀 forces single line
-    textShadow:
-      "2px 2px 2px #000,-2px 2px 2px #000,2px -2px 2px #000,-2px -2px 2px #000",
-    zIndex: 20,
-    pointerEvents: "none",
-  }}
->
-  {wheel.title || "Prize Wheel"}
-</h1>
+        style={{
+          position: "absolute",
+          top: "-2vh",
+          left: "50%",
+          transform: "translateX(-50%)",
+          color: "#fff",
+          fontSize: "clamp(3rem,4vw,6rem)",
+          fontWeight: 900,
+          whiteSpace: "nowrap",
+          textShadow:
+            "2px 2px 2px #000,-2px 2px 2px #000,2px -2px 2px #000,-2px -2px 2px #000",
+          zIndex: 20,
+          pointerEvents: "none",
+        }}
+      >
+        {wheel.title || "Prize Wheel"}
+      </h1>
 
       <div
         style={{
