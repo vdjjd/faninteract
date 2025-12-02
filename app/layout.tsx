@@ -1,28 +1,30 @@
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
 
-import './globals.css';
-import type { Metadata } from 'next';
-import ClientThemeWrapper from '@/components/ClientThemeWrapper';
-import { SupabaseRealtimeProvider } from '@/providers/SupabaseRealtimeProvider';
+import "./globals.css";
+import type { Metadata } from "next";
+import ClientThemeWrapper from "@/components/ClientThemeWrapper";
+import { SupabaseRealtimeProvider } from "@/providers/SupabaseRealtimeProvider";
 import { cn } from "../lib/utils";
 
 export const metadata: Metadata = {
+  metadataBase: new URL("https://www.faninteract.com"),
+
   title: "FanInteract",
-  description: "Turn crowds into communities with live walls, trivia, and polling.",
+  description: "Turn crowds into communities with live walls, trivia, and real-time audience engagement.",
 
   openGraph: {
     title: "FanInteract — Turn Crowds Into Communities",
     description:
-      "Live audience engagement: photo walls, live voting, trivia, and instant interaction for DJs, venues, and events.",
+      "FanInteract lets your audience post photos, vote, spin prize wheels, and interact live — all on one screen.",
     url: "https://www.faninteract.com",
     siteName: "FanInteract",
     type: "website",
     images: [
       {
-        url: "/og-image.jpg",   // 🔥 make sure this exists in /public
+        url: "/og/faninteract-share.png", // ✅ final OG image
         width: 1200,
         height: 630,
-        alt: "FanInteract Landing Page Preview",
+        alt: "FanInteract — Live Fan Walls, Prize Wheels & Polling",
       },
     ],
   },
@@ -31,8 +33,8 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: "FanInteract — Turn Crowds Into Communities",
     description:
-      "Live walls, photo posts, voting, trivia, and crowd interaction for events.",
-    images: ["/og-image.jpg"], // 🔥 same OG image
+      "Live walls, instant voting, photo uploads, and interactive prize wheels for DJs and event hosts.",
+    images: ["/og/faninteract-share.png"], // ✅ same OG image
   },
 };
 
@@ -45,15 +47,8 @@ export default function RootLayout({
     <html lang="en">
       <body
         suppressHydrationWarning
-        className={cn(
-          "min-h-screen",
-          "w-full",
-          "text-white"
-        )}
-        style={{
-          margin: 0,
-          padding: 0,
-        }}
+        className={cn("min-h-screen", "w-full", "text-white")}
+        style={{ margin: 0, padding: 0 }}
       >
         <SupabaseRealtimeProvider>
           <ClientThemeWrapper>{children}</ClientThemeWrapper>
