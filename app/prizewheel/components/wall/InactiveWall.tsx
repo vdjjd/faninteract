@@ -329,20 +329,20 @@ export default function InactivePrizeWall({ wheel }) {
 
           {/* STATUS */}
           <p
-            className="pulseSoon"
-            style={{
-              position: 'absolute',
-              top: '67%',
-              left: '53%',
-              transform: 'translateX(-50%)',
-              color: '#bcd9ff',
-              fontSize: 'clamp(2.8rem,2.4vw,3.2rem)',
-              fontWeight: 700,
-              margin: 0,
-            }}
-          >
-            Starting Soon!!
-          </p>
+  className="pulseSoon"
+  style={{
+    position: 'absolute',
+    top: '67%',
+    left: '53%',
+    transform: 'translateX(-50%)',
+    color: '#bcd9ff',
+    fontSize: 'clamp(2.8rem,2.4vw,3.2rem)',
+    fontWeight: 700,
+    margin: 0,
+  }}
+>
+  Starting Soon!!
+</p>
 
           {/* COUNTDOWN */}
           <div
