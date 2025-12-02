@@ -324,15 +324,21 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
       wrap.appendChild(img);
 
       const name = document.createElement("div");
-      name.className = "nameHolder";
-      name.style.position = "absolute";
-      name.style.top = "82%";
-      name.style.left = "50%";
-      name.style.transform = "translateX(-50%)";
-      name.style.fontSize = "54px";
-      name.style.fontWeight = "900";
-      name.style.color = "#fff";
-      wrap.appendChild(name);
+name.className = "nameHolder";
+name.style.position = "absolute";
+name.style.top = "82%";
+name.style.left = "50%";
+name.style.transform = "translateX(-50%)";
+name.style.fontSize = "54px";
+name.style.fontWeight = "900";
+name.style.color = "#fff";
+name.style.textShadow = `
+  2px 2px 2px #000,
+  -2px 2px 2px #000,
+  2px -2px 2px #000,
+  -2px -2px 2px #000
+`;
+wrap.appendChild(name);
 
       const tile = new CSS3DObject(wrap);
       const angle = i * TILE_STEP;
