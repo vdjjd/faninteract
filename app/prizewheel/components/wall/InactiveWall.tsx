@@ -306,21 +306,26 @@ export default function InactivePrizeWall({ wheel }) {
           />
 
           {/* TEXT */}
-          <p
-            style={{
-              position: 'absolute',
-              top: '56%',
-              left: '53%',
-              transform: 'translateX(-50%)',
-              color: '#fff',
-              fontSize: 'clamp(2em,3.5vw,6rem)',
-              fontWeight: 900,
-              textShadow: '0 0 14px rgba(0,0,0,0.6)',
-              margin: 0,
-            }}
-          >
-            Prize Wheel
-          </p>
+<p
+  style={{
+    position: 'absolute',
+    top: '56%',
+    left: '53%',
+    transform: 'translateX(-50%)',
+    color: '#fff',
+    fontSize: 'clamp(2em,3.5vw,6rem)',
+    fontWeight: 900,
+    margin: 0,
+    textShadow: `
+      2px 2px 2px #000,
+      -2px 2px 2px #000,
+      2px -2px 2px #000,
+      -2px -2px 2px #000
+    `,
+  }}
+>
+  Prize Wheel
+</p>
 
           {/* STATUS */}
           <p
