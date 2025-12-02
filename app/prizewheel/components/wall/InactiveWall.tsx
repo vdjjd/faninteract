@@ -336,13 +336,27 @@ export default function InactivePrizeWall({ wheel }) {
     left: '53%',
     transform: 'translateX(-50%)',
     color: '#bcd9ff',
-    fontSize: 'clamp(2.8rem,2.4vw,3.2rem)',
     fontWeight: 700,
     margin: 0,
+
+    /* 🔥 Keep text on one line */
+    whiteSpace: 'nowrap',
+
+    /* 🔥 Auto-scale nicely (shrinks when needed) */
+    fontSize: 'clamp(1.6rem, 2.5vw, 3.2rem)',
+
+    /* Optional: subtle outline so it stays visible */
+    textShadow: `
+      2px 2px 2px #000,
+      -2px 2px 2px #000,
+      2px -2px 2px #000,
+      -2px -2px 2px #000
+    `,
   }}
 >
   Starting Soon!!
 </p>
+
 
           {/* COUNTDOWN */}
           <div
