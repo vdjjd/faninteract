@@ -38,7 +38,7 @@ export default function ModerationModal({
 
   const [fullImage, setFullImage] = useState<string | null>(null);
 
-  const rt = useRealtimeChannel();
+  const rt = useRealtimeChannel(); // { realtimeReady, broadcast }
 
   function showToast(text: string, color = "#00ff88") {
     setToast({ text, color });
@@ -73,7 +73,7 @@ export default function ModerationModal({
   }
 
   /* --------------------------------------------------------- */
-  /* SAVE AUTO APPROVE TOGGLE */
+  /* SAVE AUTO APPROVE */
   /* --------------------------------------------------------- */
   async function saveAutoApprove(next: boolean) {
     setAutoApprove(next);
@@ -85,6 +85,7 @@ export default function ModerationModal({
 
     if (!next) return;
 
+    // auto-approve all pending posts
     const { data: pendingPosts } = await supabase
       .from("guest_posts")
       .select("id")
@@ -99,10 +100,10 @@ export default function ModerationModal({
         .eq("status", "pending");
 
       pendingPosts.forEach((post) => {
-        rt?.current?.send({
-          type: "broadcast",
-          event: "post_updated",
-          payload: { id: post.id, status: "approved", wallId },
+        rt.broadcast("post_updated", {
+          id: post.id,
+          status: "approved",
+          wallId,
         });
       });
 
@@ -122,15 +123,9 @@ export default function ModerationModal({
   async function handleApprove(id: string) {
     await supabase.from("guest_posts").update({ status: "approved" }).eq("id", id);
 
-    setPosts((p) =>
-      p.map((x) => (x.id === id ? { ...x, status: "approved" } : x))
-    );
+    setPosts((p) => p.map((x) => (x.id === id ? { ...x, status: "approved" } : x)));
 
-    rt?.current?.send({
-      type: "broadcast",
-      event: "post_updated",
-      payload: { id, status: "approved", wallId },
-    });
+    rt.broadcast("post_updated", { id, status: "approved", wallId });
 
     showToast("Approved");
   }
@@ -138,15 +133,9 @@ export default function ModerationModal({
   async function handleReject(id: string) {
     await supabase.from("guest_posts").update({ status: "rejected" }).eq("id", id);
 
-    setPosts((p) =>
-      p.map((x) => (x.id === id ? { ...x, status: "rejected" } : x))
-    );
+    setPosts((p) => p.map((x) => (x.id === id ? { ...x, status: "rejected" } : x)));
 
-    rt?.current?.send({
-      type: "broadcast",
-      event: "post_updated",
-      payload: { id, status: "rejected", wallId },
-    });
+    rt.broadcast("post_updated", { id, status: "rejected", wallId });
 
     showToast("Rejected", "#ff4444");
   }
@@ -156,11 +145,7 @@ export default function ModerationModal({
 
     setPosts((p) => p.filter((x) => x.id !== id));
 
-    rt?.current?.send({
-      type: "broadcast",
-      event: "post_deleted",
-      payload: { id, wallId },
-    });
+    rt.broadcast("post_deleted", { id, wallId });
 
     showToast("Deleted", "#bbb");
   }
@@ -190,11 +175,13 @@ export default function ModerationModal({
           if (payload.eventType === "INSERT") {
             if (autoApprove && n.status === "pending") {
               await supabase.from("guest_posts").update({ status: "approved" }).eq("id", n.id);
-              rt?.current?.send({
-                type: "broadcast",
-                event: "post_updated",
-                payload: { id: n.id, status: "approved", wallId },
+
+              rt.broadcast("post_updated", {
+                id: n.id,
+                status: "approved",
+                wallId,
               });
+
               n.status = "approved";
             }
             setPosts((prev) => [n, ...prev]);
@@ -211,9 +198,15 @@ export default function ModerationModal({
       )
       .subscribe();
 
-    return () => supabase.removeChannel(channel);
+    // FIX: cleanup cannot be async
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [wallId, autoApprove]);
 
+  /* --------------------------------------------------------- */
+  /* FILTERED POSTS */
+  /* --------------------------------------------------------- */
   const pending = posts.filter((x) => x.status === "pending");
   const approved = posts.filter((x) => x.status === "approved");
   const rejected = posts.filter((x) => x.status === "rejected");
@@ -236,10 +229,9 @@ export default function ModerationModal({
         onClick={(e) => e.stopPropagation()}
       >
         {/* HEADER */}
-        <div className={cn('flex', 'items-center', 'justify-center', 'mb-6', 'relative')}>
-
+        <div className={cn("flex items-center justify-center mb-6 relative")}>
           {/* AUTO APPROVE */}
-          <div className={cn('absolute', 'left-0', 'flex', 'items-center', 'gap-2')}>
+          <div className={cn("absolute left-0 flex items-center gap-2")}>
             <div
               onClick={() => {
                 const next = !autoApprove;
@@ -253,9 +245,7 @@ export default function ModerationModal({
               }}
               className={cn(
                 "relative w-14 h-7 rounded-full cursor-pointer transition-all",
-                (pendingToggleValue || autoApprove)
-                  ? "bg-green-500"
-                  : "bg-gray-600"
+                (pendingToggleValue || autoApprove) ? "bg-green-500" : "bg-gray-600"
               )}
             >
               <span
@@ -265,6 +255,7 @@ export default function ModerationModal({
                 )}
               />
             </div>
+
             <span className={cn('text-sm', 'text-gray-300')}>Auto-Approve</span>
           </div>
 
@@ -272,7 +263,7 @@ export default function ModerationModal({
 
           <button
             onClick={onClose}
-            className={cn('absolute', 'right-0', 'text-white/70', 'hover:text-white', 'text-xl')}
+            className={cn("absolute right-0 text-white/70 hover:text-white text-xl")}
           >
             ✕
           </button>
@@ -280,6 +271,7 @@ export default function ModerationModal({
 
         <Stats pending={pending.length} approved={approved.length} rejected={rejected.length} />
 
+        {/* CONTENT */}
         {loading ? (
           <p className="text-center">Loading…</p>
         ) : (
@@ -298,7 +290,7 @@ export default function ModerationModal({
               color="#00ff88"
               data={approved}
               onDelete={handleDelete}
-              showDelete
+              showDelete={true}
               onDoubleImageClick={setFullImage}
             />
 
@@ -307,7 +299,7 @@ export default function ModerationModal({
               color="#ff4444"
               data={rejected}
               onDelete={handleDelete}
-              showDelete
+              showDelete={true}
               onDoubleImageClick={setFullImage}
             />
           </div>
@@ -325,15 +317,16 @@ export default function ModerationModal({
           </div>
         )}
 
-        {/* FULLSCREEN IMAGE */}
+        {/* FULL IMAGE VIEWER */}
         {fullImage && (
           <div
-            className={cn('fixed', 'inset-0', 'bg-black/80', 'backdrop-blur-sm', 'flex', 'items-center', 'justify-center', 'z-[99999]')}
+            className={cn(
+              "fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[99999]"
+            )}
             onClick={() => setFullImage(null)}
           >
             <button
-              className={cn('absolute', 'top-4', 'right-4', 'text-white/80', 'hover:text-white', 'text-3xl')}
-              onClick={() => setFullImage(null)}
+              className={cn("absolute top-4 right-4 text-white/80 hover:text-white text-3xl")}
             >
               ✕
             </button>
@@ -345,15 +338,24 @@ export default function ModerationModal({
           </div>
         )}
 
-        {/* CONFIRM AUTO APPROVE */}
+        {/* CONFIRM ENABLE AUTO APPROVE */}
         {showConfirm && (
-          <div className={cn('fixed', 'inset-0', 'bg-black/60', 'backdrop-blur-sm', 'flex', 'items-center', 'justify-center', 'z-[99999]')}>
-            <div className={cn('bg-[#0d1625]', 'border', 'border-red-600/40', 'p-6', 'rounded-2xl', 'shadow-xl', 'w-[90%]', 'max-w-md', 'text-center')}>
-
+          <div
+            className={cn(
+              "fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[99999]"
+            )}
+          >
+            <div
+              className={cn(
+                "bg-[#0d1625] border border-red-600/40 p-6 rounded-2xl shadow-xl w-[90%] max-w-md text-center"
+              )}
+            >
               <h2 className={cn('text-xl', 'font-bold', 'text-red-400', 'mb-3')}>Enable Auto-Approve?</h2>
 
               <p className={cn('text-sm', 'text-gray-300', 'mb-6', 'leading-relaxed')}>
-                All new posts will appear instantly on the screen.<br /><br />
+                All new posts will appear instantly on the screen.
+                <br />
+                <br />
                 <span className={cn('text-red-300', 'font-semibold')}>
                   Inappropriate content may appear without warning.
                 </span>
@@ -366,7 +368,9 @@ export default function ModerationModal({
                     setPendingToggleValue(false);
                     saveAutoApprove(true);
                   }}
-                  className={cn('px-6', 'py-2', 'rounded-xl', 'bg-green-500', 'text-black', 'font-semibold', 'shadow', 'hover:bg-green-400')}
+                  className={cn(
+                    "px-6 py-2 rounded-xl bg-green-500 text-black font-semibold shadow hover:bg-green-400"
+                  )}
                 >
                   Yes, Enable
                 </button>
@@ -377,16 +381,16 @@ export default function ModerationModal({
                     setPendingToggleValue(false);
                     setAutoApprove(false);
                   }}
-                  className={cn('px-6', 'py-2', 'rounded-xl', 'bg-gray-600', 'text-white', 'font-semibold', 'shadow', 'hover:bg-gray-500')}
+                  className={cn(
+                    "px-6 py-2 rounded-xl bg-gray-600 text-white font-semibold shadow hover:bg-gray-500"
+                  )}
                 >
                   No
                 </button>
               </div>
-
             </div>
           </div>
         )}
-
       </div>
     </div>
   );
@@ -406,7 +410,7 @@ function Stats({ pending, approved, rejected }) {
 }
 
 /* --------------------------------------------------------- */
-/* SECTION — MOBILE-RESPONSIVE VERSION */
+/* SECTION — FULLY PATCHED */
 /* --------------------------------------------------------- */
 function Section({
   title,
@@ -415,17 +419,23 @@ function Section({
   onApprove,
   onReject,
   onDelete,
-  showDelete,
+  showDelete = false,
   onDoubleImageClick,
+}: {
+  title: string;
+  color: string;
+  data: GuestPost[];
+  onApprove?: (id: string) => void;
+  onReject?: (id: string) => void;
+  onDelete?: (id: string) => void;
+  showDelete?: boolean;
+  onDoubleImageClick?: (url: string) => void;
 }) {
   return (
     <div>
       <h2
-        className={cn('text-lg', 'md:text-xl', 'mb-2')}
-        style={{
-          borderLeft: `4px solid ${color}`,
-          paddingLeft: 8,
-        }}
+        className={cn("text-lg md:text-xl mb-2")}
+        style={{ borderLeft: `4px solid ${color}`, paddingLeft: 8 }}
       >
         {title} ({data.length})
       </h2>
@@ -436,9 +446,7 @@ function Section({
         <div
           className={cn(
             "grid gap-2",
-            // Mobile layout
             "grid-cols-[repeat(auto-fill,minmax(160px,1fr))]",
-            // Desktop layout
             "md:grid-cols-[repeat(auto-fill,minmax(220px,1fr))]"
           )}
         >
@@ -456,7 +464,7 @@ function Section({
                   <img
                     src={s.photo_url}
                     className={cn('w-full', 'h-full', 'object-cover', 'cursor-pointer')}
-                    onDoubleClick={() => onDoubleImageClick(s.photo_url)}
+                    onDoubleClick={() => onDoubleImageClick?.(s.photo_url!)}
                   />
                 ) : (
                   <div className={cn('w-full', 'h-full', 'flex', 'items-center', 'justify-center', 'bg-[#222]', 'text-gray-500', 'text-xs', 'md:text-sm')}>
@@ -465,7 +473,7 @@ function Section({
                 )}
               </div>
 
-              {/* TEXT + BUTTONS */}
+              {/* TEXT & BUTTONS */}
               <div className={cn('flex', 'flex-col', 'justify-between', 'p-2', 'w-full')}>
                 <div>
                   <strong className={cn('text-[10px]', 'md:text-xs')}>
@@ -485,6 +493,7 @@ function Section({
                     >
                       ✅
                     </button>
+
                     <button
                       onClick={() => onReject?.(s.id)}
                       className={cn('flex-1', 'bg-red-600', 'text-white', 'rounded', 'px-1', 'py-[3px]', 'md:py-[2px]', 'text-[10px]', 'md:text-xs')}
