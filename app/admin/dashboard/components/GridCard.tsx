@@ -37,14 +37,15 @@ export default function GridCard({
     type === 'poll' ? '📊' :
     '🧠';
 
-  /* ---------------------------------------------- */
-  /* 🔥 POP-OUT LAUNCH WINDOW (OBS-SAFE VERSION)     */
-  /* ---------------------------------------------- */
+  /* -------------------------------------------------- */
+  /* 🚀 POP-OUT NORMAL WINDOW (NOT A POPUP)             */
+  /* -------------------------------------------------- */
   function launchPopout() {
     const win = window.open(
       `/wall/${id}`,
       "_blank",
-      "popup=yes,width=1920,height=1080,resizable=yes"
+      // IMPORTANT: NO POPUP FLAGS → fullscreen works
+      "width=1920,height=1080,resizable=yes,left=200,top=200"
     );
 
     if (!win) {
@@ -52,9 +53,9 @@ export default function GridCard({
     }
   }
 
-  /* ---------------------------------------------- */
-  /* 🔄 RELOAD WALL COMMAND                         */
-  /* ---------------------------------------------- */
+  /* -------------------------------------------------- */
+  /* 🔄 RELOAD WALL COMMAND                            */
+  /* -------------------------------------------------- */
   async function sendReload() {
     await supabase.from("wall_commands").insert({
       wall_id: id,
@@ -105,7 +106,7 @@ export default function GridCard({
 
       <div className={cn('flex', 'flex-wrap', 'justify-center', 'gap-2', 'mt-3')}>
 
-        {/* 🚀 LAUNCH WALL */}
+        {/* 🚀 LAUNCH WALL (Fullscreen-Compatible) */}
         <button
           onClick={launchPopout}
           className={cn(
