@@ -18,11 +18,10 @@ export default function FanWallPage() {
   const { wallId } = useParams();
   const wallUUID = Array.isArray(wallId) ? wallId[0] : wallId;
 
+  const wallRef = useRef<HTMLDivElement | null>(null); // 🔥 For fullscreen container
+
   const { wall, posts, loading, showLive } = useWallData(wallUUID);
 
-  /* -------------------------------------------------- */
-  /* CENTRAL AD ENGINE — ONLY RUNS HERE                 */
-  /* -------------------------------------------------- */
   const {
     ads,
     showAd,
@@ -32,9 +31,6 @@ export default function FanWallPage() {
     adTransition
   } = useAdOverlayer(wall?.host_id);
 
-  /* -------------------------------------------------- */
-  /* BACKGROUND + LAYOUT                                */
-  /* -------------------------------------------------- */
   const [bg, setBg] = useState('');
   const [layoutKey, setLayoutKey] = useState(0);
   const prevLayout = useRef<string | null>(null);
@@ -50,7 +46,6 @@ export default function FanWallPage() {
     setBg(value || 'linear-gradient(to bottom right,#1b2735,#090a0f)');
   }, [wall?.background_type, wall?.background_value]);
 
-  /* Reset layout on layout_type change */
   useEffect(() => {
     if (!wall) return;
 
@@ -60,9 +55,6 @@ export default function FanWallPage() {
     }
   }, [wall?.layout_type]);
 
-  /* -------------------------------------------------- */
-  /* ACTIVE WALL — PASS ONLY WHAT LAYOUTS NEED          */
-  /* -------------------------------------------------- */
   const renderActiveWall = () => {
     if (!wall) return null;
 
@@ -81,9 +73,6 @@ export default function FanWallPage() {
     }
   };
 
-  /* -------------------------------------------------- */
-  /* LOADING / NOT FOUND                                */
-  /* -------------------------------------------------- */
   if (loading)
     return <p className={cn('text-white mt-10 text-center')}>Loading…</p>;
 
@@ -91,21 +80,32 @@ export default function FanWallPage() {
     return <p className={cn('text-white mt-10 text-center')}>Wall not found.</p>;
 
   /* -------------------------------------------------- */
-  /* FULLSCREEN BUTTON                                   */
+  /* 🔥 FIXED FULLSCREEN HANDLER                        */
   /* -------------------------------------------------- */
-  const toggleFullscreen = () => {
-    if (!document.fullscreenElement) {
-      document.documentElement.requestFullscreen().catch(() => {});
-    } else {
-      document.exitFullscreen();
+  const toggleFullscreen = async () => {
+    const el = wallRef.current;
+
+    if (!el) return console.warn("Fullscreen element missing");
+
+    try {
+      if (!document.fullscreenElement) {
+        console.log("🔵 Requesting fullscreen on element:", el);
+
+        await el.requestFullscreen({ navigationUI: "hide" }).catch(err => {
+          console.error("❌ Fullscreen failed:", err);
+        });
+
+      } else {
+        await document.exitFullscreen();
+      }
+    } catch (err) {
+      console.error("🔥 Fullscreen error:", err);
     }
   };
 
-  /* -------------------------------------------------- */
-  /* RENDER PAGE                                         */
-  /* -------------------------------------------------- */
   return (
     <div
+      ref={wallRef}  // 🔥 fullscreen now targets THIS container
       style={{
         position: 'relative',
         width: '100%',
