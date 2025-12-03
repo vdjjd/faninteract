@@ -4,7 +4,9 @@ import { useEffect, useState } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
-/* Guest profile loader */
+/* ---------------------------------------------------------
+   Load guest profile if previously saved
+--------------------------------------------------------- */
 function getStoredGuestProfile() {
   try {
     const raw =
@@ -16,7 +18,9 @@ function getStoredGuestProfile() {
   }
 }
 
-/* Local device vote lock */
+/* ---------------------------------------------------------
+   Local Vote Lock
+--------------------------------------------------------- */
 function hasVoted(pollId: string) {
   return localStorage.getItem(`voted_${pollId}`) === "true";
 }
@@ -35,7 +39,9 @@ export default function VotePage() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
 
-  /* Require guest */
+  /* ---------------------------------------------------------
+     Enforce guest signup
+--------------------------------------------------------- */
   useEffect(() => {
     const profile = getStoredGuestProfile();
     if (!profile) {
@@ -44,11 +50,13 @@ export default function VotePage() {
     }
   }, []);
 
-  /* Load poll + options */
+  /* ---------------------------------------------------------
+     Load poll + poll options
+--------------------------------------------------------- */
   async function loadEverything() {
     const { data: pollData } = await supabase
       .from("polls")
-      .select("*")
+      .select("*, host:host_id (branding_logo_url)")
       .eq("id", pollId)
       .maybeSingle();
 
@@ -66,7 +74,9 @@ export default function VotePage() {
     loadEverything();
   }, [pollId]);
 
-  /* Realtime poll status only */
+  /* ---------------------------------------------------------
+     Realtime poll status only
+--------------------------------------------------------- */
   useEffect(() => {
     if (!pollId) return;
 
@@ -86,12 +96,15 @@ export default function VotePage() {
       )
       .subscribe();
 
+    // ★ FIXED CLEANUP — must NOT return a Promise
     return () => {
       supabase.removeChannel(channel);
     };
   }, [pollId]);
 
-  /* Submit Vote — READ → ADD 1 → UPDATE */
+  /* ---------------------------------------------------------
+     Submit Vote (read → update)
+--------------------------------------------------------- */
   async function submitVote(optionId: string) {
     if (submitting) return;
     if (hasVoted(pollId)) {
@@ -101,7 +114,7 @@ export default function VotePage() {
 
     setSubmitting(true);
 
-    // 1️⃣ Get current vote count
+    // 1️⃣ Read current votes
     const { data: optionRow, error: fetchError } = await supabase
       .from("poll_options")
       .select("vote_count")
@@ -109,89 +122,152 @@ export default function VotePage() {
       .single();
 
     if (fetchError) {
-      console.error(fetchError);
       alert("Could not read current votes.");
       setSubmitting(false);
       return;
     }
 
+    // 2️⃣ Update +1
     const newCount = (optionRow.vote_count || 0) + 1;
 
-    // 2️⃣ Update with +1
     const { error: updateError } = await supabase
       .from("poll_options")
       .update({ vote_count: newCount })
       .eq("id", optionId);
 
     if (updateError) {
-      console.error(updateError);
       alert("Vote failed.");
       setSubmitting(false);
       return;
     }
 
-    // 3️⃣ Lock vote on device
+    // 3️⃣ Lock device vote
     setVoted(pollId);
 
     setSubmitting(false);
     router.push(`/thanks/${pollId}`);
   }
 
+  /* ---------------------------------------------------------
+     Loading states
+--------------------------------------------------------- */
   if (loading) return <div style={{ color: "#fff" }}>Loading…</div>;
   if (!poll) return <div style={{ color: "#fff" }}>Poll not found.</div>;
 
   const isActive = poll.status === "active";
 
+  /* ---------------------------------------------------------
+     Background + Logo (MATCH WALL SUBMIT PAGE)
+--------------------------------------------------------- */
+  const bg =
+    poll.background_type === "image" &&
+    poll.background_value?.startsWith("http")
+      ? `url(${poll.background_value})`
+      : poll.background_value || "#111";
+
+  const logo =
+    poll.host?.branding_logo_url?.trim()
+      ? poll.host.branding_logo_url
+      : "/faninteractlogo.png";
+
+  /* ---------------------------------------------------------
+     BEAUTIFUL MODERN UI (Matches Wall Submit Page)
+--------------------------------------------------------- */
   return (
     <div
       style={{
         minHeight: "100vh",
-        width: "100%",
-        background: poll.background_value || "#111",
-        filter: `brightness(${poll.background_brightness || 100}%)`,
-        padding: "4vh 4vw",
+        backgroundImage: bg,
+        backgroundSize: "cover",
+        backgroundPosition: "center",
+        position: "relative",
       }}
     >
-      <h1
+      {/* overlay blur */}
+      <div
         style={{
-          color: "white",
-          fontWeight: 900,
-          marginBottom: "2vh",
+          position: "absolute",
+          inset: 0,
+          backdropFilter: "blur(6px)",
+          backgroundColor: "rgba(0,0,0,0.45)",
+        }}
+      />
+
+      {/* CONTENT CARD */}
+      <div
+        style={{
+          position: "relative",
+          maxWidth: 480,
+          margin: "0 auto",
+          padding: 30,
+          marginTop: "6vh",
+          background: "rgba(0,0,0,0.55)",
+          borderRadius: 18,
+          border: "1px solid rgba(255,255,255,0.15)",
           textAlign: "center",
-          fontSize: "clamp(1.4rem, 6vw, 3rem)",
-          textShadow: "3px 3px 8px #000",
+          boxShadow: "0 0 30px rgba(0,0,0,0.7)",
         }}
       >
-        {poll.question}
-      </h1>
+        {/* LOGO */}
+        <img
+          src={logo}
+          style={{
+            width: "70%",
+            margin: "0 auto 16px",
+            display: "block",
+            animation: "pulse 2.2s infinite",
+            filter: "drop-shadow(0 0 25px rgba(56,189,248,0.6))",
+          }}
+        />
 
-      <div style={{ maxWidth: 900, margin: "0 auto" }}>
-        {options.map((opt: any) => (
+        {/* QUESTION */}
+        <h1
+          style={{
+            color: "#fff",
+            fontWeight: 900,
+            fontSize: "clamp(1.4rem, 6vw, 2.6rem)",
+            marginBottom: "3vh",
+            textShadow: "2px 2px 10px #000",
+          }}
+        >
+          {poll.question}
+        </h1>
+
+        {/* OPTIONS */}
+        {options.map((opt) => (
           <button
             key={opt.id}
             disabled={!isActive || hasVoted(pollId)}
             onClick={() => submitVote(opt.id)}
             style={{
-              background: opt.bar_color,
-              opacity: isActive && !hasVoted(pollId) ? 1 : 0.35,
-              padding: "18px",
               width: "100%",
-              marginBottom: "1rem",
-              borderRadius: 16,
-              fontSize: "1.8rem",
-              fontWeight: 800,
+              padding: 16,
+              marginBottom: 14,
+              borderRadius: 14,
+              background: opt.bar_color || "#1e3a8a",
+              opacity: isActive && !hasVoted(pollId) ? 1 : 0.35,
               color: "#fff",
+              fontWeight: 800,
+              fontSize: "1.6rem",
               border: "none",
-              cursor:
-                isActive && !hasVoted(pollId) ? "pointer" : "not-allowed",
+              cursor: isActive && !hasVoted(pollId) ? "pointer" : "not-allowed",
               boxShadow: "0 0 25px rgba(0,0,0,0.6)",
-              transition: "0.2s",
+              transition: "0.25s",
             }}
           >
             {opt.option_text}
           </button>
         ))}
       </div>
+
+      {/* PULSE ANIMATION */}
+      <style>{`
+        @keyframes pulse {
+          0% { filter: drop-shadow(0 0 12px rgba(56,189,248,0.6)); }
+          50% { filter: drop-shadow(0 0 35px rgba(56,189,248,0.9)); }
+          100% { filter: drop-shadow(0 0 12px rgba(56,189,248,0.6)); }
+        }
+      `}</style>
     </div>
   );
 }
