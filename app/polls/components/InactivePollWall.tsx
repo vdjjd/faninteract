@@ -1,10 +1,10 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { QRCodeCanvas } from 'qrcode.react';
 import { supabase } from '@/lib/supabaseClient';
 
-/* ---------- COUNTDOWN DISPLAY (LOCAL ONLY) ---------- */
+/* ---------- COUNTDOWN DISPLAY ---------- */
 function CountdownDisplay({ countdown, countdownActive, onEnd }) {
   const [timeLeft, setTimeLeft] = useState(0);
 
@@ -23,7 +23,7 @@ function CountdownDisplay({ countdown, countdownActive, onEnd }) {
     if (timeLeft <= 0) return;
 
     const t = setInterval(() => {
-      setTimeLeft((prev) => {
+      setTimeLeft(prev => {
         if (prev <= 1) {
           clearInterval(t);
           onEnd?.();
@@ -44,10 +44,9 @@ function CountdownDisplay({ countdown, countdownActive, onEnd }) {
   return (
     <div
       style={{
-        fontSize: 'clamp(6rem,9vw,10rem)',
+        fontSize: 'clamp(6rem,8vw,9rem)',
         fontWeight: 900,
         color: '#fff',
-        marginTop: '1vh',
         textShadow: '0 0 40px rgba(0,0,0,0.7)',
       }}
     >
@@ -57,32 +56,34 @@ function CountdownDisplay({ countdown, countdownActive, onEnd }) {
 }
 
 /* -------------------------------------------------------------------------- */
-/* INACTIVE POLL WALL — POLLING ONLY                                          */
+/* 🎨 INACTIVE POLL WALL — MATCHES FAN WALL EXACTLY                           */
 /* -------------------------------------------------------------------------- */
 export default function InactivePollWall({ poll, host }) {
   const [bg, setBg] = useState('linear-gradient(to bottom right,#1b2735,#090a0f)');
   const [brightness, setBrightness] = useState(100);
+
+  const PulseStyle = (
+    <style>{`
+      @keyframes pulseSoonGlow {
+        0%,100% { opacity:.7; text-shadow:0 0 14px rgba(255,255,255,0.3); }
+        50% { opacity:1; text-shadow:0 0 22px rgba(180,220,255,0.8); }
+      }
+      .pulseSoon { animation:pulseSoonGlow 2.5s ease-in-out infinite; }
+    `}</style>
+  );
 
   async function handleCountdownEnd() {
     if (!poll?.id) return;
 
     await supabase
       .from('polls')
-      .update({
-        status: 'active',
-        countdown_active: false,
-        countdown: 'none',
-      })
+      .update({ status: 'active', countdown_active: false, countdown: 'none' })
       .eq('id', poll.id);
 
     await supabase.channel(`poll-${poll.id}`).send({
       type: 'broadcast',
       event: 'poll_status',
-      payload: {
-        id: poll.id,
-        status: 'active',
-        countdown_active: false,
-      },
+      payload: { id: poll.id, status: 'active', countdown_active: false },
     });
   }
 
@@ -100,10 +101,17 @@ export default function InactivePollWall({ poll, host }) {
 
   const origin = typeof window !== 'undefined' ? window.location.origin : '';
   const qrValue = `${origin}/guest/signup?redirect=/polls/${poll?.id}/vote`;
-  const displayLogo = host?.branding_logo_url || '/faninteractlogo.png';
+
+  const displayLogo =
+    host?.branding_logo_url?.trim()
+      ? host.branding_logo_url
+      : '/faninteractlogo.png';
 
   if (!poll) return null;
 
+  /* ---------------------------------------------------------------------- */
+  /* RENDER                                                                  */
+  /* ---------------------------------------------------------------------- */
   return (
     <div
       style={{
@@ -119,21 +127,27 @@ export default function InactivePollWall({ poll, host }) {
         paddingTop: '3vh',
       }}
     >
+      {PulseStyle}
+
       {/* TITLE */}
       <h1
         style={{
           color: '#fff',
-          fontSize: 'clamp(2.5rem,3vw,5rem)',
+          fontSize: 'clamp(2.5rem,4vw,5rem)',
           fontWeight: 900,
           marginBottom: '1vh',
-          textShadow:
-            '2px 2px 4px #000, -2px 2px 4px #000, 2px -2px 4px #000, -2px -2px 4px #000',
+          textShadow: `
+            2px 2px 2px #000,
+            -2px 2px 2px #000,
+            2px -2px 2px #000,
+            -2px -2px 2px #000
+          `,
         }}
       >
         {poll.question || 'Upcoming Poll'}
       </h1>
 
-      {/* MAIN PANEL */}
+      {/* MAIN PANEL (Copied exactly from Wall) */}
       <div
         style={{
           width: '90vw',
@@ -149,7 +163,8 @@ export default function InactivePollWall({ poll, host }) {
           display: 'flex',
         }}
       >
-        {/* LEFT QR COLUMN */}
+
+        {/* LEFT QR SIDE */}
         <div
           style={{
             position: 'absolute',
@@ -177,7 +192,7 @@ export default function InactivePollWall({ poll, host }) {
           />
         </div>
 
-        {/* RIGHT STACK */}
+        {/* RIGHT SIDE CONTENT */}
         <div
           style={{
             position: 'relative',
@@ -189,27 +204,33 @@ export default function InactivePollWall({ poll, host }) {
           <div
             style={{
               position: 'absolute',
-              top: '6%',
+              top: '2%',
               left: '53%',
               transform: 'translateX(-50%)',
-              width: 'clamp(280px,28vw,420px)',
+              width: 'clamp(300px,27vw,400px)',
+              height: 'clamp(300px,12vw,260px)',
+              display: 'flex',
+              justifyContent: 'center',
+              alignItems: 'center',
+              overflow: 'hidden',
             }}
           >
             <img
               src={displayLogo}
               style={{
                 width: '100%',
-                height: 'auto',
-                filter: 'drop-shadow(0 0 14px rgba(0,0,0,0.85))',
+                height: '100%',
+                objectFit: 'contain',
+                filter: 'drop-shadow(0 0 12px rgba(0,0,0,0.6))',
               }}
             />
           </div>
 
-          {/* DIVIDER */}
+          {/* DIVIDER BAR */}
           <div
             style={{
               position: 'absolute',
-              top: '48%',
+              top: '50%',
               left: '53%',
               transform: 'translateX(-50%)',
               width: '75%',
@@ -219,11 +240,11 @@ export default function InactivePollWall({ poll, host }) {
             }}
           />
 
-          {/* TEXT */}
+          {/* TEXT “Fan Polling” */}
           <p
             style={{
               position: 'absolute',
-              top: '50%',
+              top: '56%',
               left: '53%',
               transform: 'translateX(-50%)',
               color: '#fff',
@@ -236,16 +257,24 @@ export default function InactivePollWall({ poll, host }) {
             Fan Polling
           </p>
 
+          {/* “Starting Soon!!” */}
           <p
+            className="pulseSoon"
             style={{
               position: 'absolute',
-              top: '60%',
+              top: '67%',
               left: '53%',
               transform: 'translateX(-50%)',
               color: '#bcd9ff',
-              fontSize: 'clamp(2.8rem,2.4vw,3.2rem)',
               fontWeight: 700,
-              textAlign: 'center',
+              whiteSpace: 'nowrap',
+              fontSize: 'clamp(1.8rem, 3vw, 3.2rem)',
+              textShadow: `
+                2px 2px 2px #000,
+                -2px 2px 2px #000,
+                2px -2px 2px #000,
+                -2px -2px 2px #000
+              `,
             }}
           >
             Starting Soon!!
@@ -255,7 +284,7 @@ export default function InactivePollWall({ poll, host }) {
           <div
             style={{
               position: 'absolute',
-              top: '64%',
+              top: '73%',
               left: '53%',
               transform: 'translateX(-50%)',
             }}
@@ -269,7 +298,7 @@ export default function InactivePollWall({ poll, host }) {
         </div>
       </div>
 
-      {/* --------------------- FULLSCREEN BUTTON ------------------ */}
+      {/* FULLSCREEN BUTTON */}
       <button
         onClick={() => {
           if (!document.fullscreenElement) {
@@ -279,26 +308,26 @@ export default function InactivePollWall({ poll, host }) {
           }
         }}
         style={{
-          position: "absolute",
-          bottom: "2vh",
-          right: "2vw",
+          position: 'absolute',
+          bottom: '2vh',
+          right: '2vw',
           width: 48,
           height: 48,
           borderRadius: 10,
-          background: "rgba(255,255,255,0.1)",
-          backdropFilter: "blur(6px)",
-          border: "1px solid rgba(255,255,255,0.25)",
-          color: "#fff",
+          background: 'rgba(255,255,255,0.1)',
+          backdropFilter: 'blur(6px)',
+          border: '1px solid rgba(255,255,255,0.25)',
+          color: '#fff',
           opacity: 0.25,
-          cursor: "pointer",
-          transition: "0.25s",
-          fontSize: "1.4rem",
+          cursor: 'pointer',
+          transition: '0.25s',
+          fontSize: '1.4rem',
           zIndex: 99,
         }}
       >
         ⛶
       </button>
-
     </div>
   );
 }
+

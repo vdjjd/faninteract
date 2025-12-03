@@ -17,9 +17,9 @@ export default function ActivePollWall({ poll, host }) {
   /* ------------------------------------------------------------- */
   /* 🔧 LOGO CONTROLS                                              */
   /* ------------------------------------------------------------- */
-  const LOGO_TOP_VH = 49;
-  const LOGO_LEFT_VW = 2.3;
-  const LOGO_WIDTH_VW = 18;
+  const LOGO_TOP_VH = 10;
+  const LOGO_LEFT_VW = 5;
+  const LOGO_WIDTH_VW = 12;
 
   /* ------------------------------------------------------------- */
   /* 🔧 "SCAN TO VOTE" TEXT CONTROLS                              */
