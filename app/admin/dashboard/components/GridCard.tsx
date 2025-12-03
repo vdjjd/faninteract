@@ -12,7 +12,6 @@ interface GridCardProps {
   backgroundType?: string;
   backgroundValue?: string;
   type: 'fanwall' | 'poll' | 'trivia';
-  onLaunch?: (id: string) => void;
   onStart?: (id: string) => void;
   onStop?: (id: string) => void;
   onClear?: (id: string) => void;
@@ -27,7 +26,6 @@ export default function GridCard({
   backgroundType,
   backgroundValue,
   type,
-  onLaunch,
   onStart,
   onStop,
   onClear,
@@ -39,15 +37,30 @@ export default function GridCard({
     type === 'poll' ? '📊' :
     '🧠';
 
-  /* ✅ Reload command */
+  /* ---------------------------------------------- */
+  /* 🔥 POP-OUT LAUNCH WINDOW (OBS-SAFE VERSION)     */
+  /* ---------------------------------------------- */
+  function launchPopout() {
+    const win = window.open(
+      `/wall/${id}`,
+      "_blank",
+      "popup=yes,width=1920,height=1080,resizable=yes"
+    );
+
+    if (!win) {
+      alert("Pop-up blocked — enable pop-ups to launch the wall.");
+    }
+  }
+
+  /* ---------------------------------------------- */
+  /* 🔄 RELOAD WALL COMMAND                         */
+  /* ---------------------------------------------- */
   async function sendReload() {
     await supabase.from("wall_commands").insert({
       wall_id: id,
       action: "reload_wall"
     });
   }
-
-  /* ❌ fullscreen removed */
 
   return (
     <div
@@ -91,56 +104,65 @@ export default function GridCard({
       </p>
 
       <div className={cn('flex', 'flex-wrap', 'justify-center', 'gap-2', 'mt-3')}>
-        {onLaunch && (
-          <button
-            onClick={() => onLaunch(id)}
-            className={cn('bg-blue-600', 'hover:bg-blue-700', 'px-2', 'py-1', 'rounded', 'text-sm', 'font-semibold')}
-          >
-            🚀 Launch
-          </button>
-        )}
+
+        {/* 🚀 LAUNCH WALL */}
+        <button
+          onClick={launchPopout}
+          className={cn(
+            'bg-blue-600 hover:bg-blue-700 px-2 py-1 rounded text-sm font-semibold'
+          )}
+        >
+          🚀 Launch
+        </button>
+
+        {/* ▶️ START */}
         {onStart && (
           <button
             onClick={() => onStart(id)}
-            className={cn('bg-green-600', 'hover:bg-green-700', 'px-2', 'py-1', 'rounded', 'text-sm', 'font-semibold')}
+            className={cn('bg-green-600 hover:bg-green-700 px-2 py-1 rounded text-sm font-semibold')}
           >
             ▶️ Start
           </button>
         )}
+
+        {/* ⏹ STOP */}
         {onStop && (
           <button
             onClick={() => onStop(id)}
-            className={cn('bg-red-600', 'hover:bg-red-700', 'px-2', 'py-1', 'rounded', 'text-sm', 'font-semibold')}
+            className={cn('bg-red-600 hover:bg-red-700 px-2 py-1 rounded text-sm font-semibold')}
           >
             ⏹ Stop
           </button>
         )}
+
+        {/* 🧹 CLEAR */}
         {onClear && (
           <button
             onClick={() => onClear(id)}
-            className={cn('bg-cyan-500', 'hover:bg-cyan-600', 'px-2', 'py-1', 'rounded', 'text-sm', 'font-semibold')}
+            className={cn('bg-cyan-500 hover:bg-cyan-600 px-2 py-1 rounded text-sm font-semibold')}
           >
             🧹 Clear
           </button>
         )}
+
+        {/* ❌ DELETE */}
         {onDelete && (
           <button
             onClick={() => onDelete(id)}
-            className={cn('bg-red-700', 'hover:bg-red-800', 'px-2', 'py-1', 'rounded', 'text-sm', 'font-semibold')}
+            className={cn('bg-red-700 hover:bg-red-800 px-2 py-1 rounded text-sm font-semibold')}
           >
             ❌ Delete
           </button>
         )}
 
-        {/* ✅ Reload Wall Button (kept) */}
+        {/* 🔄 RELOAD */}
         <button
           onClick={sendReload}
-          className={cn('bg-yellow-500', 'hover:bg-yellow-600', 'px-2', 'py-1', 'rounded', 'text-sm', 'font-semibold')}
+          className={cn('bg-yellow-500 hover:bg-yellow-600 px-2 py-1 rounded text-sm font-semibold')}
         >
           🔄 Reload
         </button>
 
-        {/* ❌ Fullscreen button removed */}
       </div>
     </div>
   );
