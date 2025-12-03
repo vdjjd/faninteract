@@ -1,34 +1,34 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
-import { getSupabaseClient } from '@/lib/supabaseClient';
-import { getFanWallsByHost } from '@/lib/actions/fan_walls';
+import { useState, useEffect, useRef } from "react";
+import { getSupabaseClient } from "@/lib/supabaseClient";
+import { getFanWallsByHost } from "@/lib/actions/fan_walls";
 
-import DashboardHeader from './components/DashboardHeader';
-import FanWallGrid from './components/FanWallGrid';
-import PrizeWheelGrid from './components/PrizeWheelGrid';
-import PollGrid from './components/PollGrid';
-import TriviaGrid from './components/TriviaGrid';
-import SlideshowGrid from './components/SlideshowGrid';
+import DashboardHeader from "./components/DashboardHeader";
+import FanWallGrid from "./components/FanWallGrid";
+import PrizeWheelGrid from "./components/PrizeWheelGrid";
+import PollGrid from "./components/PollGrid";
+import TriviaGrid from "./components/TriviaGrid";
+import SlideshowGrid from "./components/SlideshowGrid";
 
-import CreateFanWallModal from '@/components/CreateFanWallModal';
-import CreatePrizeWheelModal from '@/components/CreatePrizeWheelModal';
-import CreatePollModal from '@/components/CreatePollModal';
-import TriviaCreationModal from '@/components/TriviaCreationModal';
-import CreateSlideShowModal from '@/components/CreateSlideShowModal';
+import CreateFanWallModal from "@/components/CreateFanWallModal";
+import CreatePrizeWheelModal from "@/components/CreatePrizeWheelModal";
+import CreatePollModal from "@/components/CreatePollModal";
+import TriviaCreationModal from "@/components/TriviaCreationModal";
+import CreateSlideShowModal from "@/components/CreateSlideShowModal";
 
-import OptionsModalPoll from '@/components/OptionsModalPoll';
-import OptionsModalFanWall from '@/components/OptionsModalFanWall';
-import OptionsModalPrizeWheel from '@/components/OptionsModalPrizeWheel';
-import OptionsModalSlideshow from '@/components/OptionsModalSlideShow';
+import OptionsModalPoll from "@/components/OptionsModalPoll";
+import OptionsModalFanWall from "@/components/OptionsModalFanWall";
+import OptionsModalPrizeWheel from "@/components/OptionsModalPrizeWheel";
+import OptionsModalSlideshow from "@/components/OptionsModalSlideShow";
 
-import AdsManagerModal from '@/components/AdsManagerModal';
-import HostProfilePanel from '@/components/HostProfilePanel';
+import AdsManagerModal from "@/components/AdsManagerModal";
+import HostProfilePanel from "@/components/HostProfilePanel";
 
-import CreateNewAdModal from '@/components/CreateNewAdModal';
-import AdBuilderModal from '@/components/AdBuilderModal';
+import CreateNewAdModal from "@/components/CreateNewAdModal";
+import AdBuilderModal from "@/components/AdBuilderModal";
 
-import { cn } from '@/lib/utils';
+import { cn } from "@/lib/utils";
 
 const supabase = getSupabaseClient();
 
@@ -61,9 +61,9 @@ export default function DashboardPage() {
 
   const loadedRef = useRef(false);
 
-  // ----------------------------------------
-  // INITIAL LOAD
-  // ----------------------------------------
+  /* ---------------------------------------------- */
+  /* INITIAL LOAD */
+  /* ---------------------------------------------- */
   useEffect(() => {
     if (loadedRef.current) return;
     loadedRef.current = true;
@@ -87,7 +87,7 @@ export default function DashboardPage() {
             username: user.email?.split("@")[0] || "newuser",
             venue_name: "My Venue",
             role: "host",
-            created_at: new Date().toISOString()
+            created_at: new Date().toISOString(),
           };
 
           const { data: inserted } = await supabase
@@ -113,7 +113,7 @@ export default function DashboardPage() {
             supabase.from("prize_wheels").select("*").eq("host_id", hostRow.id).order("created_at", { ascending: false }),
             supabase.from("polls").select("*").eq("host_id", hostRow.id).order("created_at", { ascending: false }),
             supabase.from("trivia_cards").select("*").eq("host_id", hostRow.id).order("created_at", { ascending: false }),
-            supabase.from("slide_shows").select("*").eq("host_id", hostRow.id).order("created_at", { ascending: false })
+            supabase.from("slide_shows").select("*").eq("host_id", hostRow.id).order("created_at", { ascending: false }),
           ]);
 
           setFanWalls(walls);
@@ -133,9 +133,9 @@ export default function DashboardPage() {
     load();
   }, []);
 
-  // ----------------------------------------
-  // REFRESH FUNCTIONS
-  // ----------------------------------------
+  /* ---------------------------------------------- */
+  /* REFRESH HELPERS */
+  /* ---------------------------------------------- */
   async function refreshSlideshows() {
     if (!host?.id) return;
     const { data } = await supabase
@@ -155,49 +155,55 @@ export default function DashboardPage() {
 
   async function refreshPrizeWheels() {
     if (!host?.id) return;
-    const { data } = await supabase.from("prize_wheels")
+    const { data } = await supabase
+      .from("prize_wheels")
       .select("*")
       .eq("host_id", host.id)
       .order("created_at", { ascending: false });
+
     setPrizeWheels(data || []);
   }
 
   async function refreshPolls() {
     if (!host?.id) return;
-    const { data } = await supabase.from("polls")
+    const { data } = await supabase
+      .from("polls")
       .select("*")
       .eq("host_id", host.id)
       .order("created_at", { ascending: false });
+
     setPolls(data || []);
   }
 
   async function refreshTrivia() {
     if (!host?.id) return;
-    const { data } = await supabase.from("trivia_cards")
+    const { data } = await supabase
+      .from("trivia_cards")
       .select("*")
       .eq("host_id", host.id)
       .order("created_at", { ascending: false });
+
     setTriviaList(data || []);
   }
 
-  // ----------------------------------------
-  // LOADING SCREEN
-  // ----------------------------------------
+  /* ---------------------------------------------- */
+  /* LOADING SCREEN */
+  /* ---------------------------------------------- */
   if (loading)
     return (
-      <div className={cn('flex items-center justify-center h-screen bg-black text-white')}>
+      <div className={cn("flex items-center justify-center h-screen bg-black text-white")}>
         <p>Loading Dashboard…</p>
       </div>
     );
 
-  // ----------------------------------------
-  // RENDER
-  // ----------------------------------------
+  /* ---------------------------------------------- */
+  /* RENDER DASHBOARD */
+  /* ---------------------------------------------- */
   return (
-    <div className={cn('min-h-screen bg-[#0b111d] text-white flex flex-col items-center p-8')}>
+    <div className={cn("min-h-screen bg-[#0b111d] text-white flex flex-col items-center p-8")}>
 
-      <div className={cn('w-full flex items-center justify-between mb-6')}>
-        <h1 className={cn('text-3xl font-semibold')}>Host Dashboard</h1>
+      <div className={cn("w-full flex items-center justify-between mb-6")}>
+        <h1 className={cn("text-3xl font-semibold")}>Host Dashboard</h1>
         <HostProfilePanel host={host} setHost={setHost} />
       </div>
 
@@ -211,15 +217,22 @@ export default function DashboardPage() {
         onCreateSlideShow={() => setSlideShowModalOpen(true)}
       />
 
-      {/* TRIVIA */}
+      {/* ---------------- TRIVIA GRID ---------------- */}
       <TriviaGrid
         trivia={triviaList}
         host={host}
         refreshTrivia={refreshTrivia}
+        onOpenOptions={(trivia) => {
+          setSelectedPrizeWheel(null);
+          setSelectedPoll(null);
+          setSelectedSlideshow(null);
+          setSelectedWall(null);
+          setTimeout(() => {}, 50);
+        }}
       />
 
-      {/* SLIDESHOW GRID */}
-      <div className={cn('w-full max-w-6xl mt-10')}>
+      {/* ---------------- SLIDESHOW GRID ---------------- */}
+      <div className={cn("w-full max-w-6xl mt-10")}>
         <SlideshowGrid
           slideshows={slideshows}
           host={host}
@@ -228,13 +241,13 @@ export default function DashboardPage() {
             setSelectedWall(null);
             setSelectedPrizeWheel(null);
             setSelectedPoll(null);
-            setSelectedSlideshow(show);
+            setTimeout(() => setSelectedSlideshow(show), 25);
           }}
         />
       </div>
 
-      {/* FAN WALLS (FIXED WRAPPER) */}
-      <div className={cn('w-full max-w-6xl mt-10')}>
+      {/* ---------------- FAN WALL GRID ---------------- */}
+      <div className={cn("w-full max-w-6xl mt-10")}>
         <FanWallGrid
           walls={fanWalls}
           host={host}
@@ -248,8 +261,8 @@ export default function DashboardPage() {
         />
       </div>
 
-      {/* PRIZE WHEELS */}
-      <div className={cn('w-full max-w-6xl mt-10')}>
+      {/* ---------------- PRIZE WHEELS ---------------- */}
+      <div className={cn("w-full max-w-6xl mt-10")}>
         <PrizeWheelGrid
           wheels={prizeWheels}
           host={host}
@@ -263,11 +276,11 @@ export default function DashboardPage() {
         />
       </div>
 
-      {/* POLLS */}
-      <div className={cn('w-full max-w-6xl mt-10')}>
+      {/* ---------------- POLL GRID ---------------- */}
+      <div className={cn("w-full max-w-6xl mt-10")}>
         <PollGrid
           host={host}
-          polls={polls}
+          polls={polls} // ✅ patched — now included in props
           refreshPolls={refreshPolls}
           onOpenOptions={(poll) => {
             setSelectedWall(null);
@@ -278,7 +291,7 @@ export default function DashboardPage() {
         />
       </div>
 
-      {/* CREATION MODALS */}
+      {/* ---------------- CREATION MODALS ---------------- */}
       <CreateFanWallModal
         isOpen={isFanWallModalOpen}
         onClose={() => setFanWallModalOpen(false)}
@@ -296,15 +309,19 @@ export default function DashboardPage() {
       <CreatePollModal
         isOpen={isPollModalOpen}
         onClose={() => setPollModalOpen(false)}
-        hostId={host?.id}
+        hostId={host?.id!}
         refreshPolls={refreshPolls}
+        onPollCreated={(poll) => {
+          setSelectedPoll(poll);
+        }}
       />
 
       <TriviaCreationModal
         isOpen={isTriviaModalOpen}
         onClose={() => setTriviaModalOpen(false)}
-        hostId={host?.id}
-        refreshTrivia={refreshTrivia}
+        hostId={host?.id!}            // ✅ patched
+        refreshTrivia={refreshTrivia} // ✅ patched
+        onGenerateTrivia={() => {}}
       />
 
       <CreateSlideShowModal
@@ -314,7 +331,7 @@ export default function DashboardPage() {
         refreshSlideshows={refreshSlideshows}
       />
 
-      {/* OPTIONS MODALS */}
+      {/* ---------------- OPTIONS MODALS ---------------- */}
       {selectedWall && (
         <OptionsModalFanWall
           wall={selectedWall}
@@ -351,16 +368,15 @@ export default function DashboardPage() {
         />
       )}
 
-      {/* OLD AD OVERLAY MANAGER */}
+      {/* ---------------- ADS MANAGER ---------------- */}
       {isAdsModalOpen && (
         <AdsManagerModal
-          open={isAdsModalOpen}
-          onClose={() => setAdsModalOpen(false)}
           host={host}
+          onClose={() => setAdsModalOpen(false)}
         />
       )}
 
-      {/* NEW AD SLIDE CREATOR (FIXED) */}
+      {/* ---------------- AD CREATOR → BUILDER ---------------- */}
       {isCreateAdModalOpen && (
         <CreateNewAdModal
           hostId={host?.id}
@@ -372,16 +388,13 @@ export default function DashboardPage() {
         />
       )}
 
-      {/* NEW AD SLIDE BUILDER */}
-{showBuilderModal && builderAdId && (
-  <AdBuilderModal
-    open={showBuilderModal}
-    onClose={() => setShowBuilderModal(false)}
-    adId={builderAdId}
-    hostId={host?.id}   // FIX APPLIED — required for QR + submit flows
-  />
-)}
-
+      {showBuilderModal && builderAdId && (
+        <AdBuilderModal
+          adId={builderAdId}
+          hostId={host?.id}
+          onClose={() => setShowBuilderModal(false)}
+        />
+      )}
     </div>
   );
 }

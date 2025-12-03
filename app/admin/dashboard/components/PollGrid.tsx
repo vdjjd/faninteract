@@ -4,44 +4,64 @@ import { useEffect, useState, useRef } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 import { cn } from '@/lib/utils';
 
+/* ------------------------------------------------------------
+   PATCHED PROPS: now includes `polls`
+------------------------------------------------------------ */
 interface PollGridProps {
   host: any;
+  polls: any[];                // ✅ Added
   refreshPolls: () => Promise<void>;
   onOpenOptions: (poll: any) => void;
 }
 
-export default function PollGrid({ host, refreshPolls, onOpenOptions }: PollGridProps) {
-  const [localPolls, setLocalPolls] = useState<any[]>([]);
+export default function PollGrid({
+  host,
+  polls,
+  refreshPolls,
+  onOpenOptions
+}: PollGridProps) {
+
+  const [localPolls, setLocalPolls] = useState<any[]>(polls || []);
   const [countdowns, setCountdowns] = useState<{ [key: string]: number }>({});
   const [voteCounts, setVoteCounts] = useState<{ [key: string]: number }>({});
   const timers = useRef<{ [key: string]: NodeJS.Timeout }>({});
   const refreshInterval = useRef<NodeJS.Timeout | null>(null);
 
   /* ------------------------------------------------------------
+     SYNC incoming polls → local state
+  ------------------------------------------------------------ */
+  useEffect(() => {
+    setLocalPolls(Array.isArray(polls) ? polls : []);
+  }, [polls]);
+
+  /* ------------------------------------------------------------
      Load Polls + Vote Counts
   ------------------------------------------------------------ */
-  async function loadPolls() {
+  async function loadPollsInternal() {
     if (!host?.id) return;
 
-    const { data: polls, error } = await supabase
+    const { data: pollRows, error } = await supabase
       .from('polls')
       .select('*')
       .eq('host_id', host.id)
       .order('created_at', { ascending: false });
 
-    if (error) console.error('❌ loadPolls error:', error);
+    if (error) {
+      console.error('❌ loadPolls error:', error);
+      return;
+    }
 
-    setLocalPolls(polls || []);
+    setLocalPolls(pollRows || []);
 
-    if (polls?.length) {
-      const { data: opts, error: optsErr } = await supabase
+    if (pollRows?.length) {
+      const { data: optionRows, error: optsErr } = await supabase
         .from('poll_options')
         .select('poll_id,vote_count');
 
       if (optsErr) console.error('❌ vote_count error:', optsErr);
 
       const counts: { [key: string]: number } = {};
-      opts?.forEach((o) => {
+      optionRows?.forEach((o) => {
         counts[o.poll_id] = (counts[o.poll_id] || 0) + (o.vote_count || 0);
       });
 
@@ -49,13 +69,16 @@ export default function PollGrid({ host, refreshPolls, onOpenOptions }: PollGrid
     }
   }
 
+  /* ------------------------------------------------------------
+     Initial + Interval refresh
+  ------------------------------------------------------------ */
   useEffect(() => {
     if (!host?.id) return;
 
-    loadPolls();
+    loadPollsInternal();
 
     if (refreshInterval.current) clearInterval(refreshInterval.current);
-    refreshInterval.current = setInterval(loadPolls, 5000);
+    refreshInterval.current = setInterval(loadPollsInternal, 5000);
 
     return () => {
       if (refreshInterval.current) clearInterval(refreshInterval.current);
@@ -82,45 +105,31 @@ export default function PollGrid({ host, refreshPolls, onOpenOptions }: PollGrid
     const secs = getCountdownSeconds(poll);
 
     if (secs === 0) {
-      await supabase
-        .from('polls')
-        .update({
-          status: 'active',
-          countdown_active: false,
-          countdown: 'none',
-        })
-        .eq('id', poll.id);
+      await supabase.from('polls').update({
+        status: 'active',
+        countdown_active: false,
+        countdown: 'none'
+      }).eq('id', poll.id);
 
       await supabase.channel(`poll-${poll.id}`).send({
         type: 'broadcast',
         event: 'poll_status',
-        payload: {
-          id: poll.id,
-          status: 'active',
-          countdown_active: false,
-        },
+        payload: { id: poll.id, status: 'active', countdown_active: false }
       });
 
-      await loadPolls();
+      await refreshPolls();
       return;
     }
 
-    await supabase
-      .from('polls')
-      .update({
-        status: 'inactive',
-        countdown_active: true,
-      })
-      .eq('id', poll.id);
+    await supabase.from('polls').update({
+      status: 'inactive',
+      countdown_active: true
+    }).eq('id', poll.id);
 
     await supabase.channel(`poll-${poll.id}`).send({
       type: 'broadcast',
       event: 'poll_status',
-      payload: {
-        id: poll.id,
-        status: 'inactive',
-        countdown_active: true,
-      },
+      payload: { id: poll.id, status: 'inactive', countdown_active: true }
     });
 
     setCountdowns((prev) => ({ ...prev, [poll.id]: secs }));
@@ -132,23 +141,16 @@ export default function PollGrid({ host, refreshPolls, onOpenOptions }: PollGrid
         if (current <= 1) {
           clearInterval(timers.current[poll.id]);
 
-          supabase
-            .from('polls')
-            .update({
-              status: 'active',
-              countdown_active: false,
-              countdown: 'none',
-            })
-            .eq('id', poll.id);
+          supabase.from('polls').update({
+            status: 'active',
+            countdown_active: false,
+            countdown: 'none'
+          }).eq('id', poll.id);
 
           supabase.channel(`poll-${poll.id}`).send({
             type: 'broadcast',
             event: 'poll_status',
-            payload: {
-              id: poll.id,
-              status: 'active',
-              countdown_active: false,
-            },
+            payload: { id: poll.id, status: 'active', countdown_active: false }
           });
 
           return { ...prev, [poll.id]: 0 };
@@ -157,10 +159,8 @@ export default function PollGrid({ host, refreshPolls, onOpenOptions }: PollGrid
         return { ...prev, [poll.id]: current - 1 };
       });
 
-      await loadPolls();
+      await refreshPolls();
     }, 1000);
-
-    await loadPolls();
   }
 
   async function stopCountdown(poll: any) {
@@ -171,8 +171,7 @@ export default function PollGrid({ host, refreshPolls, onOpenOptions }: PollGrid
   }
 
   async function handleStatus(id: string, status: string) {
-    await supabase
-      .from('polls')
+    await supabase.from('polls')
       .update({
         status,
         ...(status !== 'active' && { countdown_active: false }),
@@ -182,17 +181,17 @@ export default function PollGrid({ host, refreshPolls, onOpenOptions }: PollGrid
     await supabase.channel(`poll-${id}`).send({
       type: 'broadcast',
       event: 'poll_status',
-      payload: { id, status },
+      payload: { id, status }
     });
 
-    await loadPolls();
+    await refreshPolls();
   }
 
   async function handleDelete(id: string) {
     setLocalPolls((prev) => prev.filter((p) => p.id !== id));
     await supabase.from('poll_options').delete().eq('poll_id', id);
     await supabase.from('polls').delete().eq('id', id);
-    await loadPolls();
+    await refreshPolls();
   }
 
   function handleLaunch(pollId: string) {
