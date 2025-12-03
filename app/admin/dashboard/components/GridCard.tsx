@@ -38,19 +38,15 @@ export default function GridCard({
     '🧠';
 
   /* -------------------------------------------------- */
-  /* 🚀 OPEN IN REAL BROWSER (Chrome/Safari/Edge)        */
+  /* 🚀 OPEN WALL IN REAL BROWSER (OBS-SAFE)            */
   /* -------------------------------------------------- */
   function launchPopout() {
     const url = `${window.location.origin}/wall/${id}`;
 
-    console.log("Launching external browser:", url);
+    console.log("Launching EXTERNAL browser via protocol:", url);
 
-    // No popup flags → lets OS decide default browser
-    const win = window.open(url, "_blank");
-
-    if (!win) {
-      alert("Pop-up blocked — enable pop-ups to launch the wall.");
-    }
+    // Forces Windows to open Chrome/Edge instead of OBS Chromium
+    window.location.href = `openbrowser:${url}`;
   }
 
   /* -------------------------------------------------- */
@@ -156,7 +152,7 @@ export default function GridCard({
           </button>
         )}
 
-        {/* 🔄 RELOAD */}
+        {/* 🔄 RELOAD WALL */}
         <button
           onClick={sendReload}
           className={cn('bg-yellow-500 hover:bg-yellow-600 px-2 py-1 rounded text-sm font-semibold')}
