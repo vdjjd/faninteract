@@ -38,15 +38,15 @@ export default function GridCard({
     '🧠';
 
   /* -------------------------------------------------- */
-  /* 🚀 POP-OUT NORMAL WINDOW (NOT A POPUP)             */
+  /* 🚀 OPEN IN REAL BROWSER (Chrome/Safari/Edge)        */
   /* -------------------------------------------------- */
   function launchPopout() {
-    const win = window.open(
-      `/wall/${id}`,
-      "_blank",
-      // IMPORTANT: NO POPUP FLAGS → fullscreen works
-      "width=1920,height=1080,resizable=yes,left=200,top=200"
-    );
+    const url = `${window.location.origin}/wall/${id}`;
+
+    console.log("Launching external browser:", url);
+
+    // No popup flags → lets OS decide default browser
+    const win = window.open(url, "_blank");
 
     if (!win) {
       alert("Pop-up blocked — enable pop-ups to launch the wall.");
@@ -106,7 +106,7 @@ export default function GridCard({
 
       <div className={cn('flex', 'flex-wrap', 'justify-center', 'gap-2', 'mt-3')}>
 
-        {/* 🚀 LAUNCH WALL (Fullscreen-Compatible) */}
+        {/* 🚀 LAUNCH WALL (External Browser) */}
         <button
           onClick={launchPopout}
           className={cn(
