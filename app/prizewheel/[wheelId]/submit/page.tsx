@@ -80,7 +80,9 @@ export default function PrizeWheelSubmissionPage() {
     loadWheel();
   }, [wheelId]);
 
-  /* Remote spin selection */
+  /* ------------------------------ */
+  /* REMOTE SPIN SUBSCRIPTION (PATCHED) */
+  /* ------------------------------ */
   useEffect(() => {
     if (!profile?.id || !wheelId) return;
 
@@ -97,7 +99,10 @@ export default function PrizeWheelSubmissionPage() {
       )
       .subscribe();
 
-    return () => supabase.removeChannel(channel);
+    // ✅ FIXED: React cleanup cannot return a Promise.
+    return () => {
+      void supabase.removeChannel(channel);
+    };
   }, [profile?.id, wheelId]);
 
   const triggerRemoteSpin = async () => {
@@ -405,7 +410,7 @@ export default function PrizeWheelSubmissionPage() {
                 overflow: "hidden",
                 marginBottom: 10,
                 background: "rgba(0,0,0,0.3)",
-                touchAction: "none",       // << FIX
+                touchAction: "none",
                 zIndex: 1,
               }}
             >
@@ -420,7 +425,7 @@ export default function PrizeWheelSubmissionPage() {
                   onCropComplete={(_, c) => setCroppedAreaPixels(c)}
                   style={{
                     containerStyle: {
-                      touchAction: "none",  // << FIX
+                      touchAction: "none",
                     },
                   }}
                 />
