@@ -25,16 +25,12 @@ interface InactiveBasketballProps {
 export default function InactiveBasketballPage({ game }: InactiveBasketballProps) {
   const updateTimeout = useRef<NodeJS.Timeout | null>(null);
 
-  /* ------------------------------------------------------------
-     ALWAYS USE YOUR NEW BACKGROUND IMAGE
-  ------------------------------------------------------------ */
-  const FIXED_BACKGROUND = `url('/bbgame1920x1080.png') center/cover no-repeat`;
+  /* ALWAYS use this image */
+  const FIXED_BACKGROUND = "/bbgame1920x1080.png";
 
   const [brightness, setBrightness] = useState(game?.background_brightness ?? 100);
 
-  /* ------------------------------------------------------------
-     POLL ONLY FOR BRIGHTNESS — BACKGROUND NEVER CHANGES
-  ------------------------------------------------------------ */
+  /* POLL ONLY FOR BRIGHTNESS */
   useEffect(() => {
     if (!game?.id) return;
 
@@ -51,14 +47,12 @@ export default function InactiveBasketballPage({ game }: InactiveBasketballProps
       updateTimeout.current = setTimeout(() => {
         setBrightness(data.background_brightness ?? 100);
       }, 50);
-    }, 2000);
+    }, 1500);
 
     return () => clearInterval(interval);
   }, [game?.id]);
 
-  /* ------------------------------------------------------------
-     QR + LOGO
-  ------------------------------------------------------------ */
+  /* QR + LOGO */
   const origin =
     typeof window !== "undefined"
       ? window.location.origin
@@ -78,25 +72,19 @@ export default function InactiveBasketballPage({ game }: InactiveBasketballProps
       ? document.documentElement.requestFullscreen()
       : document.exitFullscreen();
 
-  const logoContainerStyle: React.CSSProperties = {
-    position: "absolute",
-    top: "2%",
-    left: "53%",
-    transform: "translateX(-50%)",
-    width: "clamp(300px,27vw,400px)",
-    height: "clamp(300px,12vw,260px)",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-  };
-
   return (
     <div
       style={{
-        background: FIXED_BACKGROUND,
-        filter: `brightness(${brightness}%)`,
-        width: "100%",
+        width: "100vw",
         height: "100vh",
+
+        /* 🚀 FIXED BACKGROUND IMAGE */
+        backgroundImage: `url(${FIXED_BACKGROUND})`,
+        backgroundSize: "cover",
+        backgroundPosition: "center",
+        backgroundRepeat: "no-repeat",
+
+        filter: `brightness(${brightness}%)`,
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
@@ -170,13 +158,27 @@ export default function InactiveBasketballPage({ game }: InactiveBasketballProps
 
         {/* RIGHT SIDE */}
         <div style={{ flexGrow: 1, marginLeft: "44%", position: "relative" }}>
-          <div style={logoContainerStyle}>
+          {/* LOGO */}
+          <div
+            style={{
+              position: "absolute",
+              top: "2%",
+              left: "53%",
+              transform: "translateX(-50%)",
+              width: "clamp(300px,27vw,400px)",
+              height: "clamp(300px,12vw,260px)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
             <img
               src={displayLogo}
               style={{ width: "100%", height: "100%", objectFit: "contain" }}
             />
           </div>
 
+          {/* BLACK BAR */}
           <div
             style={{
               position: "absolute",
@@ -189,6 +191,7 @@ export default function InactiveBasketballPage({ game }: InactiveBasketballProps
             }}
           />
 
+          {/* TITLE on Glass */}
           <p
             style={{
               position: "absolute",
@@ -210,6 +213,7 @@ export default function InactiveBasketballPage({ game }: InactiveBasketballProps
             Basketball Battle
           </p>
 
+          {/* STATUS TEXT */}
           <p
             style={{
               position: "absolute",
@@ -220,12 +224,6 @@ export default function InactiveBasketballPage({ game }: InactiveBasketballProps
               fontWeight: 700,
               fontSize: "clamp(1.6rem,2.5vw,3.2rem)",
               animation: "pulse 2.4s infinite",
-              textShadow: `
-                -1px -1px 0 #000,
-                1px -1px 0 #000,
-                -1px 1px 0 #000,
-                1px 1px 0 #000
-              `,
             }}
           >
             Starting Soon!!

@@ -24,7 +24,7 @@ export default function BasketballOptionsModal({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   /* ------------------------------------------------------------
-     Load game settings into form on modal open
+     Load game settings on modal open
   ------------------------------------------------------------ */
   useEffect(() => {
     if (!game) return;
@@ -36,7 +36,7 @@ export default function BasketballOptionsModal({
   if (!game) return null;
 
   /* ------------------------------------------------------------
-     Save settings
+     Save changes
   ------------------------------------------------------------ */
   async function handleSave() {
     setSaving(true);
@@ -61,8 +61,8 @@ export default function BasketballOptionsModal({
       await refreshBasketballGames();
       onClose();
     } catch (err) {
-      console.error("❌ Error saving game settings:", err);
-      setErrorMsg("Unexpected error occurred.");
+      console.error("❌ Error saving:", err);
+      setErrorMsg("Unexpected error.");
     } finally {
       setSaving(false);
     }
@@ -85,7 +85,7 @@ export default function BasketballOptionsModal({
   ------------------------------------------------------------ */
   return (
     <Modal isOpen={isOpen} onClose={onClose}>
-      <h2 className={cn("text-xl font-bold text-center mb-4")}>
+      <h2 className={cn('text-xl', 'font-bold', 'text-center', 'mb-4')}>
         ⚙️ Basketball Game Settings
       </h2>
 
@@ -100,18 +100,20 @@ export default function BasketballOptionsModal({
         onChange={(e) => setTitle(e.target.value)}
       />
 
-      {/* DURATION */}
+      {/* DURATION (Dropdown) */}
       <label className={cn('block', 'text-sm', 'font-semibold', 'mb-1', 'text-white')}>
-        Game Duration (seconds)
+        Game Duration
       </label>
-      <input
-        type="number"
-        min={20}
-        max={180}
-        className={cn('w-full', 'px-3', 'py-2', 'mb-4', 'rounded-lg', 'text-black', 'text-sm')}
+
+      <select
         value={duration}
-        onChange={(e) => setDuration(parseInt(e.target.value))}
-      />
+        onChange={(e) => setDuration(Number(e.target.value))}
+        className={cn('w-full', 'px-3', 'py-2', 'mb-4', 'rounded-lg', 'text-black', 'text-sm', 'cursor-pointer')}
+      >
+        <option value={30}>30 seconds</option>
+        <option value={60}>60 seconds</option>
+        <option value={90}>90 seconds</option>
+      </select>
 
       {/* ERROR */}
       {errorMsg && (

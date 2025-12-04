@@ -27,12 +27,13 @@ interface Entry {
 
 interface Player {
   id: string;
+  game_id: string;
   guest_profile_id: string;
   display_name: string | null;
   selfie_url: string | null;
   lane_index: number;
   score: number | null;
-  disconnected_at: string | null; // REQUIRED FIX
+  disconnected_at: string | null;
 }
 
 /* ============================================================
@@ -87,16 +88,18 @@ export default function BasketballModerationModal({
   }
 
   /* ============================================================
-     GET NEXT AVAILABLE LANE (0–9)
+     GET NEXT AVAILABLE LANE
   ============================================================ */
   function getNextLane() {
-    const used = new Set(players.filter(p => p.disconnected_at === null).map((p) => p.lane_index));
+    const used = new Set(
+      players.filter((p) => p.disconnected_at === null).map((p) => p.lane_index)
+    );
     for (let i = 0; i < 10; i++) if (!used.has(i)) return i;
     return null;
   }
 
   /* ============================================================
-     APPROVE ENTRY → ACTIVE PLAYER
+     APPROVE ENTRY
   ============================================================ */
   async function handleApprove(entryId: string) {
     const entry = entries.find((e) => e.id === entryId);
@@ -104,7 +107,7 @@ export default function BasketballModerationModal({
 
     const lane = getNextLane();
     if (lane === null) {
-      showToast("❌ All 10 player spots are full!", "#ff4444");
+      showToast("❌ All player spots full", "#ff4444");
       return;
     }
 
@@ -149,7 +152,7 @@ export default function BasketballModerationModal({
   }
 
   /* ============================================================
-     CLEAR ACTIVE → MOVE ALL TO PREVIOUSLY PLAYED
+     CLEAR ACTIVE PLAYERS
   ============================================================ */
   async function handleClearActive() {
     const activePlayers = players.filter((p) => p.disconnected_at === null);
@@ -165,7 +168,7 @@ export default function BasketballModerationModal({
       .eq("game_id", gameId)
       .is("disconnected_at", null);
 
-    showToast("🔄 Active players moved to Previously Played");
+    showToast("🔄 Moved to Previously Played");
   }
 
   /* ============================================================
@@ -201,8 +204,13 @@ export default function BasketballModerationModal({
       .channel(`mod_entries_${gameId}`)
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "bb_game_entries", filter: `game_id=eq.${gameId}` },
-        () => loadEntries()
+        {
+          event: "*",
+          schema: "public",
+          table: "bb_game_entries",
+          filter: `game_id=eq.${gameId}`,
+        },
+        loadEntries
       )
       .subscribe();
 
@@ -210,8 +218,13 @@ export default function BasketballModerationModal({
       .channel(`mod_players_${gameId}`)
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "bb_game_players", filter: `game_id=eq.${gameId}` },
-        () => loadPlayers()
+        {
+          event: "*",
+          schema: "public",
+          table: "bb_game_players",
+          filter: `game_id=eq.${gameId}`,
+        },
+        loadPlayers
       )
       .subscribe();
 
@@ -222,7 +235,7 @@ export default function BasketballModerationModal({
   }, [gameId]);
 
   /* ============================================================
-     GROUPINGS (now error-proof)
+     GROUPINGS
   ============================================================ */
   const pending = entries.filter((e) => e.status === "pending");
   const rejected = entries.filter((e) => e.status === "rejected");
@@ -231,7 +244,7 @@ export default function BasketballModerationModal({
   const previous = players.filter((p) => p.disconnected_at !== null);
 
   /* ============================================================
-     COMPONENT RENDER
+     RENDER
   ============================================================ */
   return (
     <div
@@ -250,7 +263,9 @@ export default function BasketballModerationModal({
         {/* CLOSE */}
         <button
           onClick={onClose}
-          className={cn('absolute', 'top-3', 'right-3', 'text-white/70', 'hover:text-white', 'text-xl')}
+          className={cn(
+            "absolute top-3 right-3 text-white/70 hover:text-white text-xl"
+          )}
         >
           ✕
         </button>
@@ -259,7 +274,7 @@ export default function BasketballModerationModal({
           Basketball Player Moderation
         </h1>
 
-        {/* CLEAR ACTIVE PLAYERS */}
+        {/* CLEAR ACTIVE */}
         <div className={cn('text-right', 'mb-4')}>
           <button
             onClick={handleClearActive}
@@ -269,7 +284,6 @@ export default function BasketballModerationModal({
           </button>
         </div>
 
-        {/* SECTIONS */}
         <Section
           title="Pending"
           color="#ffd966"
@@ -294,6 +308,35 @@ export default function BasketballModerationModal({
               key={p.id}
               player={p}
               active
+              onMoveToPending={async () => {
+                // REMOVE FROM ACTIVE
+                await supabase
+                  .from("bb_game_players")
+                  .delete()
+                  .eq("id", p.id);
+
+                // ADD TO PENDING
+                await supabase.from("bb_game_entries").insert([
+                  {
+                    game_id: gameId,
+                    guest_profile_id: p.guest_profile_id,
+                    status: "pending",
+                    first_name: p.display_name?.split(" ")[0] ?? "",
+                    last_name: p.display_name?.split(" ")[1] ?? "",
+                    photo_url: p.selfie_url,
+                  },
+                ]);
+
+                showToast("🔁 Moved to pending");
+              }}
+              onMoveToPrevious={async () => {
+                await supabase
+                  .from("bb_game_players")
+                  .update({ disconnected_at: new Date().toISOString() })
+                  .eq("id", p.id);
+
+                showToast("⏮️ Moved to Previously Played");
+              }}
               onImageClick={setSelectedPhoto}
             />
           )}
@@ -328,7 +371,6 @@ export default function BasketballModerationModal({
           )}
         />
 
-        {/* PHOTO PREVIEW */}
         {selectedPhoto && (
           <div
             className={cn('fixed', 'inset-0', 'bg-black/70', 'flex', 'items-center', 'justify-center', 'z-[99999]')}
@@ -341,7 +383,6 @@ export default function BasketballModerationModal({
           </div>
         )}
 
-        {/* TOAST */}
         {toast && (
           <div
             className={cn('fixed', 'bottom-6', 'left-1/2', '-translate-x-1/2', 'px-4', 'py-2', 'rounded-lg', 'text-black', 'font-semibold')}
@@ -356,7 +397,7 @@ export default function BasketballModerationModal({
 }
 
 /* ============================================================
-   SECTION WRAPPER — FIXED VERSION
+   SECTION WRAPPER
 ============================================================ */
 function Section({ title, color, items, render }: any) {
   return (
@@ -434,9 +475,16 @@ function EntryCard({
 }
 
 /* ============================================================
-   PLAYER CARD
+   PLAYER CARD (PATCHED)
 ============================================================ */
-function PlayerCard({ player, active, onReAdd, onImageClick }: any) {
+function PlayerCard({
+  player,
+  active,
+  onReAdd,
+  onMoveToPending,
+  onMoveToPrevious,
+  onImageClick,
+}: any) {
   return (
     <div className={cn('flex', 'bg-[#0f1624]', 'rounded-lg', 'border', 'border-[#333]', 'p-3', 'gap-3', 'items-center')}>
       <img
@@ -450,16 +498,36 @@ function PlayerCard({ player, active, onReAdd, onImageClick }: any) {
           {player.display_name || "Unnamed Player"}
         </div>
         <div className={cn('text-xs', 'opacity-70')}>Lane: {player.lane_index + 1}</div>
-      </div>
 
-      {!active && (
-        <button
-          onClick={onReAdd}
-          className={cn('px-3', 'py-1', 'bg-blue-600', 'hover:bg-blue-700', 'text-white', 'rounded', 'text-xs')}
-        >
-          Re-Add
-        </button>
-      )}
+        <div className={cn('flex', 'gap-2', 'mt-2', 'text-xs')}>
+          {active && (
+            <>
+              <button
+                onClick={onMoveToPrevious}
+                className={cn('flex-1', 'bg-orange-500', 'hover:bg-orange-600', 'text-white', 'rounded', 'py-1')}
+              >
+                Move to Previous
+              </button>
+
+              <button
+                onClick={onMoveToPending}
+                className={cn('flex-1', 'bg-yellow-500', 'hover:bg-yellow-600', 'text-black', 'rounded', 'py-1')}
+              >
+                Move to Pending
+              </button>
+            </>
+          )}
+
+          {!active && onReAdd && (
+            <button
+              onClick={onReAdd}
+              className={cn('flex-1', 'bg-blue-600', 'hover:bg-blue-700', 'text-white', 'rounded', 'py-1')}
+            >
+              Re-Add
+            </button>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
