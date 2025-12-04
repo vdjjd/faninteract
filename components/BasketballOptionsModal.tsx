@@ -24,14 +24,15 @@ export default function BasketballOptionsModal({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   /* ------------------------------------------------------------
-     Load game settings on modal open
+     Load game settings ONLY when not saving
+     (prevents dropdown flicker after Save)
   ------------------------------------------------------------ */
   useEffect(() => {
-    if (!game) return;
+    if (!game || saving) return; // ← BLOCK reloading while saving
 
     setTitle(game.title ?? "");
     setDuration(game.duration_seconds ?? 90);
-  }, [game]);
+  }, [game, saving]);
 
   if (!game) return null;
 
@@ -59,7 +60,8 @@ export default function BasketballOptionsModal({
       }
 
       await refreshBasketballGames();
-      onClose();
+
+      onClose(); // ← close immediately so user never sees snap-back
     } catch (err) {
       console.error("❌ Error saving:", err);
       setErrorMsg("Unexpected error.");
@@ -85,61 +87,73 @@ export default function BasketballOptionsModal({
   ------------------------------------------------------------ */
   return (
     <Modal isOpen={isOpen} onClose={onClose}>
-      <h2 className={cn('text-xl', 'font-bold', 'text-center', 'mb-4')}>
+      <h2 className={cn("text-xl font-bold text-center mb-4")}>
         ⚙️ Basketball Game Settings
       </h2>
 
       {/* TITLE */}
-      <label className={cn('block', 'text-sm', 'font-semibold', 'mb-1', 'text-white')}>
+      <label className={cn("block text-sm font-semibold mb-1 text-white")}>
         Game Title
       </label>
       <input
         type="text"
-        className={cn('w-full', 'px-3', 'py-2', 'mb-4', 'rounded-lg', 'text-black', 'text-sm')}
+        className={cn(
+          "w-full px-3 py-2 mb-4 rounded-lg text-black text-sm"
+        )}
         value={title}
         onChange={(e) => setTitle(e.target.value)}
       />
 
-      {/* DURATION (Dropdown) */}
-      <label className={cn('block', 'text-sm', 'font-semibold', 'mb-1', 'text-white')}>
+      {/* DURATION DROPDOWN */}
+      <label className={cn("block text-sm font-semibold mb-1 text-white")}>
         Game Duration
       </label>
 
       <select
         value={duration}
         onChange={(e) => setDuration(Number(e.target.value))}
-        className={cn('w-full', 'px-3', 'py-2', 'mb-4', 'rounded-lg', 'text-black', 'text-sm', 'cursor-pointer')}
+        className={cn(
+          "w-full px-3 py-2 mb-4 rounded-lg text-black text-sm cursor-pointer"
+        )}
       >
         <option value={30}>30 seconds</option>
         <option value={60}>60 seconds</option>
         <option value={90}>90 seconds</option>
       </select>
 
-      {/* ERROR */}
+      {/* ERROR MESSAGE */}
       {errorMsg && (
-        <p className={cn('text-red-400', 'text-sm', 'mb-3', 'text-center')}>{errorMsg}</p>
+        <p className={cn("text-red-400 text-sm mb-3 text-center")}>
+          {errorMsg}
+        </p>
       )}
 
-      {/* BUTTONS */}
-      <div className={cn('flex', 'justify-center', 'gap-3', 'mt-4')}>
+      {/* BUTTON ROW */}
+      <div className={cn("flex justify-center gap-3 mt-4")}>
         <button
           onClick={handleSave}
           disabled={saving}
-          className={cn('bg-green-600', 'hover:bg-green-700', 'px-4', 'py-2', 'rounded-lg', 'font-semibold', 'text-white')}
+          className={cn(
+            "bg-green-600 hover:bg-green-700 px-4 py-2 rounded-lg font-semibold text-white"
+          )}
         >
           {saving ? "Saving…" : "💾 Save"}
         </button>
 
         <button
           onClick={onClose}
-          className={cn('bg-gray-600', 'hover:bg-gray-700', 'px-4', 'py-2', 'rounded-lg', 'font-semibold', 'text-white')}
+          className={cn(
+            "bg-gray-600 hover:bg-gray-700 px-4 py-2 rounded-lg font-semibold text-white"
+          )}
         >
           ✖ Cancel
         </button>
 
         <button
           onClick={handleDelete}
-          className={cn('bg-red-700', 'hover:bg-red-800', 'px-4', 'py-2', 'rounded-lg', 'font-semibold', 'text-white')}
+          className={cn(
+            "bg-red-700 hover:bg-red-800 px-4 py-2 rounded-lg font-semibold text-white"
+          )}
         >
           🗑 Delete
         </button>
