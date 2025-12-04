@@ -288,6 +288,17 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
   }
 
   /* ============================================================
+     FULLSCREEN HANDLER
+  ============================================================ */
+  function toggleFullscreen() {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch(() => {});
+    } else {
+      document.exitFullscreen();
+    }
+  }
+
+  /* ============================================================
      RENDER
   ============================================================ */
   return (
@@ -548,6 +559,30 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
             </div>
           );
         })}
+      </div>
+
+      {/* ================= FULLSCREEN BUTTON ================= */}
+      <div
+        onClick={toggleFullscreen}
+        style={{
+          position: "absolute",
+          bottom: "2vh",
+          right: "2vw",
+          width: 42,
+          height: 42,
+          borderRadius: 12,
+          background: "rgba(255,255,255,0.1)",
+          border: "1px solid rgba(255,255,255,0.25)",
+          cursor: "pointer",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          color: "#fff",
+          fontSize: "1.4rem",
+          zIndex: 50,
+        }}
+      >
+        ⛶
       </div>
     </div>
   );
