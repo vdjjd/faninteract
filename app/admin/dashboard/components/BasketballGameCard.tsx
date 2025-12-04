@@ -89,7 +89,7 @@ export default function BasketballGameCard({
   }
 
   /* ------------------------------------------------------------
-     ACTIVATE WALL
+     ACTIVATE WALL (but NOT start game)
   ------------------------------------------------------------ */
   async function handleActivateWall() {
     await supabase
@@ -107,14 +107,29 @@ export default function BasketballGameCard({
 
   /* ------------------------------------------------------------
      START GAME
+     → Sends BOTH:
+       1. postMessage to Active Wall popup (triggers wall countdown)
+       2. realtime "start_countdown" broadcast to Shooter Pages
   ------------------------------------------------------------ */
   async function handleStartGame() {
     if (!wallActivated) return;
 
+    console.log("▶ START GAME TRIGGERED");
+
+    // 1️⃣ WALL POPUP (Active Wall on big screen)
     window._basketballPopup?.postMessage(
       { type: "start_game", gameId: game.id },
       "*"
     );
+
+    // 2️⃣ SHOOTER PHONES (global realtime broadcast)
+    await supabase.channel(`basketball-${game.id}`).send({
+      type: "broadcast",
+      event: "start_countdown",
+      payload: { gameId: game.id },
+    });
+
+    console.log("📢 Broadcast start_countdown sent!");
 
     await onRefresh();
   }
@@ -153,35 +168,25 @@ export default function BasketballGameCard({
           {game.title || "Untitled Game"}
         </h3>
 
-        <p
-          className={cn(
-            "text-sm mb-3 flex justify-center items-center gap-2"
-          )}
-        >
+        <p className={cn('text-sm', 'mb-3', 'flex', 'justify-center', 'items-center', 'gap-2')}>
           <strong>Status:</strong> <StatusBadge />
         </p>
 
-        <p className={cn("text-sm text-white/70 mb-1")}>
+        <p className={cn('text-sm', 'text-white/70', 'mb-1')}>
           ⏳ Duration: {game.duration_seconds}s
         </p>
 
-        <p className={cn("text-sm text-white/70 mb-3")}>
+        <p className={cn('text-sm', 'text-white/70', 'mb-3')}>
           🎯 Max Players: {game.max_players}
         </p>
       </div>
 
       {/* CONTROL BUTTONS */}
-      <div
-        className={cn(
-          "flex flex-col gap-3 mt-auto pt-3 border-t border-white/10"
-        )}
-      >
+      <div className={cn('flex', 'flex-col', 'gap-3', 'mt-auto', 'pt-3', 'border-t', 'border-white/10')}>
         {/* Moderate */}
         <button
           onClick={() => onOpenModeration(game.id)}
-          className={cn(
-            "w-full py-2 rounded text-sm font-semibold bg-yellow-500 hover:bg-yellow-600 text-black"
-          )}
+          className={cn('w-full', 'py-2', 'rounded', 'text-sm', 'font-semibold', 'bg-yellow-500', 'hover:bg-yellow-600', 'text-black')}
         >
           👥 Moderate Players
         </button>
@@ -190,18 +195,14 @@ export default function BasketballGameCard({
         <div className={cn('grid', 'grid-cols-2', 'gap-2')}>
           <button
             onClick={openWallWindow}
-            className={cn(
-              "w-full py-2 rounded text-sm font-semibold bg-purple-600 hover:bg-purple-700 text-white"
-            )}
+            className={cn('w-full', 'py-2', 'rounded', 'text-sm', 'font-semibold', 'bg-purple-600', 'hover:bg-purple-700', 'text-white')}
           >
             🚀 Launch Wall
           </button>
 
           <button
             onClick={handleActivateWall}
-            className={cn(
-              "w-full py-2 rounded text-sm font-semibold bg-blue-600 hover:bg-blue-700 text-white"
-            )}
+            className={cn('w-full', 'py-2', 'rounded', 'text-sm', 'font-semibold', 'bg-blue-600', 'hover:bg-blue-700', 'text-white')}
           >
             🟦 Activate Wall
           </button>
@@ -240,18 +241,14 @@ export default function BasketballGameCard({
         <div className={cn('grid', 'grid-cols-2', 'gap-2')}>
           <button
             onClick={() => onOpenOptions(game)}
-            className={cn(
-              "w-full py-2 rounded text-sm font-semibold bg-indigo-500 hover:bg-indigo-600 text-white"
-            )}
+            className={cn('w-full', 'py-2', 'rounded', 'text-sm', 'font-semibold', 'bg-indigo-500', 'hover:bg-indigo-600', 'text-white')}
           >
             ⚙ Options
           </button>
 
           <button
             onClick={() => onDelete(game.id)}
-            className={cn(
-              "w-full py-2 rounded text-sm font-semibold bg-red-700 hover:bg-red-800 text-white"
-            )}
+            className={cn('w-full', 'py-2', 'rounded', 'text-sm', 'font-semibold', 'bg-red-700', 'hover:bg-red-800', 'text-white')}
           >
             ❌ Delete
           </button>

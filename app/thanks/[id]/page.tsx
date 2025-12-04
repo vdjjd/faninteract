@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useParams, useSearchParams } from "next/navigation";
+import { useParams, useSearchParams, useRouter } from "next/navigation";
 import { getSupabaseClient } from "@/lib/supabaseClient";
 
 /* ----------------------------- helpers ----------------------------- */
@@ -18,19 +18,11 @@ function getStoredGuestProfile() {
 
 /* ----------------------------- helper fn OUTSIDE blocks ----------------------------- */
 async function loadBasketballData(supabase: any, id: string) {
-  // Load bb_game → host_id
-  const { data: game, error: gErr } = await supabase
+  const { data: game } = await supabase
     .from("bb_games")
     .select("host_id")
     .eq("id", id)
     .maybeSingle();
-
-  if (gErr) {
-    console.error("❌ Basketball ThankYou load error:", gErr);
-    return {
-      host: { branding_logo_url: "/faninteractlogo.png" },
-    };
-  }
 
   if (!game?.host_id) {
     return {
@@ -38,16 +30,11 @@ async function loadBasketballData(supabase: any, id: string) {
     };
   }
 
-  // Load host record
-  const { data: host, error: hErr } = await supabase
+  const { data: host } = await supabase
     .from("hosts")
     .select("branding_logo_url, logo_url")
     .eq("id", game.host_id)
     .maybeSingle();
-
-  if (hErr) {
-    console.error("❌ Basketball host load error:", hErr);
-  }
 
   return {
     host: {
@@ -59,8 +46,12 @@ async function loadBasketballData(supabase: any, id: string) {
   };
 }
 
+/* ====================================================================== */
+/*                              COMPONENT                                 */
+/* ====================================================================== */
 export default function ThankYouPage() {
   const { id } = useParams();
+  const router = useRouter();
   const searchParams = useSearchParams();
   const supabase = getSupabaseClient();
 
@@ -80,18 +71,23 @@ export default function ThankYouPage() {
   const type = detectedType || "lead";
 
   const [data, setData] = useState<any>(null);
-  const [showCloseHint, setShowCloseHint] = useState(false);
   const [profile, setProfile] = useState<any>(null);
-  const [remoteEnabled, setRemoteEnabled] = useState(false);
-  const [armed, setArmed] = useState(false);
-  const [pressing, setPressing] = useState(false);
-
+  const [showCloseHint, setShowCloseHint] = useState(false);
   const wheelRowRef = useRef<any>(null);
 
   /* ----------------------------- load profile ----------------------------- */
   useEffect(() => {
     setProfile(getStoredGuestProfile());
   }, []);
+
+  /* ----------------------------- auto mark basketball session ----------------------------- */
+  useEffect(() => {
+    if (type === "basketball") {
+      try {
+        localStorage.setItem("bb_waiting", "true");
+      } catch {}
+    }
+  }, [type]);
 
   /* ----------------------------- fetch data ----------------------------- */
   useEffect(() => {
@@ -119,7 +115,7 @@ export default function ThankYouPage() {
           ? "prize_wheels"
           : "fan_walls";
 
-      const { data, error } = await supabase
+      const { data } = await supabase
         .from(table)
         .select(
           `id, title, background_value,
@@ -129,70 +125,50 @@ export default function ThankYouPage() {
         .eq("id", id as string)
         .maybeSingle();
 
-      if (error) console.error("❌ ThankYou fetch error:", error);
-
       setData(data);
 
       if (type === "wheel" && data) {
         wheelRowRef.current = data;
-        setRemoteEnabled(!!data.remote_spin_enabled);
-        setArmed(
-          !!data.remote_spin_enabled &&
-            !!profile?.id &&
-            data.selected_remote_spinner === profile.id
-        );
       }
     })();
-  }, [id, type, supabase, profile?.id]);
+  }, [id, type, supabase]);
 
-  /* ----------------------------- realtime (wheel only) ----------------------------- */
+  /* ====================================================================== */
+  /*               REALTIME LISTENER → PLAYER APPROVED                     */
+  /* ====================================================================== */
   useEffect(() => {
-    if (type !== "wheel" || !id) return;
+    if (type !== "basketball" || !profile?.id || !id) return;
 
-    const rowChannel = supabase
-      .channel(`pw-row-${id}`)
+    const channel = supabase
+      .channel(`bb-approval-${profile.id}`)
       .on(
         "postgres_changes",
         {
-          event: "UPDATE",
           schema: "public",
-          table: "prize_wheels",
-          filter: `id=eq.${id}`,
+          table: "bb_game_players",
+          event: "INSERT",
+          filter: `guest_profile_id=eq.${profile.id}`,
         },
-        (payload: any) => {
-          const row = payload.new;
-          wheelRowRef.current = row;
-          setRemoteEnabled(!!row.remote_spin_enabled);
-          setArmed(
-            !!row.remote_spin_enabled &&
-              !!profile?.id &&
-              row.selected_remote_spinner === profile.id
-          );
+        async (payload: any) => {
+          const player = payload.new;
+          if (!player) return;
+
+          try {
+            localStorage.setItem("bb_player_id", player.id);
+            localStorage.removeItem("bb_waiting");
+          } catch {}
+
+          router.replace(`/basketball/${id}/shoot`);
         }
       )
       .subscribe();
 
-    const bc = supabase
-      .channel(`prizewheel-${id}`)
-      .on("broadcast", { event: "remote_spinner_selected" }, (msg: any) => {
-        const { selected_guest_id } = msg?.payload || {};
-        if (!selected_guest_id) return;
-        setArmed(
-          !!remoteEnabled &&
-            !!profile?.id &&
-            selected_guest_id === profile.id
-        );
-      })
-      .subscribe();
-
     return () => {
-      supabase.removeChannel(rowChannel);
-      supabase.removeChannel(bc);
+      supabase.removeChannel(channel);
     };
-  }, [id, type, supabase, profile?.id, remoteEnabled]);
+  }, [type, profile?.id, id, supabase, router]);
 
   /* ----------------------------- ui helpers ----------------------------- */
-
   const bg =
     type === "lead"
       ? "linear-gradient(135deg,#0a2540,#1b2b44,#000000)"
@@ -224,39 +200,11 @@ export default function ThankYouPage() {
   /* ----------------------------- handlers ----------------------------- */
 
   const handleClose = () => {
-    // ❌ window.close() returns void → cannot test it
-    // ✔ Always show hint instead
     setShowCloseHint(true);
     try {
       window.close();
     } catch {}
   };
-
-  async function handleRemotePress() {
-    if (!id || !profile?.id) return;
-    setPressing(true);
-
-    try {
-      await supabase
-        .channel(`prizewheel-${id}`)
-        .send({
-          type: "broadcast",
-          event: "remote_spin_pressed",
-          payload: { wheel_id: id, guest_id: profile.id },
-        });
-
-      await supabase
-        .from("prize_wheels")
-        .update({ selected_remote_spinner: null })
-        .eq("id", id as string);
-
-      setArmed(false);
-    } catch (e) {
-      console.error("remote press error", e);
-    } finally {
-      setPressing(false);
-    }
-  }
 
   /* ----------------------------- render ----------------------------- */
 
@@ -304,7 +252,6 @@ export default function ThankYouPage() {
             maxWidth: 260,
             margin: "0 auto 16px",
             filter: "drop-shadow(0 0 25px rgba(255,128,64,0.65))",
-            animation: "pulseGlow 2.5s ease-in-out infinite",
           }}
           alt="logo"
         />
@@ -318,7 +265,6 @@ export default function ThankYouPage() {
               "linear-gradient(90deg,#ffd8a6,#ffa65c,#ff7a00,#ff3b0a)",
             WebkitBackgroundClip: "text",
             color: "transparent",
-            textShadow: "0 0 18px rgba(255,120,40,0.25)",
           }}
         >
           🎉 Thank You!
@@ -328,48 +274,25 @@ export default function ThankYouPage() {
           {message}
         </p>
 
-        {/* wheel-only messaging */}
-        {type === "wheel" && (
+        {/* 🔥 BASKETBALL NOTICE */}
+        {type === "basketball" && (
           <div
             style={{
-              fontSize: 14,
-              lineHeight: 1.35,
-              color: "#ffe7d6",
-              background:
-                "linear-gradient(180deg, rgba(255,90,0,0.12), rgba(255,90,0,0.06))",
-              border: "1px solid rgba(255,140,80,0.35)",
-              padding: "10px 12px",
+              marginTop: 20,
+              padding: "14px 18px",
+              background: "rgba(255,150,0,0.15)",
+              border: "1px solid rgba(255,120,0,0.35)",
               borderRadius: 12,
-              boxShadow: "0 0 14px rgba(255,110,20,0.18) inset",
-              marginBottom: 16,
+              color: "#ffd9b3",
+              fontSize: "1.2rem",
+              fontWeight: 700,
+              lineHeight: 1.4,
             }}
           >
-            <strong>Stay right here…</strong>
+            🚀 <span style={{ color: "#fff" }}>Keep this page open!</span>
             <br />
-            At any moment, you could be chosen to{" "}
-            <strong>SPIN THE WHEEL</strong> from your phone.
+            This becomes your <strong>Basketball Controller</strong> once approved.
           </div>
-        )}
-
-        {/* wheel remote button */}
-        {type === "wheel" && remoteEnabled && armed && (
-          <button
-            onClick={handleRemotePress}
-            disabled={pressing}
-            style={{
-              width: "100%",
-              padding: "26px 0",
-              borderRadius: 9999,
-              color: "#fff",
-              fontWeight: 900,
-              cursor: pressing ? "not-allowed" : "pointer",
-              marginBottom: 14,
-              background:
-                "radial-gradient(circle at 50% 50%, #ff7a00 0%, #ff3b0a 55%, #b81d08 100%)",
-            }}
-          >
-            🔥 SPIN THE WHEEL!
-          </button>
         )}
 
         {!showCloseHint ? (
@@ -378,8 +301,7 @@ export default function ThankYouPage() {
             style={{
               padding: "10px 16px",
               borderRadius: 10,
-              background:
-                "linear-gradient(90deg,#475569,#0f172a)",
+              background: "linear-gradient(90deg,#475569,#0f172a)",
               color: "#fff",
               fontWeight: 600,
               width: "100%",
@@ -393,13 +315,6 @@ export default function ThankYouPage() {
           </p>
         )}
       </div>
-
-      <style>{`
-        @keyframes pulseGlow {
-          0%, 100% { filter: drop-shadow(0 0 15px rgba(255,120,40,0.5)); }
-          50% { filter: drop-shadow(0 0 35px rgba(255,160,80,0.9)); }
-        }
-      `}</style>
     </div>
   );
 }

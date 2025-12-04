@@ -53,17 +53,17 @@ export default function BasketballModerationModal({
     null
   );
 
-  /* ------------------------------------------------------------
+  /* ============================================================
      Toast Helper
-  ------------------------------------------------------------ */
+  ============================================================ */
   function showToast(text: string, color = "#00ff88") {
     setToast({ text, color });
     setTimeout(() => setToast(null), 2400);
   }
 
-  /* ------------------------------------------------------------
+  /* ============================================================
      LOAD ENTRIES
-  ------------------------------------------------------------ */
+  ============================================================ */
   async function loadEntries() {
     const { data } = await supabase
       .from("bb_game_entries")
@@ -74,9 +74,9 @@ export default function BasketballModerationModal({
     setEntries(data || []);
   }
 
-  /* ------------------------------------------------------------
+  /* ============================================================
      LOAD PLAYERS
-  ------------------------------------------------------------ */
+  ============================================================ */
   async function loadPlayers() {
     const { data } = await supabase
       .from("bb_game_players")
@@ -87,9 +87,9 @@ export default function BasketballModerationModal({
     setPlayers(data || []);
   }
 
-  /* ------------------------------------------------------------
-     GET NEXT AVAILABLE LANE (0–9)
-  ------------------------------------------------------------ */
+  /* ============================================================
+     GET NEXT OPEN LANE INDEX (0–9)
+  ============================================================ */
   function getNextLane() {
     const used = new Set(
       players.filter((p) => p.disconnected_at === null).map((p) => p.lane_index)
@@ -99,9 +99,10 @@ export default function BasketballModerationModal({
     return null;
   }
 
-  /* ------------------------------------------------------------
+  /* ============================================================
      APPROVE ENTRY → ACTIVE PLAYER
-  ------------------------------------------------------------ */
+     (🔥 PATCHED — triggers ThankYou instant redirect)
+  ============================================================ */
   async function handleApprove(entryId: string) {
     const entry = entries.find((e) => e.id === entryId);
     if (!entry) return;
@@ -112,18 +113,34 @@ export default function BasketballModerationModal({
       return;
     }
 
-    await supabase.from("bb_game_players").insert([
-      {
-        game_id: gameId,
-        guest_profile_id: entry.guest_profile_id,
-        display_name: `${entry.first_name} ${entry.last_name}`.trim(),
-        selfie_url: entry.photo_url,
-        lane_index: lane,
-        score: 0,
-        disconnected_at: null,
-      },
-    ]);
+    const displayName = `${entry.first_name ?? ""} ${entry.last_name ?? ""}`.trim();
 
+    // 🔥 INSERT PLAYER AND RETURN THE ROW
+    const { data: insertedPlayer, error: insertErr } = await supabase
+      .from("bb_game_players")
+      .insert([
+        {
+          game_id: gameId,
+          guest_profile_id: entry.guest_profile_id,
+          display_name: displayName,
+          selfie_url: entry.photo_url,
+          lane_index: lane,
+          score: 0,
+          disconnected_at: null,
+        },
+      ])
+      .select()
+      .single();
+
+    if (insertErr) {
+      console.error("❌ Insert error:", insertErr);
+      showToast("Insert failed", "#ff4444");
+      return;
+    }
+
+    console.log("🔥 Player inserted (ThankYouPage will redirect):", insertedPlayer);
+
+    // UPDATE ENTRY → approved
     await supabase
       .from("bb_game_entries")
       .update({ status: "approved" })
@@ -132,9 +149,9 @@ export default function BasketballModerationModal({
     showToast("✅ Player Approved");
   }
 
-  /* ------------------------------------------------------------
+  /* ============================================================
      REJECT ENTRY
-  ------------------------------------------------------------ */
+  ============================================================ */
   async function handleReject(entryId: string) {
     await supabase
       .from("bb_game_entries")
@@ -144,17 +161,17 @@ export default function BasketballModerationModal({
     showToast("🚫 Rejected", "#ff4444");
   }
 
-  /* ------------------------------------------------------------
+  /* ============================================================
      DELETE ENTRY
-  ------------------------------------------------------------ */
+  ============================================================ */
   async function handleDelete(entryId: string) {
     await supabase.from("bb_game_entries").delete().eq("id", entryId);
     showToast("🗑 Deleted", "#888");
   }
 
-  /* ------------------------------------------------------------
-     CLEAR ALL ACTIVE → move all to PREVIOUS
-  ------------------------------------------------------------ */
+  /* ============================================================
+     CLEAR ACTIVE → move all to PREVIOUS
+  ============================================================ */
   async function handleClearActive() {
     const activePlayers = players.filter((p) => p.disconnected_at === null);
 
@@ -172,9 +189,9 @@ export default function BasketballModerationModal({
     showToast("🔄 Active players moved to Previously Played");
   }
 
-  /* ------------------------------------------------------------
-     RE-ADD PLAYER
-  ------------------------------------------------------------ */
+  /* ============================================================
+     RE-ADD PLAYER FROM PREVIOUS
+  ============================================================ */
   async function handleReAdd(player: Player) {
     const lane = getNextLane();
     if (lane === null) {
@@ -194,9 +211,9 @@ export default function BasketballModerationModal({
     showToast("🔁 Player Re-Added");
   }
 
-  /* ------------------------------------------------------------
-     REALTIME LISTENERS + POLLING (EVERY 3 SECONDS)
-  ------------------------------------------------------------ */
+  /* ============================================================
+     REALTIME LISTENING + POLLING
+  ============================================================ */
   useEffect(() => {
     loadEntries();
     loadPlayers();
@@ -229,7 +246,6 @@ export default function BasketballModerationModal({
       )
       .subscribe();
 
-    // 🔥 NEW — POLLING LOOP (Every 3 seconds)
     const interval = setInterval(() => {
       loadEntries();
       loadPlayers();
@@ -242,9 +258,9 @@ export default function BasketballModerationModal({
     };
   }, [gameId]);
 
-  /* ------------------------------------------------------------
+  /* ============================================================
      GROUPINGS
-  ------------------------------------------------------------ */
+  ============================================================ */
   const pending = entries.filter((e) => e.status === "pending");
   const rejected = entries.filter((e) => e.status === "rejected");
 
@@ -253,7 +269,7 @@ export default function BasketballModerationModal({
 
   /* ============================================================
      RENDER
-============================================================ */
+  ============================================================ */
   return (
     <div
       className={cn(
@@ -268,12 +284,10 @@ export default function BasketballModerationModal({
         )}
         onClick={(e) => e.stopPropagation()}
       >
-        {/* CLOSE BUTTON */}
+        {/* CLOSE */}
         <button
           onClick={onClose}
-          className={cn(
-            "absolute top-3 right-3 text-white/70 hover:text-white text-xl"
-          )}
+          className={cn("absolute top-3 right-3 text-white/70 hover:text-white text-xl")}
         >
           ✕
         </button>
@@ -286,9 +300,7 @@ export default function BasketballModerationModal({
         <div className={cn('text-right', 'mb-4')}>
           <button
             onClick={handleClearActive}
-            className={cn(
-              "px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg shadow"
-            )}
+            className={cn('px-4', 'py-2', 'bg-red-600', 'hover:bg-red-700', 'text-white', 'rounded-lg', 'shadow')}
           >
             Clear Active Players
           </button>
@@ -321,13 +333,8 @@ export default function BasketballModerationModal({
               player={p}
               active
               onMoveToPending={async () => {
-                // 1. DELETE FROM ACTIVE
-                await supabase
-                  .from("bb_game_players")
-                  .delete()
-                  .eq("id", p.id);
+                await supabase.from("bb_game_players").delete().eq("id", p.id);
 
-                // 2. INSERT INTO PENDING
                 await supabase.from("bb_game_entries").insert([
                   {
                     game_id: gameId,
@@ -390,16 +397,12 @@ export default function BasketballModerationModal({
         {/* IMAGE PREVIEW */}
         {selectedPhoto && (
           <div
-            className={cn(
-              "fixed inset-0 bg-black/70 flex items-center justify-center z-[99999]"
-            )}
+            className={cn('fixed', 'inset-0', 'bg-black/70', 'flex', 'items-center', 'justify-center', 'z-[99999]')}
             onClick={() => setSelectedPhoto(null)}
           >
             <img
               src={selectedPhoto}
-              className={cn(
-                "max-w-[90vw] max-h-[90vh] rounded-xl shadow-xl"
-              )}
+              className={cn('max-w-[90vw]', 'max-h-[90vh]', 'rounded-xl', 'shadow-xl')}
             />
           </div>
         )}
@@ -407,9 +410,7 @@ export default function BasketballModerationModal({
         {/* TOAST */}
         {toast && (
           <div
-            className={cn(
-              "fixed bottom-6 left-1/2 -translate-x-1/2 px-4 py-2 rounded-lg text-black font-semibold"
-            )}
+            className={cn('fixed', 'bottom-6', 'left-1/2', '-translate-x-1/2', 'px-4', 'py-2', 'rounded-lg', 'text-black', 'font-semibold')}
             style={{ background: toast.color }}
           >
             {toast.text}
@@ -427,7 +428,7 @@ function Section({ title, color, items, render }: any) {
   return (
     <div className="mb-6">
       <h2
-        className={cn("text-xl font-semibold mb-2")}
+        className={cn('text-xl', 'font-semibold', 'mb-2')}
         style={{ borderLeft: `4px solid ${color}`, paddingLeft: 8 }}
       >
         {title} ({items.length})
@@ -436,9 +437,7 @@ function Section({ title, color, items, render }: any) {
       {items.length === 0 ? (
         <p className="text-gray-400">None</p>
       ) : (
-        <div
-          className={cn("grid gap-3 grid-cols-[repeat(auto-fill,minmax(240px,1fr))]")}
-        >
+        <div className={cn('grid', 'gap-3', 'grid-cols-[repeat(auto-fill,minmax(240px,1fr))]')}>
           {items.map((item: any) => (
             <div key={item.id}>{render(item)}</div>
           ))}
@@ -460,16 +459,10 @@ function EntryCard({
   onImageClick,
 }: any) {
   return (
-    <div
-      className={cn(
-        "flex bg-[#0f1624] rounded-lg border border-[#333] p-3 gap-3 items-center"
-      )}
-    >
+    <div className={cn('flex', 'bg-[#0f1624]', 'rounded-lg', 'border', 'border-[#333]', 'p-3', 'gap-3', 'items-center')}>
       <img
         src={entry.photo_url || "/placeholder.png"}
-        className={cn(
-          "w-[70px] h-[70px] rounded-full object-cover border-2 border-white/20 shadow cursor-pointer"
-        )}
+        className={cn('w-[70px]', 'h-[70px]', 'rounded-full', 'object-cover', 'border-2', 'border-white/20', 'shadow', 'cursor-pointer')}
         onClick={() => entry.photo_url && onImageClick(entry.photo_url)}
       />
 
@@ -518,16 +511,10 @@ function PlayerCard({
   onImageClick,
 }: any) {
   return (
-    <div
-      className={cn(
-        "flex bg-[#0f1624] rounded-lg border border-[#333] p-3 gap-3 items-center"
-      )}
-    >
+    <div className={cn('flex', 'bg-[#0f1624]', 'rounded-lg', 'border', 'border-[#333]', 'p-3', 'gap-3', 'items-center')}>
       <img
         src={player.selfie_url || "/placeholder.png"}
-        className={cn(
-          "w-[70px] h-[70px] rounded-full object-cover border-2 border-white/20 shadow cursor-pointer"
-        )}
+        className={cn('w-[70px]', 'h-[70px]', 'rounded-full', 'object-cover', 'border-2', 'border-white/20', 'shadow', 'cursor-pointer')}
         onClick={() => player.selfie_url && onImageClick(player.selfie_url)}
       />
 
@@ -535,7 +522,9 @@ function PlayerCard({
         <div className={cn('font-semibold', 'text-sm')}>
           {player.display_name || "Unnamed Player"}
         </div>
-        <div className={cn('text-xs', 'opacity-70')}>Lane: {player.lane_index + 1}</div>
+        <div className={cn('text-xs', 'opacity-70')}>
+          Lane: {player.lane_index + 1}
+        </div>
 
         <div className={cn('flex', 'gap-2', 'mt-2', 'text-xs')}>
           {active && (
