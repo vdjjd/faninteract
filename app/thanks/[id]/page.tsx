@@ -4,7 +4,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import { getSupabaseClient } from "@/lib/supabaseClient";
 
-/* ----------------------------- helpers ----------------------------- */
+/* ---------------------------------------------------
+   Local helper to load stored guest profile
+--------------------------------------------------- */
 function getStoredGuestProfile() {
   try {
     const raw =
@@ -21,10 +23,9 @@ export default function ThankYouPage() {
   const searchParams = useSearchParams();
   const supabase = getSupabaseClient();
 
-  /* ---------------------------------------------------------------
-     DETECT TYPE (NOW INCLUDES LEAD)
-  ---------------------------------------------------------------- */
   const rawType = searchParams.get("type");
+
+  // Auto-detect fallback types (wall, wheel, poll)
   const path =
     typeof window !== "undefined" ? window.location.pathname : "";
 
@@ -36,35 +37,42 @@ export default function ThankYouPage() {
 
   if (rawType) detectedType = rawType.toLowerCase();
 
-  // NEW: LEADS default to type "lead"
+  // Default fallback type
   const type = detectedType || "lead";
 
-  /* --------------------------------------------------------------- */
-
   const [data, setData] = useState<any>(null);
-  const [showCloseHint, setShowCloseHint] = useState(false);
   const [profile, setProfile] = useState<any>(null);
   const [remoteEnabled, setRemoteEnabled] = useState(false);
   const [armed, setArmed] = useState(false);
   const [pressing, setPressing] = useState(false);
+  const [showCloseHint, setShowCloseHint] = useState(false);
 
   const wheelRowRef = useRef<any>(null);
 
-  /* ----------------------------- load profile ----------------------------- */
+  /* ---------------------------------------------------
+     Load Guest Profile
+  --------------------------------------------------- */
   useEffect(() => {
     setProfile(getStoredGuestProfile());
   }, []);
 
-  /* ----------------------------- fetch data ----------------------------- */
+  /* ---------------------------------------------------
+     Fetch Data (not used for basketball)
+  --------------------------------------------------- */
   useEffect(() => {
     if (!id) return;
 
-    // LEADS DO NOT FETCH FAN WALL / POLL / WHEEL TABLES  
-    if (type === "lead") {
-      setData({ background_value: null, host: { branding_logo_url: "/faninteractlogo.png" } });
+    // Basketball does NOT load host tables like wheels/polls/walls:
+    if (type === "basketball") {
+      setData({
+        host: {
+          branding_logo_url: "/faninteractlogo.png"
+        }
+      });
       return;
     }
 
+    // Regular types
     async function fetchData() {
       const table =
         type === "poll"
@@ -73,7 +81,7 @@ export default function ThankYouPage() {
           ? "prize_wheels"
           : "fan_walls";
 
-      const { data, error } = await supabase
+      const { data } = await supabase
         .from(table)
         .select(
           `id, title, background_value,
@@ -82,8 +90,6 @@ export default function ThankYouPage() {
         )
         .eq("id", id as string)
         .maybeSingle();
-
-      if (error) console.error("❌ ThankYou fetch error:", error);
 
       setData(data);
 
@@ -101,7 +107,9 @@ export default function ThankYouPage() {
     fetchData();
   }, [id, type, supabase, profile?.id]);
 
-  /* ----------------------------- realtime (wheel only) ----------------------------- */
+  /* ---------------------------------------------------
+     Real-time updates for wheel (unchanged)
+  --------------------------------------------------- */
   useEffect(() => {
     if (type !== "wheel" || !id) return;
 
@@ -128,42 +136,27 @@ export default function ThankYouPage() {
       )
       .subscribe();
 
-    const bc = supabase
-      .channel(`prizewheel-${id}`)
-      .on("broadcast", { event: "remote_spinner_selected" }, (msg: any) => {
-        const { selected_guest_id } = msg?.payload || {};
-        if (!selected_guest_id) return;
-        setArmed(
-          !!remoteEnabled &&
-            !!profile?.id &&
-            selected_guest_id === profile.id
-        );
-      })
-      .subscribe();
-
     return () => {
       supabase.removeChannel(rowChannel);
-      supabase.removeChannel(bc);
     };
-  }, [id, type, supabase, profile?.id, remoteEnabled]);
+  }, [id, type, supabase, profile?.id]);
 
-  /* ----------------------------- ui helpers ----------------------------- */
+  /* ---------------------------------------------------
+     Basketball UI Overrides
+  --------------------------------------------------- */
+  const basketballBackground = "url(/BBgamebackground.png)";
 
-  const bg =
-    type === "lead"
-      ? "linear-gradient(135deg,#0a2540,#1b2b44,#000000)"
-      : data?.background_value ||
-        "linear-gradient(135deg,#0a2540,#1b2b44,#000000)";
+  const basketballMessage = `
+    You're entered into the Basketball Battle!
+    Watch the big screen to see if you're picked!
+  `;
 
-  const displayLogo =
-    type === "lead"
-      ? "/faninteractlogo.png"
-      : data?.host?.branding_logo_url &&
-        data.host.branding_logo_url.trim() !== ""
-      ? data.host.branding_logo_url
-      : "/faninteractlogo.png";
+  const basketballLogo = "/faninteractlogo.png";
 
-  const message = useMemo(() => {
+  /* ---------------------------------------------------
+     Default UI
+  --------------------------------------------------- */
+  const defaultMessage = useMemo(() => {
     switch (type) {
       case "lead":
         return "Your request has been submitted!";
@@ -178,66 +171,33 @@ export default function ThankYouPage() {
     }
   }, [type]);
 
-  /* ----------------------------- handlers ----------------------------- */
   const handleClose = () => {
     const closed = window.close();
     if (!closed) setShowCloseHint(true);
   };
 
-  async function handleRemotePress() {
-    if (!id || !profile?.id) return;
-    setPressing(true);
-    try {
-      await supabase
-        .channel(`prizewheel-${id}`)
-        .send({
-          type: "broadcast",
-          event: "remote_spin_pressed",
-          payload: { wheel_id: id, guest_id: profile.id },
-        });
+  /* ---------------------------------------------------
+     Render
+  --------------------------------------------------- */
+  const isBasketball = type === "basketball";
 
-      await supabase
-        .from("prize_wheels")
-        .update({ selected_remote_spinner: null })
-        .eq("id", id as string);
+  const bg = isBasketball
+    ? basketballBackground
+    : data?.background_value ||
+      "linear-gradient(135deg,#0a2540,#1b2b44,#000000)";
 
-      setArmed(false);
-    } catch (e) {
-      console.error("remote press error", e);
-    } finally {
-      setPressing(false);
-    }
-  }
+  const displayLogo = isBasketball
+    ? basketballLogo
+    : data?.host?.branding_logo_url ||
+      "/faninteractlogo.png";
 
-  /* ----------------------------- styles ----------------------------- */
-  const firePulseButton: React.CSSProperties = {
-    width: "100%",
-    padding: "26px 0",
-    border: "none",
-    borderRadius: 9999,
-    fontSize: "1.5rem",
-    textTransform: "uppercase",
-    color: "#fff",
-    fontWeight: 900,
-    letterSpacing: "1px",
-    background:
-      "radial-gradient(circle at 50% 50%, #ff7a00 0%, #ff3b0a 55%, #b81d08 100%)",
-    boxShadow:
-      "0 0 34px rgba(255,90,0,0.55), inset 0 0 22px rgba(255,170,0,0.40)",
-    animation: "firePulse 1.6s ease-in-out infinite",
-    transform: "translateZ(0)",
-  };
+  const message = isBasketball ? basketballMessage : defaultMessage;
 
-  const isFanWall =
-    typeof window !== "undefined" &&
-    window.location.href.includes("fanwall");
-
-  /* ----------------------------- render ----------------------------- */
   return (
     <div
       style={{
         minHeight: "100vh",
-        backgroundImage: bg.includes("http") ? `url(${bg})` : bg,
+        backgroundImage: bg,
         backgroundSize: "cover",
         backgroundPosition: "center",
         position: "relative",
@@ -248,6 +208,7 @@ export default function ThankYouPage() {
         textAlign: "center",
       }}
     >
+      {/* Darken overlay */}
       <div
         style={{
           position: "absolute",
@@ -257,11 +218,12 @@ export default function ThankYouPage() {
         }}
       />
 
+      {/* CARD */}
       <div
         style={{
           position: "relative",
           zIndex: 10,
-          maxWidth: 480,
+          maxWidth: 500,
           width: "100%",
           padding: "42px 26px",
           borderRadius: 22,
@@ -273,10 +235,12 @@ export default function ThankYouPage() {
         <img
           src={displayLogo}
           style={{
-            width: "72%",
+            width: "68%",
             maxWidth: 260,
             margin: "0 auto 16px",
-            filter: "drop-shadow(0 0 25px rgba(255,128,64,0.65))",
+            filter: isBasketball
+              ? "drop-shadow(0 0 45px rgba(255,165,0,0.65))"
+              : "drop-shadow(0 0 25px rgba(255,128,64,0.65))",
             animation: "pulseGlow 2.5s ease-in-out infinite",
           }}
           alt="logo"
@@ -284,68 +248,40 @@ export default function ThankYouPage() {
 
         <h1
           style={{
-            fontSize: "2.2rem",
+            fontSize: "2.4rem",
             marginBottom: 6,
             fontWeight: 900,
-            background:
-              "linear-gradient(90deg,#ffd8a6,#ffa65c,#ff7a00,#ff3b0a)",
+            background: isBasketball
+              ? "linear-gradient(90deg,#ffea80,#ffb300,#ff6a00,#ff3b00)"
+              : "linear-gradient(90deg,#ffd8a6,#ffa65c,#ff7a00,#ff3b0a)",
             WebkitBackgroundClip: "text",
             color: "transparent",
-            textShadow: "0 0 18px rgba(255,120,40,0.25)",
+            textShadow: isBasketball
+              ? "0 0 22px rgba(255,150,40,0.4)"
+              : "0 0 18px rgba(255,120,40,0.25)",
           }}
         >
           🎉 Thank You!
         </h1>
 
-        <p style={{ color: "#f3e8e0", marginBottom: 18, opacity: 0.9 }}>
+        <p
+          style={{
+            color: "#f3e8e0",
+            marginBottom: 18,
+            opacity: 0.9,
+            whiteSpace: "pre-line",
+            fontSize: isBasketball ? "1.2rem" : "1rem",
+          }}
+        >
           {message}
         </p>
-
-        {/* 🔥 ONLY SHOW FOR WHEELS */}
-        {type === "wheel" && (
-          <div
-            style={{
-              fontSize: 14,
-              lineHeight: 1.35,
-              color: "#ffe7d6",
-              background:
-                "linear-gradient(180deg, rgba(255,90,0,0.12), rgba(255,90,0,0.06))",
-              border: "1px solid rgba(255,140,80,0.35)",
-              padding: "10px 12px",
-              borderRadius: 12,
-              boxShadow: "0 0 14px rgba(255,110,20,0.18) inset",
-              marginBottom: 16,
-            }}
-          >
-            <strong>Stay right here…</strong>
-            <br />
-            At any moment, you could be chosen to{" "}
-            <strong>SPIN THE WHEEL</strong> from your phone.
-          </div>
-        )}
-
-        {/* 🔥 WHEEL REMOTE BUTTON */}
-        {type === "wheel" && !isFanWall && remoteEnabled && armed && (
-          <button
-            onClick={handleRemotePress}
-            disabled={pressing}
-            style={{
-              ...firePulseButton,
-              opacity: pressing ? 0.7 : 1,
-              cursor: pressing ? "not-allowed" : "pointer",
-              marginBottom: 14,
-            }}
-          >
-            🔥 SPIN THE WHEEL!
-          </button>
-        )}
 
         {!showCloseHint ? (
           <button
             onClick={handleClose}
             style={{
-              padding: "10px 16px",
-              borderRadius: 10,
+              padding: "12px 16px",
+              borderRadius: 12,
               background:
                 "linear-gradient(90deg,#475569,#0f172a)",
               color: "#fff",
@@ -358,7 +294,7 @@ export default function ThankYouPage() {
           </button>
         ) : (
           <p style={{ color: "#fff", fontSize: 16, marginTop: 6 }}>
-            ✅ You can now close this tab
+            You can now close this tab
           </p>
         )}
       </div>
@@ -366,13 +302,8 @@ export default function ThankYouPage() {
       {/* ANIMATIONS */}
       <style>{`
         @keyframes pulseGlow {
-          0%, 100% { filter: drop-shadow(0 0 15px rgba(255,120,40,0.5)); }
-          50% { filter: drop-shadow(0 0 35px rgba(255,160,80,0.9)); }
-        }
-        @keyframes firePulse {
-          0%   { box-shadow: 0 0 18px rgba(255,90,0,0.32), inset 0 0 10px rgba(255,170,0,0.28); transform: scale(1); }
-          50%  { box-shadow: 0 0 38px rgba(255,60,0,0.55), inset 0 0 22px rgba(255,185,0,0.42); transform: scale(1.03); }
-          100% { box-shadow: 0 0 18px rgba(255,90,0,0.32), inset 0 0 10px rgba(255,170,0,0.28); transform: scale(1); }
+          0%, 100% { filter: drop-shadow(0 0 15px rgba(255,150,40,0.55)); }
+          50% { filter: drop-shadow(0 0 35px rgba(255,200,80,0.9)); }
         }
       `}</style>
     </div>

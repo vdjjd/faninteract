@@ -31,18 +31,12 @@ export default function BasketballSubmissionPage() {
   const [game, setGame] = useState<any>(null);
   const [profile, setProfile] = useState<any>(null);
 
-  // Passcode
-  const [requirePasscode, setRequirePasscode] = useState(false);
-  const [passInput, setPassInput] = useState("");
-  const [passError, setPassError] = useState("");
-
   // Image Crop State
   const [imageSrc, setImageSrc] = useState<string | null>(null);
   const [crop, setCrop] = useState({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
   const [croppedAreaPixels, setCroppedAreaPixels] = useState<any>(null);
 
-  // Submission
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
 
@@ -61,7 +55,7 @@ export default function BasketballSubmissionPage() {
   }, [router, gameId]);
 
   /* -------------------------------------------------------------- */
-  /* LOAD GAME (Correct Supabase Join)                              */
+  /* LOAD GAME — Correct Supabase Join                              */
   /* -------------------------------------------------------------- */
   useEffect(() => {
     async function loadGame() {
@@ -87,17 +81,13 @@ export default function BasketballSubmissionPage() {
       }
 
       setGame(data);
-
-      // If later you add visibility/passcode columns, plug them in here
-      // Example:
-      // if (data.visibility === "private") setRequirePasscode(true);
     }
 
     loadGame();
   }, [gameId]);
 
   /* -------------------------------------------------------------- */
-  /* FILE UPLOAD / CROPPER                                           */
+  /* IMAGE + CROP HANDLING                                          */
   /* -------------------------------------------------------------- */
   const openCamera = () => {
     if (fileRef.current) {
@@ -160,7 +150,6 @@ export default function BasketballSubmissionPage() {
   const submitEntry = async (e: any) => {
     e.preventDefault();
     setErrorMsg("");
-    setPassError("");
 
     // Require selfie
     if (!imageSrc) {
@@ -191,7 +180,8 @@ export default function BasketballSubmissionPage() {
       },
     ]);
 
-    router.push(`/thanks/basketball/${gameId}`);
+    // FINAL FIX — Correct Thank You Redirect
+    router.push(`/thanks/${gameId}?type=basketball`);
   };
 
   if (!game || !profile) return null;
@@ -199,7 +189,7 @@ export default function BasketballSubmissionPage() {
   /* -------------------------------------------------------------- */
   /* BACKGROUND + LOGO                                              */
   /* -------------------------------------------------------------- */
-  const bg = "linear-gradient(to bottom right,#1b2735,#090a0f)";
+  const bg = "url(/BBgamebackground.png)";
 
   const displayLogo =
     game?.host?.branding_logo_url ||
@@ -252,7 +242,7 @@ export default function BasketballSubmissionPage() {
             width: "70%",
             margin: "0 auto 12px",
             display: "block",
-            filter: "drop-shadow(0 0 25px rgba(56,189,248,0.6))",
+            filter: "drop-shadow(0 0 25px rgba(255,165,0,0.6))",
           }}
         />
 
@@ -360,7 +350,7 @@ export default function BasketballSubmissionPage() {
             padding: 12,
             borderRadius: 10,
             marginTop: 20,
-            background: "linear-gradient(90deg,#0284c7,#2563eb)",
+            background: "linear-gradient(90deg,#ff8a00,#ff3d00)",
             color: "#fff",
             fontWeight: 700,
             opacity: submitting ? 0.6 : 1,
