@@ -31,6 +31,9 @@ export default function GuestSignupPage() {
   const wheelId = params.get("prizewheel");
   const pollId = params.get("poll");
 
+  // ⭐ NEW — BASKETBALL SUPPORT
+  const basketballId = params.get("basketball");
+
   const supabase = getSupabaseClient();
 
   const [wall, setWall] = useState<any>(null);
@@ -67,7 +70,7 @@ export default function GuestSignupPage() {
   }, []);
 
   /* ----------------------------------------------------------
-   * LOAD HOST + MASTER TERMS
+   * LOAD HOST + MASTER TERMS (Now includes BASKETBALL)
    * ---------------------------------------------------------- */
   useEffect(() => {
     async function loadHostForWall() {
@@ -77,7 +80,6 @@ export default function GuestSignupPage() {
         .select("background_value, host_id")
         .eq("id", wallId)
         .single();
-
       setWall(data);
       if (data?.host_id) loadHost(data.host_id);
     }
@@ -89,7 +91,6 @@ export default function GuestSignupPage() {
         .select("host_id")
         .eq("id", wheelId)
         .single();
-
       if (data?.host_id) loadHost(data.host_id);
     }
 
@@ -100,14 +101,26 @@ export default function GuestSignupPage() {
         .select("host_id")
         .eq("id", pollId)
         .single();
+      if (data?.host_id) loadHost(data.host_id);
+    }
 
+    // ⭐ NEW — Load host for Basketball Game
+    async function loadHostForBasketball() {
+      if (!basketballId) return;
+      const { data } = await supabase
+        .from("bb_games")
+        .select("host_id")
+        .eq("id", basketballId)
+        .single();
       if (data?.host_id) loadHost(data.host_id);
     }
 
     loadHostForWall();
     loadHostForWheel();
     loadHostForPoll();
-  }, [wallId, wheelId, pollId]);
+    loadHostForBasketball(); // ⭐ NEW
+
+  }, [wallId, wheelId, pollId, basketballId]);
 
   async function loadHost(hostId: string) {
     const { data: host } = await supabase
@@ -128,14 +141,13 @@ export default function GuestSignupPage() {
         .select("master_terms_markdown")
         .eq("id", host.master_id)
         .single();
-
       if (master?.master_terms_markdown)
         setMasterTerms(master.master_terms_markdown);
     }
   }
 
   /* ----------------------------------------------------------
-   * AUTO-FORWARD RETURNING GUESTS
+   * AUTO-FORWARD RETURNING GUESTS — NOW SUPPORTS BASKETBALL
    * ---------------------------------------------------------- */
   useEffect(() => {
     async function validateGuest() {
@@ -158,13 +170,16 @@ export default function GuestSignupPage() {
       if (wallId) return router.push(`/wall/${wallId}/submit`);
       if (wheelId) return router.push(`/prizewheel/${wheelId}/submit`);
       if (pollId) return router.push(`/polls/${pollId}/vote`);
+      
+      // ⭐ NEW for basketball auto-forward
+      if (basketballId) return router.push(`/basketball/${basketballId}`);
     }
 
     validateGuest();
-  }, [redirect, wallId, wheelId, pollId]);
+  }, [redirect, wallId, wheelId, pollId, basketballId]);
 
   /* ----------------------------------------------------------
-   * SUBMIT FORM
+   * SUBMIT FORM (NOW SUPPORTS BASKETBALL)
    * ---------------------------------------------------------- */
   const handleSubmit = async (e: any) => {
     e.preventDefault();
@@ -177,6 +192,7 @@ export default function GuestSignupPage() {
         wallId ||
         wheelId ||
         pollId ||
+        basketballId || // ⭐ NEW
         redirect?.match(/([0-9a-fA-F-]{36})/)?.[0];
 
       if (!targetId && redirect?.startsWith("/polls/"))
@@ -186,16 +202,19 @@ export default function GuestSignupPage() {
         wallId ? "wall" :
         wheelId ? "prizewheel" :
         pollId ? "poll" :
+        basketballId ? "basketball" : // ⭐ NEW
         "";
 
       const { profile } = await syncGuestProfile(type, targetId, form);
 
       localStorage.setItem("guest_profile", JSON.stringify(profile));
 
+      // Redirect logic
       if (redirect) router.push(redirect);
       else if (wallId) router.push(`/wall/${wallId}/submit`);
       else if (wheelId) router.push(`/prizewheel/${wheelId}/submit`);
       else if (pollId) router.push(`/polls/${pollId}/vote`);
+      else if (basketballId) router.push(`/basketball/${basketballId}`); // ⭐ NEW
       else router.push("/");
     } catch (err) {
       console.error(err);
