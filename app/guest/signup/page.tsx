@@ -11,9 +11,6 @@ import { syncGuestProfile, getOrCreateGuestDeviceId } from "@/lib/syncGuest";
 
 import TermsModal from "@/components/TermsModal";
 
-/* ----------------------------------------------------------
- * 🔥 STATE OPTIONS
- * ---------------------------------------------------------- */
 const stateOptions = [
   "AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA",
   "HI","ID","IL","IN","IA","KS","KY","LA","ME","MD",
@@ -31,7 +28,7 @@ export default function GuestSignupPage() {
   const wheelId = params.get("prizewheel");
   const pollId = params.get("poll");
 
-  // ⭐ NEW — BASKETBALL SUPPORT
+  // ⭐ NEW — Basketball support
   const basketballId = params.get("basketball");
 
   const supabase = getSupabaseClient();
@@ -44,9 +41,6 @@ export default function GuestSignupPage() {
 
   const [showTermsModal, setShowTermsModal] = useState(false);
 
-  /* ----------------------------------------------------------
-   * FORM
-   * ---------------------------------------------------------- */
   const [form, setForm] = useState({
     first_name: "",
     last_name: "",
@@ -62,16 +56,10 @@ export default function GuestSignupPage() {
   const [agree, setAgree] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
-  /* ----------------------------------------------------------
-   * Ensure device_id exists
-   * ---------------------------------------------------------- */
   useEffect(() => {
     getOrCreateGuestDeviceId();
   }, []);
 
-  /* ----------------------------------------------------------
-   * LOAD HOST + MASTER TERMS (Now includes BASKETBALL)
-   * ---------------------------------------------------------- */
   useEffect(() => {
     async function loadHostForWall() {
       if (!wallId) return;
@@ -104,7 +92,7 @@ export default function GuestSignupPage() {
       if (data?.host_id) loadHost(data.host_id);
     }
 
-    // ⭐ NEW — Load host for Basketball Game
+    // ⭐ NEW — Load basketball host
     async function loadHostForBasketball() {
       if (!basketballId) return;
       const { data } = await supabase
@@ -118,8 +106,7 @@ export default function GuestSignupPage() {
     loadHostForWall();
     loadHostForWheel();
     loadHostForPoll();
-    loadHostForBasketball(); // ⭐ NEW
-
+    loadHostForBasketball();
   }, [wallId, wheelId, pollId, basketballId]);
 
   async function loadHost(hostId: string) {
@@ -129,10 +116,7 @@ export default function GuestSignupPage() {
       .eq("id", hostId)
       .single();
 
-    if (host?.host_terms_markdown) {
-      setHostTerms(host.host_terms_markdown);
-    }
-
+    if (host?.host_terms_markdown) setHostTerms(host.host_terms_markdown);
     setHostSettings(host);
 
     if (host?.master_id) {
@@ -141,13 +125,12 @@ export default function GuestSignupPage() {
         .select("master_terms_markdown")
         .eq("id", host.master_id)
         .single();
-      if (master?.master_terms_markdown)
-        setMasterTerms(master.master_terms_markdown);
+      if (master?.master_terms_markdown) setMasterTerms(master.master_terms_markdown);
     }
   }
 
   /* ----------------------------------------------------------
-   * AUTO-FORWARD RETURNING GUESTS — NOW SUPPORTS BASKETBALL
+   * AUTO-FORWARD RETURNING GUESTS → NOW SEND TO /submit
    * ---------------------------------------------------------- */
   useEffect(() => {
     async function validateGuest() {
@@ -170,21 +153,18 @@ export default function GuestSignupPage() {
       if (wallId) return router.push(`/wall/${wallId}/submit`);
       if (wheelId) return router.push(`/prizewheel/${wheelId}/submit`);
       if (pollId) return router.push(`/polls/${pollId}/vote`);
-      
-      // ⭐ NEW for basketball auto-forward
-      if (basketballId) return router.push(`/basketball/${basketballId}`);
+      if (basketballId) return router.push(`/basketball/${basketballId}/submit`); // ⭐ FIXED
     }
 
     validateGuest();
   }, [redirect, wallId, wheelId, pollId, basketballId]);
 
   /* ----------------------------------------------------------
-   * SUBMIT FORM (NOW SUPPORTS BASKETBALL)
+   * SUBMIT FORM (Redirect to /submit for Basketball)
    * ---------------------------------------------------------- */
   const handleSubmit = async (e: any) => {
     e.preventDefault();
     if (!agree) return alert("You must agree to the Terms.");
-
     setSubmitting(true);
 
     try {
@@ -192,7 +172,7 @@ export default function GuestSignupPage() {
         wallId ||
         wheelId ||
         pollId ||
-        basketballId || // ⭐ NEW
+        basketballId ||
         redirect?.match(/([0-9a-fA-F-]{36})/)?.[0];
 
       if (!targetId && redirect?.startsWith("/polls/"))
@@ -202,19 +182,18 @@ export default function GuestSignupPage() {
         wallId ? "wall" :
         wheelId ? "prizewheel" :
         pollId ? "poll" :
-        basketballId ? "basketball" : // ⭐ NEW
+        basketballId ? "basketball" :
         "";
 
       const { profile } = await syncGuestProfile(type, targetId, form);
 
       localStorage.setItem("guest_profile", JSON.stringify(profile));
 
-      // Redirect logic
       if (redirect) router.push(redirect);
       else if (wallId) router.push(`/wall/${wallId}/submit`);
       else if (wheelId) router.push(`/prizewheel/${wheelId}/submit`);
       else if (pollId) router.push(`/polls/${pollId}/vote`);
-      else if (basketballId) router.push(`/basketball/${basketballId}`); // ⭐ NEW
+      else if (basketballId) router.push(`/basketball/${basketballId}/submit`); // ⭐ FIXED
       else router.push("/");
     } catch (err) {
       console.error(err);
@@ -224,9 +203,6 @@ export default function GuestSignupPage() {
     setSubmitting(false);
   };
 
-  /* ----------------------------------------------------------
-   * FORM FIELD HELPER
-   * ---------------------------------------------------------- */
   const renderField = (
     key: string,
     placeholder: string,
@@ -250,19 +226,15 @@ export default function GuestSignupPage() {
 
   if (!hostSettings)
     return (
-      <main className={cn("text-white flex items-center justify-center h-screen")}>
+      <main className={cn('text-white', 'flex', 'items-center', 'justify-center', 'h-screen')}>
         Loading…
       </main>
     );
 
-  /* ----------------------------------------------------------
-   * RENDER PAGE
-   * ---------------------------------------------------------- */
   return (
-    <main className={cn("relative flex items-center justify-center min-h-screen w-full text-white")}>
-      {/* BACKGROUND */}
+    <main className={cn('relative', 'flex', 'items-center', 'justify-center', 'min-h-screen', 'w-full', 'text-white')}>
       <div
-        className={cn("absolute inset-0 bg-cover bg-center")}
+        className={cn('absolute', 'inset-0', 'bg-cover', 'bg-center')}
         style={{
           backgroundImage: wall?.background_value?.includes("http")
             ? `url(${wall.background_value})`
@@ -271,9 +243,8 @@ export default function GuestSignupPage() {
         }}
       />
 
-      <div className={cn("absolute inset-0 bg-black/60 backdrop-blur-md")} />
+      <div className={cn('absolute', 'inset-0', 'bg-black/60', 'backdrop-blur-md')} />
 
-      {/* CARD */}
       <motion.div
         initial={{ opacity: 0, y: 30, scale: 0.97 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -284,18 +255,16 @@ export default function GuestSignupPage() {
           "border border-white/10 bg-white/10 backdrop-blur-lg"
         )}
       >
-        {/* LOGO */}
-        <div className={cn("flex justify-center mb-6")}>
+        <div className={cn('flex', 'justify-center', 'mb-6')}>
           <Image
             src="/faninteractlogo.png"
             alt="FanInteract"
             width={360}
             height={120}
-            className={cn("w-[240px] md:w-[320px] drop-shadow-[0_0_32px_rgba(56,189,248,0.4)]")}
+            className={cn('w-[240px]', 'md:w-[320px]', 'drop-shadow-[0_0_32px_rgba(56,189,248,0.4)]')}
           />
         </div>
 
-        {/* TITLE */}
         <motion.h2
           animate={{
             textShadow: [
@@ -305,28 +274,21 @@ export default function GuestSignupPage() {
             ],
           }}
           transition={{ duration: 2, repeat: Infinity }}
-          className={cn("text-center text-2xl font-semibold text-sky-300 mb-6")}
+          className={cn('text-center', 'text-2xl', 'font-semibold', 'text-sky-300', 'mb-6')}
         >
           Join the Fan Zone
         </motion.h2>
 
-        {/* FORM */}
         <form onSubmit={handleSubmit} className="space-y-3">
-
           {renderField("first_name", "First Name *", "text", true)}
-
           {hostSettings.require_last_name &&
             renderField("last_name", "Last Name *", "text", true)}
-
           {hostSettings.require_email &&
             renderField("email", "Email *", "email", true)}
-
           {hostSettings.require_phone &&
             renderField("phone", "Phone *", "tel", true)}
-
           {hostSettings.require_street &&
             renderField("street", "Street Address *", "text", true)}
-
           {hostSettings.require_city &&
             renderField("city", "City *", "text", true)}
 
@@ -335,9 +297,7 @@ export default function GuestSignupPage() {
               name="state"
               required
               value={form.state}
-              onChange={(e) =>
-                setForm({ ...form, state: e.target.value })
-              }
+              onChange={(e) => setForm({ ...form, state: e.target.value })}
               className={cn(
                 "w-full p-3 rounded-xl bg-black/40 border border-white/20",
                 "focus:border-sky-400 outline-none text-white"
@@ -358,11 +318,10 @@ export default function GuestSignupPage() {
           {hostSettings.require_age &&
             renderField("age", "Age *", "number", true)}
 
-          {/* TERMS CHECKBOX WITH MODAL BUTTON */}
-          <label className={cn("flex items-center gap-2 text-sm text-gray-300 mt-2")}>
+          <label className={cn('flex', 'items-center', 'gap-2', 'text-sm', 'text-gray-300', 'mt-2')}>
             <input
               type="checkbox"
-              className={cn("w-4 h-4 accent-sky-400")}
+              className={cn('w-4', 'h-4', 'accent-sky-400')}
               checked={agree}
               onChange={(e) => setAgree(e.target.checked)}
             />
@@ -370,7 +329,7 @@ export default function GuestSignupPage() {
             <button
               type="button"
               onClick={() => setShowTermsModal(true)}
-              className={cn("text-sky-400 underline")}
+              className={cn('text-sky-400', 'underline')}
             >
               Terms
             </button>
@@ -389,7 +348,6 @@ export default function GuestSignupPage() {
         </form>
       </motion.div>
 
-      {/* TERMS MODAL */}
       <TermsModal
         isOpen={showTermsModal}
         onClose={() => setShowTermsModal(false)}
