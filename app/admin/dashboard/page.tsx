@@ -1,4 +1,4 @@
-'use client';
+"use client";
 
 import { useState, useEffect, useRef } from "react";
 import { getSupabaseClient } from "@/lib/supabaseClient";
@@ -11,9 +11,9 @@ import PollGrid from "./components/PollGrid";
 import TriviaGrid from "./components/TriviaGrid";
 import SlideshowGrid from "./components/SlideshowGrid";
 
-// ⭐ NEW — Basketball imports
 import BasketballGrid from "./components/BasketballGrid";
 import CreateBasketballGameModal from "@/components/CreateBasketballGameModal";
+import BasketballOptionsModal from "@/components/BasketballOptionsModal";
 
 import CreateFanWallModal from "@/components/CreateFanWallModal";
 import CreatePrizeWheelModal from "@/components/CreatePrizeWheelModal";
@@ -45,7 +45,6 @@ export default function DashboardPage() {
   const [triviaList, setTriviaList] = useState<any[]>([]);
   const [slideshows, setSlideshows] = useState<any[]>([]);
 
-  // ⭐ NEW — BASKETBALL
   const [basketballGames, setBasketballGames] = useState<any[]>([]);
 
   const [loading, setLoading] = useState(true);
@@ -65,6 +64,11 @@ export default function DashboardPage() {
   const [selectedPoll, setSelectedPoll] = useState<any | null>(null);
   const [selectedSlideshow, setSelectedSlideshow] = useState<any | null>(null);
 
+  // ⭐ NEW — Basketball options modal
+  const [selectedBasketballGame, setSelectedBasketballGame] = useState<any | null>(null);
+  const [isBasketballOptionsOpen, setBasketballOptionsOpen] = useState(false);
+
+  // Ads Builder
   const [isCreateAdModalOpen, setCreateAdModalOpen] = useState(false);
   const [builderAdId, setBuilderAdId] = useState<string | null>(null);
   const [showBuilderModal, setShowBuilderModal] = useState(false);
@@ -226,11 +230,9 @@ export default function DashboardPage() {
   }
 
   /* ---------------------------------------------- */
-  /* NEW — Handle Trivia Creation (fix for TS error) */
+  /* TRIVIA CREATION */
   /* ---------------------------------------------- */
   async function handleGenerateTrivia(payload: any) {
-    console.log("📘 Trivia payload:", payload);
-
     const { data, error } = await supabase
       .from("trivia_cards")
       .insert({
@@ -248,15 +250,10 @@ export default function DashboardPage() {
       .select()
       .single();
 
-    if (error) {
-      console.error("❌ Trivia insert failed:", error);
-      return;
+    if (!error) {
+      await refreshTrivia();
+      setTriviaModalOpen(false);
     }
-
-    console.log("✅ Trivia created:", data);
-
-    await refreshTrivia();
-    setTriviaModalOpen(false);
   }
 
   /* ---------------------------------------------- */
@@ -291,7 +288,6 @@ export default function DashboardPage() {
         onCreateBasketballGame={() => setBasketballModalOpen(true)}
       />
 
-      {/* ---------------- TRIVIA GRID ---------------- */}
       <TriviaGrid
         trivia={triviaList}
         host={host}
@@ -299,7 +295,6 @@ export default function DashboardPage() {
         onOpenOptions={() => {}}
       />
 
-      {/* ---------------- SLIDESHOW GRID ---------------- */}
       <div className={cn("w-full max-w-6xl mt-10")}>
         <SlideshowGrid
           slideshows={slideshows}
@@ -309,7 +304,6 @@ export default function DashboardPage() {
         />
       </div>
 
-      {/* ---------------- FAN WALL GRID ---------------- */}
       <div className={cn("w-full max-w-6xl mt-10")}>
         <FanWallGrid
           walls={fanWalls}
@@ -319,7 +313,6 @@ export default function DashboardPage() {
         />
       </div>
 
-      {/* ---------------- PRIZE WHEELS ---------------- */}
       <div className={cn("w-full max-w-6xl mt-10")}>
         <PrizeWheelGrid
           wheels={prizeWheels}
@@ -335,11 +328,13 @@ export default function DashboardPage() {
           games={basketballGames}
           host={host}
           refreshBasketballGames={refreshBasketballGames}
-          onOpenOptions={() => {}}
+          onOpenOptions={(game: any) => {
+            setSelectedBasketballGame(game);
+            setBasketballOptionsOpen(true);
+          }}
         />
       </div>
 
-      {/* ---------------- POLL GRID ---------------- */}
       <div className={cn("w-full max-w-6xl mt-10")}>
         <PollGrid
           host={host}
@@ -372,13 +367,12 @@ export default function DashboardPage() {
         onPollCreated={setSelectedPoll}
       />
 
-      {/* FIXED — TRIVIA MODAL WITH REQUIRED PROP */}
       <TriviaCreationModal
         isOpen={isTriviaModalOpen}
         onClose={() => setTriviaModalOpen(false)}
         hostId={host?.id}
         refreshTrivia={refreshTrivia}
-        onGenerateTrivia={handleGenerateTrivia}   // ✅ REQUIRED PROP
+        onGenerateTrivia={handleGenerateTrivia}
       />
 
       <CreateSlideShowModal
@@ -388,7 +382,6 @@ export default function DashboardPage() {
         refreshSlideshows={refreshSlideshows}
       />
 
-      {/* ⭐ NEW — Create Basketball Game */}
       <CreateBasketballGameModal
         isOpen={isBasketballModalOpen}
         onClose={() => setBasketballModalOpen(false)}
@@ -433,7 +426,20 @@ export default function DashboardPage() {
         />
       )}
 
-      {/* ---------------- ADS MANAGER ---------------- */}
+      {/* ---------------- BASKETBALL OPTIONS MODAL ---------------- */}
+      {selectedBasketballGame && (
+        <BasketballOptionsModal
+          game={selectedBasketballGame}
+          isOpen={isBasketballOptionsOpen}
+          onClose={() => {
+            setBasketballOptionsOpen(false);
+            setSelectedBasketballGame(null);
+          }}
+          refreshBasketballGames={refreshBasketballGames}
+        />
+      )}
+
+      {/* ---------------- ADS MODAL ---------------- */}
       {isAdsModalOpen && (
         <AdsManagerModal
           host={host}

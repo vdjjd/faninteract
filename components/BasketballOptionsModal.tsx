@@ -19,26 +19,24 @@ export default function BasketballOptionsModal({
   refreshBasketballGames,
 }: BasketballOptionsModalProps) {
   const [title, setTitle] = useState("");
-  const [duration, setDuration] = useState(90); // default 90 sec
-  const [maxPlayers, setMaxPlayers] = useState(10);
+  const [duration, setDuration] = useState(90);
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   /* ------------------------------------------------------------
-     LOAD GAME DATA INTO FORM
+     Load game settings into form on modal open
   ------------------------------------------------------------ */
   useEffect(() => {
-    if (game) {
-      setTitle(game.title ?? "");
-      setDuration(game.duration_seconds ?? 90);
-      setMaxPlayers(game.max_players ?? 10);
-    }
+    if (!game) return;
+
+    setTitle(game.title ?? "");
+    setDuration(game.duration_seconds ?? 90);
   }, [game]);
 
   if (!game) return null;
 
   /* ------------------------------------------------------------
-     SAVE CHANGES
+     Save settings
   ------------------------------------------------------------ */
   async function handleSave() {
     setSaving(true);
@@ -48,15 +46,14 @@ export default function BasketballOptionsModal({
       const { error } = await supabase
         .from("bb_games")
         .update({
-          title,
+          title: title.trim(),
           duration_seconds: duration,
-          max_players: maxPlayers,
         })
         .eq("id", game.id);
 
       if (error) {
-        console.error("❌ Error updating basketball game", error);
-        setErrorMsg("Failed to save changes.");
+        console.error("❌ Failed to update game:", error);
+        setErrorMsg("Could not save changes.");
         setSaving(false);
         return;
       }
@@ -64,18 +61,18 @@ export default function BasketballOptionsModal({
       await refreshBasketballGames();
       onClose();
     } catch (err) {
-      console.error("❌ Unexpected Error", err);
-      setErrorMsg("Something went wrong.");
+      console.error("❌ Error saving game settings:", err);
+      setErrorMsg("Unexpected error occurred.");
     } finally {
       setSaving(false);
     }
   }
 
   /* ------------------------------------------------------------
-     DELETE CONFIRMATION
+     Delete game
   ------------------------------------------------------------ */
   async function handleDelete() {
-    const yes = confirm("Delete this basketball game?");
+    const yes = confirm("Are you sure you want to delete this basketball game?");
     if (!yes) return;
 
     await supabase.from("bb_games").delete().eq("id", game.id);
@@ -84,26 +81,23 @@ export default function BasketballOptionsModal({
   }
 
   /* ------------------------------------------------------------
-     RENDER
+     UI
   ------------------------------------------------------------ */
   return (
     <Modal isOpen={isOpen} onClose={onClose}>
-      {/* TITLE */}
-      <h2 className={cn("text-xl", "font-bold", "text-center", "mb-4")}>
+      <h2 className={cn("text-xl font-bold text-center mb-4")}>
         ⚙️ Basketball Game Settings
       </h2>
 
-      {/* GAME TITLE */}
+      {/* TITLE */}
       <label className={cn('block', 'text-sm', 'font-semibold', 'mb-1', 'text-white')}>
         Game Title
       </label>
       <input
         type="text"
+        className={cn('w-full', 'px-3', 'py-2', 'mb-4', 'rounded-lg', 'text-black', 'text-sm')}
         value={title}
         onChange={(e) => setTitle(e.target.value)}
-        className={cn(
-          "w-full px-3 py-2 mb-4 rounded-lg text-black text-sm"
-        )}
       />
 
       {/* DURATION */}
@@ -112,28 +106,11 @@ export default function BasketballOptionsModal({
       </label>
       <input
         type="number"
-        value={duration}
         min={20}
         max={180}
+        className={cn('w-full', 'px-3', 'py-2', 'mb-4', 'rounded-lg', 'text-black', 'text-sm')}
+        value={duration}
         onChange={(e) => setDuration(parseInt(e.target.value))}
-        className={cn(
-          "w-full px-3 py-2 mb-4 rounded-lg text-black text-sm"
-        )}
-      />
-
-      {/* MAX PLAYERS */}
-      <label className={cn('block', 'text-sm', 'font-semibold', 'mb-1', 'text-white')}>
-        Max Players
-      </label>
-      <input
-        type="number"
-        value={maxPlayers}
-        min={2}
-        max={10}
-        onChange={(e) => setMaxPlayers(parseInt(e.target.value))}
-        className={cn(
-          "w-full px-3 py-2 mb-4 rounded-lg text-black text-sm"
-        )}
       />
 
       {/* ERROR */}
@@ -142,31 +119,25 @@ export default function BasketballOptionsModal({
       )}
 
       {/* BUTTONS */}
-      <div className={cn("flex justify-center gap-3 mt-4")}>
+      <div className={cn('flex', 'justify-center', 'gap-3', 'mt-4')}>
         <button
           onClick={handleSave}
           disabled={saving}
-          className={cn(
-            "bg-green-600 hover:bg-green-700 px-4 py-2 rounded-lg font-semibold text-white"
-          )}
+          className={cn('bg-green-600', 'hover:bg-green-700', 'px-4', 'py-2', 'rounded-lg', 'font-semibold', 'text-white')}
         >
           {saving ? "Saving…" : "💾 Save"}
         </button>
 
         <button
           onClick={onClose}
-          className={cn(
-            "bg-gray-600 hover:bg-gray-700 px-4 py-2 rounded-lg font-semibold text-white"
-          )}
+          className={cn('bg-gray-600', 'hover:bg-gray-700', 'px-4', 'py-2', 'rounded-lg', 'font-semibold', 'text-white')}
         >
           ✖ Cancel
         </button>
 
         <button
           onClick={handleDelete}
-          className={cn(
-            "bg-red-700 hover:bg-red-800 px-4 py-2 rounded-lg font-semibold text-white"
-          )}
+          className={cn('bg-red-700', 'hover:bg-red-800', 'px-4', 'py-2', 'rounded-lg', 'font-semibold', 'text-white')}
         >
           🗑 Delete
         </button>

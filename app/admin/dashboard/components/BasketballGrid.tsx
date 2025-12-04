@@ -1,4 +1,4 @@
-'use client';
+"use client";
 
 import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
@@ -6,12 +6,15 @@ import { cn } from "@/lib/utils";
 
 import BasketballGameCard from "./BasketballGameCard";
 import BasketballModerationModal from "@/components/BasketballModerationModal";
+import BasketballOptionsModal from "@/components/BasketballOptionsModal";
 
 interface BasketballGridProps {
   games: any[] | undefined;
   host: any;
   refreshBasketballGames: () => Promise<void>;
-  onOpenOptions: (game: any) => void;
+
+  // ⭐ REQUIRED FIX — ADDED PROP
+  onOpenOptions?: (game: any) => void;
 }
 
 export default function BasketballGrid({
@@ -23,6 +26,10 @@ export default function BasketballGrid({
   const [localGames, setLocalGames] = useState<any[]>([]);
   const [moderationGameId, setModerationGameId] = useState<string | null>(null);
 
+  // ⭐ Options modal logic
+  const [selectedGame, setSelectedGame] = useState<any | null>(null);
+  const [isOptionsOpen, setOptionsOpen] = useState(false);
+
   const refreshTimeout = useRef<NodeJS.Timeout | null>(null);
 
   /* ------------------------------------------------------------
@@ -30,15 +37,14 @@ export default function BasketballGrid({
   ------------------------------------------------------------ */
   useEffect(() => {
     if (Array.isArray(games)) {
-      const safe = games.filter((g) => g && g.id);
-      setLocalGames([...safe]);
+      setLocalGames(games.filter((g) => g && g.id));
     } else {
       setLocalGames([]);
     }
   }, [games]);
 
   /* ------------------------------------------------------------
-     Realtime listener — bb_game_entries
+     Realtime listener for bb_game_entries → refresh games
   ------------------------------------------------------------ */
   useEffect(() => {
     if (!host?.id) return;
@@ -65,9 +71,10 @@ export default function BasketballGrid({
       )
       .subscribe();
 
-    // FIXED CLEANUP (sync only)
     return () => {
-      supabase.removeChannel(channel);
+      try {
+        supabase.removeChannel(channel);
+      } catch {}
     };
   }, [host?.id]);
 
@@ -87,14 +94,17 @@ export default function BasketballGrid({
   }
 
   /* ------------------------------------------------------------
-     GAME CONTROL ACTIONS
+     GAME ACTIONS
   ------------------------------------------------------------ */
+
   async function handleStart(gameId: string) {
     await supabase
       .from("bb_games")
       .update({
         status: "running",
         started_at: new Date().toISOString(),
+        game_running: true,
+        game_timer_start: new Date().toISOString(),
       })
       .eq("id", gameId);
 
@@ -108,6 +118,7 @@ export default function BasketballGrid({
       .update({
         status: "ended",
         ended_at: new Date().toISOString(),
+        game_running: false,
       })
       .eq("id", gameId);
 
@@ -117,8 +128,10 @@ export default function BasketballGrid({
 
   async function handleDelete(id: string) {
     setLocalGames((prev) => prev.filter((g) => g.id !== id));
+
     await supabase.from("bb_games").delete().eq("id", id);
     await broadcast("basketball_game_deleted", { id });
+
     delayedRefresh();
   }
 
@@ -134,6 +147,22 @@ export default function BasketballGrid({
   }
 
   /* ------------------------------------------------------------
+     Options Modal handlers
+  ------------------------------------------------------------ */
+  function handleOpenOptionsInternal(game: any) {
+    setSelectedGame(game);
+    setOptionsOpen(true);
+
+    // Forward upward if dashboard needs it
+    if (onOpenOptions) onOpenOptions(game);
+  }
+
+  function handleCloseOptions() {
+    setSelectedGame(null);
+    setOptionsOpen(false);
+  }
+
+  /* ------------------------------------------------------------
      Debounced refresh
   ------------------------------------------------------------ */
   function delayedRefresh() {
@@ -144,11 +173,11 @@ export default function BasketballGrid({
   }
 
   /* ------------------------------------------------------------
-     RENDER
+     RENDER UI
   ------------------------------------------------------------ */
   return (
     <div className={cn("mt-10 w-full max-w-6xl")}>
-      <h2 className={cn('text-xl', 'font-semibold', 'mb-3')}>🏀 Basketball Games</h2>
+      <h2 className={cn("text-xl font-semibold mb-3")}>🏀 Basketball Games</h2>
 
       <div
         className={cn(
@@ -156,7 +185,7 @@ export default function BasketballGrid({
         )}
       >
         {localGames.length === 0 && (
-          <p className={cn('text-gray-400', 'italic')}>No Basketball Games created yet.</p>
+          <p className={cn("text-gray-400 italic")}>No Basketball Games created yet.</p>
         )}
 
         {localGames.map((game) => (
@@ -168,15 +197,26 @@ export default function BasketballGrid({
             onDelete={handleDelete}
             onStart={handleStart}
             onStop={handleStop}
-            onOpenOptions={onOpenOptions}
+            onOpenOptions={handleOpenOptionsInternal} // ⭐ important
           />
         ))}
       </div>
 
+      {/* ⭐ MODERATION MODAL */}
       {moderationGameId && (
         <BasketballModerationModal
           gameId={moderationGameId}
           onClose={handleCloseModeration}
+        />
+      )}
+
+      {/* ⭐ OPTIONS MODAL */}
+      {selectedGame && (
+        <BasketballOptionsModal
+          game={selectedGame}
+          isOpen={isOptionsOpen}
+          onClose={handleCloseOptions}
+          refreshBasketballGames={refreshBasketballGames}
         />
       )}
     </div>

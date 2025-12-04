@@ -6,31 +6,42 @@ import { supabase } from "@/lib/supabaseClient";
 import ActiveBasketballPage from "../components/basketballActive";
 import InactiveBasketballPage from "../components/basketballinactive";
 
-export default function Page({ params }: { params: Promise<{ gameId: string }> }) {
-  // ⭐ Next.js 15 — unwrap params with use()
+export default function Page({
+  params,
+}: {
+  params: Promise<{ gameId: string }>;
+}) {
+  // ⭐ Next.js 15 unwrap
   const { gameId } = use(params);
 
   const [game, setGame] = useState<any>(null);
 
+  /* ------------------------------------------------------------
+     LOAD GAME RECORD (polling)
+  ------------------------------------------------------------ */
   useEffect(() => {
     if (!gameId) return;
 
-    const load = async () => {
+    const loadGame = async () => {
       const { data } = await supabase
         .from("bb_games")
         .select("*, host:hosts(*)")
         .eq("id", gameId)
         .single();
 
-      setGame(data);
+      if (data) setGame(data);
     };
 
-    load();
-    const interval = setInterval(load, 1500);
+    loadGame();
+
+    const interval = setInterval(loadGame, 1500);
     return () => clearInterval(interval);
   }, [gameId]);
 
-  if (!game)
+  /* ------------------------------------------------------------
+     LOADING STATE
+  ------------------------------------------------------------ */
+  if (!game) {
     return (
       <div
         style={{
@@ -46,8 +57,16 @@ export default function Page({ params }: { params: Promise<{ gameId: string }> }
         Loading…
       </div>
     );
+  }
 
-  return game.status === "running" ? (
+  /* ------------------------------------------------------------
+     SWITCH VIEW:
+     ACTIVE WALL = when game.status === "running"
+     INACTIVE WALL = all other states ("lobby", "ended")
+  ------------------------------------------------------------ */
+  const isGameRunning = game.status === "running";
+
+  return isGameRunning ? (
     <ActiveBasketballPage gameId={gameId} />
   ) : (
     <InactiveBasketballPage game={game} />
