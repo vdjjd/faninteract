@@ -41,16 +41,17 @@ export default function PrizeWheelModerationModal({
   );
   const [selectedPhoto, setSelectedPhoto] = useState<string | null>(null);
 
+  /* Updated realtime hook */
   const rt = useRealtimeChannel();
 
-  /* ✅ Toast helper */
+  /* Toast helper */
   function showToast(text: string, color = '#00ff88') {
     setToast({ text, color });
     setTimeout(() => setToast(null), 2400);
   }
 
   /* --------------------------------------------------------- */
-  /* ✅ Load Entries */
+  /* Load Entries */
   /* --------------------------------------------------------- */
   async function loadAll() {
     const { data, error } = await supabase
@@ -64,7 +65,7 @@ export default function PrizeWheelModerationModal({
   }
 
   /* --------------------------------------------------------- */
-  /* ✅ Approve / Reject / Delete Actions */
+  /* Approve / Reject / Delete Actions WITH FIXED BROADCASTING */
   /* --------------------------------------------------------- */
   async function handleApprove(id: string) {
     await supabase
@@ -76,10 +77,10 @@ export default function PrizeWheelModerationModal({
       e.map((x) => (x.id === id ? { ...x, status: 'approved' } : x))
     );
 
-    rt?.current?.send({
-      type: 'broadcast',
-      event: 'wheel_entry_updated',
-      payload: { id, status: 'approved', wheelId },
+    rt?.broadcast('wheel_entry_updated', {
+      id,
+      status: 'approved',
+      wheelId,
     });
 
     showToast('✅ Approved');
@@ -95,10 +96,10 @@ export default function PrizeWheelModerationModal({
       e.map((x) => (x.id === id ? { ...x, status: 'rejected' } : x))
     );
 
-    rt?.current?.send({
-      type: 'broadcast',
-      event: 'wheel_entry_updated',
-      payload: { id, status: 'rejected', wheelId },
+    rt?.broadcast('wheel_entry_updated', {
+      id,
+      status: 'rejected',
+      wheelId,
     });
 
     showToast('🚫 Rejected', '#ff4444');
@@ -109,17 +110,16 @@ export default function PrizeWheelModerationModal({
 
     setEntries((e) => e.filter((x) => x.id !== id));
 
-    rt?.current?.send({
-      type: 'broadcast',
-      event: 'wheel_entry_deleted',
-      payload: { id, wheelId },
+    rt?.broadcast('wheel_entry_deleted', {
+      id,
+      wheelId,
     });
 
     showToast('🗑 Deleted', '#bbb');
   }
 
   /* --------------------------------------------------------- */
-  /* ✅ Realtime sync */
+  /* Realtime sync + FIXED CLEANUP */
   /* --------------------------------------------------------- */
   useEffect(() => {
     loadAll();
@@ -141,7 +141,9 @@ export default function PrizeWheelModerationModal({
 
           if (payload.eventType === 'UPDATE') {
             setEntries((e) =>
-              e.map((x) => (x.id === payload.new.id ? (payload.new as any) : x))
+              e.map((x) =>
+                x.id === payload.new.id ? (payload.new as any) : x
+              )
             );
           }
 
@@ -154,18 +156,20 @@ export default function PrizeWheelModerationModal({
       )
       .subscribe();
 
-    return () => supabase.removeChannel(channel);
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [wheelId]);
 
   /* --------------------------------------------------------- */
-  /* ✅ Filtered lists */
+  /* Categorized Lists */
   /* --------------------------------------------------------- */
   const pending = entries.filter((x) => x.status === 'pending');
   const approved = entries.filter((x) => x.status === 'approved');
   const rejected = entries.filter((x) => x.status === 'rejected');
 
   /* --------------------------------------------------------- */
-  /* ✅ UI */
+  /* UI */
   /* --------------------------------------------------------- */
   return (
     <div
@@ -182,7 +186,7 @@ export default function PrizeWheelModerationModal({
         )}
         onClick={(e) => e.stopPropagation()}
       >
-        {/* ✅ Close */}
+        {/* Close */}
         <button
           onClick={onClose}
           className={cn('absolute', 'top-3', 'right-3', 'text-white/70', 'hover:text-white', 'text-xl')}
@@ -190,8 +194,10 @@ export default function PrizeWheelModerationModal({
           ✕
         </button>
 
-        {/* ✅ Header */}
-        <h1 className={cn('text-center', 'text-2xl', 'font-bold', 'mb-4')}>Prize Wheel Moderation</h1>
+        {/* Header */}
+        <h1 className={cn('text-center', 'text-2xl', 'font-bold', 'mb-4')}>
+          Prize Wheel Moderation
+        </h1>
 
         <Stats
           pending={pending.length}
@@ -203,6 +209,7 @@ export default function PrizeWheelModerationModal({
           <p className="text-center">Loading…</p>
         ) : (
           <>
+            {/* PENDING */}
             <Section
               title="Pending"
               color="#ffd966"
@@ -212,6 +219,7 @@ export default function PrizeWheelModerationModal({
               onImageClick={setSelectedPhoto}
             />
 
+            {/* APPROVED */}
             <Section
               title="Approved"
               color="#00ff88"
@@ -221,6 +229,7 @@ export default function PrizeWheelModerationModal({
               onImageClick={setSelectedPhoto}
             />
 
+            {/* REJECTED */}
             <Section
               title="Rejected"
               color="#ff4444"
@@ -232,20 +241,24 @@ export default function PrizeWheelModerationModal({
           </>
         )}
 
-        {/* ✅ Toast */}
+        {/* Toast */}
         {toast && (
           <div
-            className={cn('fixed', 'bottom-5', 'left-1/2', '-translate-x-1/2', 'px-4', 'py-2', 'rounded-lg', 'font-semibold')}
+            className={cn(
+              'fixed bottom-5 left-1/2 -translate-x-1/2 px-4 py-2 rounded-lg font-semibold'
+            )}
             style={{ background: toast.color }}
           >
             {toast.text}
           </div>
         )}
 
-        {/* ✅ Photo preview */}
+        {/* Photo Preview */}
         {selectedPhoto && (
           <div
-            className={cn('fixed', 'inset-0', 'bg-black/70', 'flex', 'items-center', 'justify-center', 'z-[9999]')}
+            className={cn(
+              'fixed inset-0 bg-black/70 flex items-center justify-center z-[9999]'
+            )}
             onClick={() => setSelectedPhoto(null)}
           >
             <img
@@ -260,7 +273,7 @@ export default function PrizeWheelModerationModal({
 }
 
 /* --------------------------------------------------------- */
-/* ✅ Stats Strip */
+/* Stats Strip */
 /* --------------------------------------------------------- */
 function Stats({ pending, approved, rejected }) {
   return (
@@ -273,7 +286,7 @@ function Stats({ pending, approved, rejected }) {
 }
 
 /* --------------------------------------------------------- */
-/* ✅ Section Component */
+/* FIXED Section Component */
 /* --------------------------------------------------------- */
 function Section({
   title,
@@ -284,6 +297,15 @@ function Section({
   onDelete,
   showDelete,
   onImageClick,
+}: {
+  title: string;
+  color: string;
+  entries: WheelEntry[];
+  onApprove?: (id: string) => void;
+  onReject?: (id: string) => void;
+  onDelete?: (id: string) => void;
+  showDelete?: boolean;
+  onImageClick: (src: string) => void;
 }) {
   return (
     <>
@@ -306,9 +328,9 @@ function Section({
               key={e.id}
               className={cn('flex', 'bg-[#0b0f19]', 'rounded-lg', 'overflow-hidden', 'border', 'border-[#333]', 'h-[120px]')}
             >
-              {/* ✅ Photo */}
+              {/* Photo */}
               <div
-                className={cn('flex-none', 'w-[45%]', 'cursor-pointer')}
+                className={cn('w-[45%]', 'cursor-pointer')}
                 onClick={() => e.photo_url && onImageClick(e.photo_url)}
               >
                 {e.photo_url ? (
@@ -323,7 +345,7 @@ function Section({
                 )}
               </div>
 
-              {/* ✅ Details */}
+              {/* Details */}
               <div className={cn('flex', 'flex-col', 'justify-between', 'p-2', 'w-full')}>
                 <div>
                   <strong className="text-xs">
@@ -337,24 +359,31 @@ function Section({
                   </p>
                 </div>
 
+                {/* APPROVE / REJECT */}
                 {!showDelete ? (
                   <div className={cn('flex', 'gap-1', 'text-xs')}>
-                    <button
-                      onClick={() => onApprove(e.id)}
-                      className={cn('flex-1', 'bg-green-600', 'text-white', 'rounded', 'px-1', 'py-[2px]')}
-                    >
-                      ✅
-                    </button>
-                    <button
-                      onClick={() => onReject(e.id)}
-                      className={cn('flex-1', 'bg-red-600', 'text-white', 'rounded', 'px-1', 'py-[2px]')}
-                    >
-                      🚫
-                    </button>
+                    {onApprove && (
+                      <button
+                        onClick={() => onApprove(e.id)}
+                        className={cn('flex-1', 'bg-green-600', 'text-white', 'rounded', 'px-1', 'py-[2px]')}
+                      >
+                        ✅
+                      </button>
+                    )}
+
+                    {onReject && (
+                      <button
+                        onClick={() => onReject(e.id)}
+                        className={cn('flex-1', 'bg-red-600', 'text-white', 'rounded', 'px-1', 'py-[2px]')}
+                      >
+                        🚫
+                      </button>
+                    )}
                   </div>
                 ) : (
+                  /* DELETE */
                   <button
-                    onClick={() => onDelete(e.id)}
+                    onClick={() => onDelete?.(e.id)}
                     className={cn('w-full', 'bg-[#444]', 'text-white', 'rounded', 'px-1', 'py-[2px]', 'text-xs')}
                   >
                     🗑

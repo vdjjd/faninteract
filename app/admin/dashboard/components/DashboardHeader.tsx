@@ -10,6 +10,9 @@ interface DashboardHeaderProps {
   onCreateTriviaGame: () => void;
   onCreateNewAd: () => void;
   onCreateSlideShow: () => void;
+
+  // ⭐ NEW CALLBACK
+  onCreateBasketballGame: () => void;
 }
 
 export default function DashboardHeader({
@@ -20,9 +23,9 @@ export default function DashboardHeader({
   onCreateTriviaGame,
   onCreateNewAd,
   onCreateSlideShow,
+  onCreateBasketballGame,
 }: DashboardHeaderProps) {
 
-  // ⭐ Uniform button style — matches New Slide Show Wall height
   const btn = cn(
     "px-4 py-2.5",
     "rounded-lg",
@@ -37,9 +40,8 @@ export default function DashboardHeader({
   return (
     <div className={cn('text-center', 'mb-0')}>
       
-      {/* Top Row: Ads */}
+      {/* Ads Row */}
       <div className={cn('flex', 'justify-center', 'w-full', 'mb-4', 'gap-3', 'flex-wrap')}>
-
         <button
           onClick={onOpenAds}
           className={cn(btn, "bg-indigo-600 hover:bg-indigo-700")}
@@ -53,21 +55,20 @@ export default function DashboardHeader({
         >
           ✏️ Create New Ad
         </button>
-
       </div>
 
-      {/* Main Action Buttons: 4 per row */}
+      {/* Main Grid */}
       <div className={cn('grid', 'grid-cols-4', 'gap-4', 'justify-center', 'max-w-4xl', 'mx-auto')}>
 
-        {/* Fan Zone Wall */}
+        {/* Fan Wall */}
         <button
           onClick={onCreateFanWall}
           className={cn(btn, "bg-blue-500 hover:bg-blue-600")}
         >
-           New Fan Zone Wall
+          New Fan Zone Wall
         </button>
 
-        {/* Live Poll */}
+        {/* Poll */}
         <button
           onClick={onCreatePoll}
           className={cn(btn, "bg-green-500 hover:bg-green-600")}
@@ -83,7 +84,15 @@ export default function DashboardHeader({
           🎡 New Prize Wheel
         </button>
 
-        {/* Trivia — greyed out */}
+        {/* ⭐ NEW BASKETBALL BUTTON */}
+        <button
+          onClick={onCreateBasketballGame}
+          className={cn(btn, "bg-orange-600 hover:bg-orange-700")}
+        >
+          🏀 New Basketball Game
+        </button>
+
+        {/* Trivia (restored) */}
         <button
           disabled
           className={cn(
@@ -94,7 +103,7 @@ export default function DashboardHeader({
           🧠 New Trivia Game
         </button>
 
-        {/* Slide Show Wall — directly under Fan Wall */}
+        {/* Slide Show Wall */}
         <button
           onClick={onCreateSlideShow}
           className={cn(btn, "bg-pink-600 hover:bg-pink-700")}
@@ -102,11 +111,9 @@ export default function DashboardHeader({
           🖼 New Slide Show Wall
         </button>
 
-        {/* Fillers to complete row spacing */}
+        {/* Grid fillers */}
         <div></div>
         <div></div>
-        <div></div>
-
       </div>
     </div>
   );
