@@ -192,21 +192,26 @@ export default function ShooterPage({ params }: { params: Promise<{ gameId: stri
     sendShot(power);
   }
 
-  /* UI */
+  /* ============================
+     MOBILE-RESPONSIVE UI
+  ============================ */
   return (
     <div
       style={{
         width: "100vw",
         height: "100vh",
         background: "black",
-        border: `5px solid ${laneColor}`,
+        border: `min(5px, 1vw) solid ${laneColor}`,   // scaled border
         boxSizing: "border-box",
         display: "flex",
         flexDirection: "column",
-        padding: "20px",
+        padding: "min(20px, 4vw)",                   // scaled padding
         color: "white",
         userSelect: "none",
         touchAction: "none",
+        position: "fixed",                            // lock to screen
+        top: 0,
+        left: 0,
       }}
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
@@ -222,7 +227,7 @@ export default function ShooterPage({ params }: { params: Promise<{ gameId: stri
             justifyContent: "center",
             alignItems: "center",
             color: "white",
-            fontSize: "clamp(5rem, 14vw, 12rem)",
+            fontSize: "clamp(4rem, 20vw, 12rem)",   // responsive countdown
             fontWeight: 900,
             textShadow: "0 0 60px rgba(255,0,0,0.9)",
             zIndex: 9999,
@@ -232,14 +237,34 @@ export default function ShooterPage({ params }: { params: Promise<{ gameId: stri
         </div>
       )}
 
-      {/* HEADER */}
-      <div style={{ display: "flex", justifyContent: "space-between", fontSize: "2rem", fontWeight: 900 }}>
+      {/* HEADER AREA */}
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          fontSize: "clamp(1.6rem, 7vw, 3rem)", // scales per phone size
+          fontWeight: 900,
+          marginBottom: "min(20px, 4vw)",
+        }}
+      >
         <div>P{(laneIndex ?? 0) + 1}</div>
         <div>{score}</div>
         <div>{timeLeft ?? "--"}</div>
       </div>
 
-      <div style={{ flexGrow: 1, display: "flex", justifyContent: "center", alignItems: "center", fontSize: "2.4rem", opacity: 0.8 }}>
+      {/* MAIN SWIPE AREA */}
+      <div
+        style={{
+          flexGrow: 1,
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+          fontSize: "clamp(1.8rem, 8vw, 3rem)",
+          opacity: 0.85,
+          padding: "0 4vw",
+          textAlign: "center",
+        }}
+      >
         SWIPE UP TO SHOOT
       </div>
     </div>
