@@ -56,70 +56,51 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
   const [players, setPlayers] = useState<Player[]>([]);
   const [hostLogo, setHostLogo] = useState<string | null>(null);
 
-  /* GAME TIMER */
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
   const [duration, setDuration] = useState<number>(0);
   const [timerStartedAt, setTimerStartedAt] = useState<string | null>(null);
   const [timerExpired, setTimerExpired] = useState(false);
 
-  /* COUNTDOWN */
   const [preCountdown, setPreCountdown] = useState<number | null>(null);
 
-  /* ========================================================================
-     Listen for popup "start_game" (dashboard → wall)
-  ======================================================================== */
   useEffect(() => {
     function onMessage(e: any) {
       if (e.data?.type === "start_game") {
-        console.log("🔥 WALL RECEIVED postMessage start_game");
         setPreCountdown(10);
       }
     }
-
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
   }, []);
 
-  /* ========================================================================
-     Realtime broadcast start_countdown (dashboard → shooters + wall)
-  ======================================================================== */
   useEffect(() => {
     const channel = supabase
       .channel(`basketball-${gameId}`)
-      .on("broadcast", { event: "start_countdown" }, () => {
-        console.log("🔥 WALL RECEIVED realtime start_countdown");
-        setPreCountdown(10);
-      })
+      .on("broadcast", { event: "start_countdown" }, () =>
+        setPreCountdown(10)
+      )
       .subscribe();
 
     return () => {
-      supabase.removeChannel(channel).catch(() => {});
+      try {
+        supabase.removeChannel(channel);
+      } catch {}
     };
   }, [gameId]);
 
-  /* ========================================================================
-     Countdown tick
-  ======================================================================== */
   useEffect(() => {
     if (preCountdown === null) return;
 
     if (preCountdown <= 0) {
-      console.log("⏱ Countdown finished → START GAME");
       setPreCountdown(null);
       beginGameTimer();
       return;
     }
 
-    const t = setTimeout(
-      () => setPreCountdown((n) => (n !== null ? n - 1 : null)),
-      1000
-    );
+    const t = setTimeout(() => setPreCountdown((n) => n! - 1), 1000);
     return () => clearTimeout(t);
   }, [preCountdown]);
 
-  /* ========================================================================
-     PATCHED: loadTimer — handles 4 states: lobby, countdown, running, ended
-  ======================================================================== */
   async function loadTimer() {
     const { data } = await supabase
       .from("bb_games")
@@ -131,51 +112,35 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
 
     setDuration(data.duration_seconds);
 
-    /* -------------------------------
-       STATE 1 → LOBBY (not running)
-    ------------------------------- */
     if (!data.game_running && preCountdown === null && !data.game_timer_start) {
       setTimerStartedAt(null);
       setTimeLeft(data.duration_seconds);
       return;
     }
 
-    /* -------------------------------
-       STATE 2 → COUNTDOWN
-    ------------------------------- */
     if (preCountdown !== null) {
       setTimerStartedAt(null);
       setTimeLeft(data.duration_seconds);
       return;
     }
 
-    /* -------------------------------
-       STATE 3 → RUNNING GAME
-    ------------------------------- */
     if (data.game_running && data.game_timer_start) {
       setTimerStartedAt(data.game_timer_start);
-
       const now = Date.now();
       const start = new Date(data.game_timer_start).getTime();
-      const elapsed = Math.floor((now - start) / 1000);
-      const remaining = data.duration_seconds - elapsed;
-
+      const remaining =
+        data.duration_seconds - Math.floor((now - start) / 1000);
       setTimeLeft(Math.max(remaining, 0));
       return;
     }
 
-    /* -------------------------------
-       STATE 4 → GAME ENDED
-       (winner must show)
-    ------------------------------- */
     if (!data.game_running && data.game_timer_start) {
       const now = Date.now();
       const start = new Date(data.game_timer_start).getTime();
-      const elapsed = Math.floor((now - start) / 1000);
-      const remaining = data.duration_seconds - elapsed;
-
+      const remaining =
+        data.duration_seconds - Math.floor((now - start) / 1000);
       setTimerStartedAt(data.game_timer_start);
-      setTimeLeft(Math.max(remaining, 0)); // will be 0
+      setTimeLeft(Math.max(remaining, 0));
       return;
     }
   }
@@ -186,9 +151,6 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
     return () => clearInterval(t);
   }, []);
 
-  /* ========================================================================
-     Local tick
-  ======================================================================== */
   useEffect(() => {
     if (preCountdown !== null) return;
     if (!timerStartedAt || timeLeft === null) return;
@@ -198,20 +160,12 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
       return;
     }
 
-    const t = setTimeout(
-      () => setTimeLeft((t) => (t !== null ? t - 1 : null)),
-      1000
-    );
+    const t = setTimeout(() => setTimeLeft((t) => t! - 1), 1000);
     return () => clearTimeout(t);
   }, [timeLeft, timerStartedAt, preCountdown]);
 
-  /* ========================================================================
-     Start the actual game timer (only after countdown)
-  ======================================================================== */
   async function beginGameTimer() {
     const now = new Date().toISOString();
-
-    console.log("⏱ beginGameTimer → game_running TRUE");
 
     await supabase
       .from("bb_games")
@@ -226,9 +180,6 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
     setTimeLeft(duration);
   }
 
-  /* ========================================================================
-     LOAD PLAYERS
-  ======================================================================== */
   function mapRowToPlayer(row: DBPlayerRow): Player {
     return {
       id: row.id,
@@ -254,9 +205,6 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
     loadPlayers();
   }, [gameId]);
 
-  /* ========================================================================
-     REALTIME PLAYER UPDATES (patched cleanup)
-  ======================================================================== */
   useEffect(() => {
     const channel = supabase
       .channel(`bb_game_players_${gameId}`)
@@ -279,11 +227,11 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
           const mapped = mapRowToPlayer(row);
 
           setPlayers((prev) => {
-            const idx = prev.findIndex((p) => p.id === mapped.id);
+            const idx = prev.findIndex((x) => x.id === mapped.id);
             if (idx === -1) return [...prev, mapped];
-            const copy = [...prev];
-            copy[idx] = mapped;
-            return copy;
+            const cp = [...prev];
+            cp[idx] = mapped;
+            return cp;
           });
         }
       )
@@ -296,9 +244,6 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
     };
   }, [gameId]);
 
-  /* ========================================================================
-     HOST LOGO
-  ======================================================================== */
   useEffect(() => {
     async function loadLogo() {
       const { data: game } = await supabase
@@ -327,9 +272,6 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
     loadLogo();
   }, [gameId]);
 
-  /* ========================================================================
-     WINNER CALCULATION
-  ======================================================================== */
   let winningCells: number[] = [];
   if (timerExpired) {
     const max = Math.max(...players.map((p) => p.score), 0);
@@ -343,50 +285,65 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
     return `${m}:${s.toString().padStart(2, "0")}`;
   }
 
-  /* ========================================================================
-     BALL ANIMATION
-  ======================================================================== */
+  /* ============================================================
+     BALL ARC ANIMATION (NEW)
+============================================================ */
   const [ballAnimations, setBallAnimations] = useState(
-    Array(10).fill({ active: false, y: 0, power: 0 })
+    Array(10).fill({
+      active: false,
+      x: 0,
+      y: 0,
+      startTime: 0,
+      duration: 0,
+    })
   );
 
   function animateShot(lane: number, power: number) {
+    const duration = 600 + power * 500;
+    const startTime = performance.now();
+    const peak = 0.5;
+
     setBallAnimations((prev) => {
-      const next = [...prev];
-      next[lane] = { active: true, y: 0, power };
-      return next;
+      const n = [...prev];
+      n[lane] = { active: true, x: 0, y: 0, startTime, duration };
+      return n;
     });
 
-    let y = 0;
-    const interval = setInterval(() => {
-      y += power * 4;
-
+    function step() {
       setBallAnimations((prev) => {
-        const next = [...prev];
-        next[lane].y = y;
-        return next;
+        const n = [...prev];
+        const b = n[lane];
+        if (!b.active) return n;
+
+        const now = performance.now();
+        const progress = (now - b.startTime) / b.duration;
+
+        if (progress >= 1) {
+          n[lane] = { active: false, x: 0, y: 0, startTime: 0, duration: 0 };
+          return n;
+        }
+
+        const y = progress * 90 + 4;
+
+        const arcAmount = 1 - Math.abs(progress - peak) / peak;
+        const x = arcAmount * 22;
+
+        n[lane] = { ...b, x, y };
+        return n;
       });
 
-      if (y >= 100) {
-        clearInterval(interval);
-        setBallAnimations((prev) => {
-          const next = [...prev];
-          next[lane] = { active: false, y: 0, power: 0 };
-          return next;
-        });
-      }
-    }, 16);
+      requestAnimationFrame(step);
+    }
+
+    requestAnimationFrame(step);
   }
 
-  /* ========================================================================
-     Listen for shot_fired (patched cleanup)
-  ======================================================================== */
   useEffect(() => {
     const channel = supabase
       .channel(`basketball-${gameId}`)
-      .on("broadcast", { event: "shot_fired" }, (payload) => {
-        animateShot(payload.payload.lane_index, payload.payload.power);
-      })
+      .on("broadcast", { event: "shot_fired" }, (payload) =>
+        animateShot(payload.payload.lane_index, payload.payload.power)
+      )
       .subscribe();
 
     return () => {
@@ -396,20 +353,12 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
     };
   }, [gameId]);
 
-  /* ========================================================================
-     FULLSCREEN
-  ======================================================================== */
   function toggleFullscreen() {
     if (!document.fullscreenElement) {
       document.documentElement.requestFullscreen().catch(() => {});
-    } else {
-      document.exitFullscreen();
-    }
+    } else document.exitFullscreen();
   }
 
-  /* ========================================================================
-     RENDER UI
-  ======================================================================== */
   return (
     <div
       style={{
@@ -424,28 +373,25 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
         position: "relative",
       }}
     >
-      {/* COUNTDOWN */}
       {preCountdown !== null && (
         <div
           style={{
             position: "fixed",
             inset: 0,
-            background: "rgba(0,0,0,0.88)",
+            background: "rgba(0,0,0,0.90)",
             display: "flex",
             justifyContent: "center",
             alignItems: "center",
-            zIndex: 9999,
-            color: "white",
             fontSize: "clamp(4rem, 10vw, 12rem)",
+            color: "white",
             fontWeight: 900,
-            textShadow: "0 0 60px rgba(255,0,0,0.9)",
+            zIndex: 9999,
           }}
         >
           {preCountdown > 0 ? preCountdown : "START!"}
         </div>
       )}
 
-      {/* GRID */}
       <div
         style={{
           width: "94vw",
@@ -457,9 +403,9 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
         }}
       >
         {Array.from({ length: 10 }).map((_, i) => {
-          const player = players.find((p) => p.cell === i);
+          const p = players.find((x) => x.cell === i);
           const borderColor = CELL_COLORS[i];
-          const isWinner = winningCells.includes(i);
+          const b = ballAnimations[i];
 
           return (
             <div
@@ -472,31 +418,19 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
                 backgroundImage: "url('/BBgamebackground.png')",
                 backgroundSize: "cover",
                 backgroundPosition: "center",
-                animation: isWinner
-                  ? "winnerBlink 0.18s infinite alternate"
-                  : undefined,
               }}
             >
-              <style>{`
-                @keyframes winnerBlink {
-                  from { box-shadow: 0 0 6px ${borderColor}; }
-                  to { box-shadow: 0 0 28px ${borderColor}; }
-                }
-              `}</style>
-
               {/* TIMER */}
               <div
                 style={{
                   position: "absolute",
-                  top: 6,
                   right: 10,
+                  top: 6,
                   padding: "4px 8px",
-                  borderRadius: 6,
                   background: "rgba(0,0,0,0.55)",
+                  borderRadius: 6,
                   color: "white",
-                  fontSize: "1rem",
                   fontFamily: "Digital, monospace",
-                  fontWeight: 700,
                 }}
               >
                 {fmt(timeLeft)}
@@ -506,95 +440,29 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
               <div
                 style={{
                   position: "absolute",
-                  top: 6,
                   left: 10,
+                  top: 6,
                   padding: "4px 10px",
-                  borderRadius: 8,
                   background: borderColor,
+                  borderRadius: 8,
                   color: "white",
-                  fontWeight: 800,
-                  fontSize: "1rem",
                 }}
               >
                 P{i + 1}
               </div>
 
-              {/* BACKBOARD */}
-              <div
-                style={{
-                  position: "absolute",
-                  top: "4%",
-                  left: "50%",
-                  transform: "translateX(-50%)",
-                  width: `${35 * BACKBOARD_SCALE}%`,
-                  height: `${7 * BACKBOARD_SCALE}vh`,
-                  background: "rgba(255,255,255,0.08)",
-                  border: "2px solid rgba(255,0,0,0.45)",
-                  borderRadius: 6,
-                  backdropFilter: "blur(4px)",
-                  display: "flex",
-                  justifyContent: "center",
-                  alignItems: "center",
-                }}
-              >
-                {hostLogo && (
-                  <img
-                    src={hostLogo}
-                    style={{
-                      maxWidth: "72%",
-                      maxHeight: "72%",
-                      objectFit: "contain",
-                      opacity: 0.3,
-                      transform: "translateY(-9%)",
-                    }}
-                  />
-                )}
-              </div>
-
-              {/* RIM */}
-              <div
-                style={{
-                  position: "absolute",
-                  top: `calc(2% + ${7 * BACKBOARD_SCALE}vh - 0.3vh)`,
-                  left: "50%",
-                  transform: "translateX(-50%)",
-                  width: `${18 * RIM_SCALE}%`,
-                  height: "4px",
-                  background: "#ff5a00",
-                  borderRadius: 4,
-                }}
-              />
-
-              {/* NET */}
-              <div
-                style={{
-                  position: "absolute",
-                  top: `calc(2% + ${7 * BACKBOARD_SCALE}vh + 0.4vh)`,
-                  left: "50%",
-                  width: `${15 * RIM_SCALE}%`,
-                  height: "3vh",
-                  transform: "translateX(-50%)",
-                  background:
-                    "repeating-linear-gradient(135deg, white 0, white 2px, transparent 3px 6px)",
-                  opacity: 0.4,
-                  borderRadius: "0 0 10px 10px",
-                }}
-              />
-
-              {/* BALL */}
-              {ballAnimations[i].active ? (
+              {/* BALL ARC */}
+              {b.active ? (
                 <div
                   style={{
                     position: "absolute",
-                    bottom: `${ballAnimations[i].y}%`,
-                    left: "50%",
-                    transform: "translateX(-50%)",
+                    bottom: `${b.y}%`,
+                    left: `calc(50% - ${b.x}px)`,
                     width: 30,
                     height: 30,
                     borderRadius: "50%",
-                    background:
-                      "radial-gradient(circle,#ff9d00,#ff6100)",
-                    transition: "bottom 0.016s linear",
+                    background: "radial-gradient(circle,#ff9d00,#ff6100)",
+                    transform: "translateX(-50%)",
                     zIndex: 20,
                   }}
                 />
@@ -604,13 +472,12 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
                     position: "absolute",
                     bottom: "4%",
                     left: "50%",
-                    transform: "translateX(-50%)",
                     width: 30,
                     height: 30,
+                    transform: "translateX(-50%)",
                     borderRadius: "50%",
-                    background:
-                      "radial-gradient(circle,#ff9d00,#ff6100)",
-                    opacity: 0.5,
+                    background: "radial-gradient(circle,#ff9d00,#ff6100)",
+                    opacity: 0.6,
                   }}
                 />
               )}
@@ -624,13 +491,13 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
                   width: SELFIE_SIZE,
                   height: SELFIE_SIZE,
                   borderRadius: "50%",
-                  border: `3px solid ${borderColor}`,
                   overflow: "hidden",
+                  border: `3px solid ${borderColor}`,
                 }}
               >
-                {player?.selfie_url ? (
+                {p?.selfie_url ? (
                   <img
-                    src={player.selfie_url}
+                    src={p.selfie_url}
                     style={{ width: "100%", height: "100%" }}
                   />
                 ) : (
@@ -639,10 +506,10 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
                       width: "100%",
                       height: "100%",
                       background: "#444",
+                      color: "#bbb",
                       display: "flex",
                       justifyContent: "center",
                       alignItems: "center",
-                      color: "#bbb",
                     }}
                   >
                     ?
@@ -654,15 +521,14 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
               <div
                 style={{
                   position: "absolute",
-                  bottom: "-1%",
                   right: "2%",
+                  bottom: "-1%",
+                  color: "#ff2d2d",
                   fontFamily: "Digital, monospace",
                   fontSize: `${2.5 * SCORE_FONT_SCALE}rem`,
-                  color: "#ff2d2d",
-                  fontWeight: 900,
                 }}
               >
-                {player?.score ?? 0}
+                {p?.score ?? 0}
               </div>
 
               {/* NAME */}
@@ -672,14 +538,13 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
                   bottom: "1.5%",
                   left: "2%",
                   color: "white",
-                  fontSize: "1rem",
                   fontWeight: 700,
                 }}
               >
-                {player
-                  ? `${player.nickname?.split(" ")[0] || ""} ${
-                      player.nickname?.split(" ")[1]
-                        ? player.nickname.split(" ")[1][0] + "."
+                {p
+                  ? `${p.nickname.split(" ")[0] || ""} ${
+                      p.nickname.split(" ")[1]
+                        ? p.nickname.split(" ")[1][0] + "."
                         : ""
                     }`
                   : "Open Slot"}
@@ -689,24 +554,22 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
         })}
       </div>
 
-      {/* FULLSCREEN BUTTON */}
       <div
         onClick={toggleFullscreen}
         style={{
           position: "absolute",
-          bottom: "2vh",
           right: "2vw",
+          bottom: "2vh",
           width: 42,
           height: 42,
           borderRadius: 12,
           background: "rgba(255,255,255,0.1)",
-          border: "1px solid rgba(255,255,255,0.25)",
-          cursor: "pointer",
+          border: "1px solid rgba(255,255,255,0.3)",
+          color: "white",
           display: "flex",
-          alignItems: "center",
           justifyContent: "center",
-          color: "#fff",
-          fontSize: "1.4rem",
+          alignItems: "center",
+          cursor: "pointer",
           zIndex: 50,
         }}
       >
