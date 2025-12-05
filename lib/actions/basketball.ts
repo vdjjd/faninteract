@@ -7,13 +7,13 @@ export async function createBasketballGame(
   fields: { title: string }
 ) {
   try {
-    // ✅ MUST generate UUID manually (client-side defaults do NOT fire)
+    // MUST generate UUID manually
     const newId = crypto.randomUUID();
 
     const { data, error } = await supabase
       .from("bb_games")
       .insert({
-        id: newId,                    // ⭐ REQUIRED FIX
+        id: newId,                    // REQUIRED FIX
         host_id: hostId,
         title: fields.title,
         status: "lobby",
@@ -21,7 +21,7 @@ export async function createBasketballGame(
         duration_seconds: 90,
         game_running: false,
         game_timer_start: null,
-        background_brightness: 100,   // default brightness
+        background_brightness: 100,
       })
       .select()
       .single();
