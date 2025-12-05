@@ -28,23 +28,15 @@ export default function ActiveBasketballPage({
   const preCountdown = useCountdown(gameId);
   const players = usePlayers(gameId);
   const { timeLeft, timerExpired } = useGameTimer(gameId, preCountdown);
-  const ballAnimations = useShots(gameId, players);
+  const laneBalls = useShots(gameId, players);    // ← MULTI-BALL ARRAY
 
-  /* Host logo is optional — replace later if needed */
   const hostLogo = "/faninteractlogo.png";
 
-  /* -----------------------------------------------------------
-     WINNER CALCULATION
-     - true max score among all active players
-     - ensures winner highlight works
-  ----------------------------------------------------------- */
+  /* Winner calculation */
   const maxScore = players.length
     ? Math.max(...players.map((p) => p.score), 0)
     : 0;
 
-  /* -----------------------------------------------------------
-     RENDER UI GRID
-  ----------------------------------------------------------- */
   return (
     <div
       style={{
@@ -59,10 +51,8 @@ export default function ActiveBasketballPage({
         position: "relative",
       }}
     >
-      {/* COUNTDOWN OVERLAY */}
       <Countdown preCountdown={preCountdown} />
 
-      {/* 10-CELL GRID */}
       <div
         style={{
           width: "94vw",
@@ -76,25 +66,25 @@ export default function ActiveBasketballPage({
         {Array.from({ length: 10 }).map((_, i) => {
           const player = players.find((p) => p.cell === i);
           const score = player?.score ?? 0;
+          const balls = laneBalls[i];   // ← MULTI-BALL ARRAY
 
           return (
             <PlayerCard
               key={i}
               index={i}
               player={player}
-              ball={ballAnimations[i]}
+              balls={balls}              // ← PASS ARRAY INSTEAD OF SINGLE BALL
               timeLeft={timeLeft}
               score={score}
               borderColor={CELL_COLORS[i]}
               timerExpired={timerExpired}
               hostLogo={hostLogo}
-              maxScore={maxScore}        // ⭐ PASS maxScore HERE
+              maxScore={maxScore}
             />
           );
         })}
       </div>
 
-      {/* FULLSCREEN BUTTON */}
       <div
         onClick={() => {
           if (!document.fullscreenElement) {

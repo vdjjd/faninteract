@@ -13,32 +13,24 @@ const SELFIE_SIZE = 42;
 export function PlayerCard({
   index,
   player,
-  ball,
+  balls,        // ← MULTIPLE BALLS
   timeLeft,
   score,
   borderColor,
   timerExpired,
   hostLogo,
-  maxScore,       // ⭐ FIX: receives the true maxScore
+  maxScore,
 }: {
   index: number;
   player: Player | undefined;
-  ball: BallState;
+  balls: BallState[];      // ← FIXED TYPE
   timeLeft: number | null;
   score: number;
   borderColor: string;
   timerExpired: boolean;
   hostLogo: string | null;
-  maxScore: number;   // ⭐ FIX
+  maxScore: number;
 }) {
-
-  /* -----------------------------------------------------------
-     WINNER LOGIC (correct)
-     - timer must be expired
-     - player must exist
-     - player.score must match maxScore
-     - maxScore must be > 0 (so 0–0 ties don't highlight)
-  ----------------------------------------------------------- */
   const isWinner =
     timerExpired &&
     player &&
@@ -81,7 +73,7 @@ export function PlayerCard({
           : "--:--"}
       </div>
 
-      {/* SLOT LABEL */}
+      {/* LABEL */}
       <div
         style={{
           position: "absolute",
@@ -140,14 +132,6 @@ export function PlayerCard({
           height: "4px",
           background: "#ff5a00",
           borderRadius: 4,
-          animation:
-            ball.rimShake === "soft"
-              ? "rimShakeSoft 0.28s ease"
-              : ball.rimShake === "medium"
-              ? "rimShakeMedium 0.30s ease"
-              : ball.rimShake === "hard"
-              ? "rimShakeHard 0.34s ease"
-              : "none",
         }}
       />
 
@@ -164,17 +148,13 @@ export function PlayerCard({
             "repeating-linear-gradient(135deg, white 0, white 2px, transparent 3px 6px)",
           opacity: 0.5,
           borderRadius: "0 0 10px 10px",
-          animation:
-            ball.netStage === 1
-              ? "netFlutterMedium 0.28s ease"
-              : ball.netStage === 2
-              ? "netFlutterHard 0.35s ease"
-              : "none",
         }}
       />
 
-      {/* BALL */}
-      <Ball ball={ball} />
+      {/* MULTI-BALL RENDER */}
+      {balls.map((b) =>
+        b.active ? <Ball key={b.id} ball={b} /> : null
+      )}
 
       {/* SELFIE */}
       <div
@@ -190,10 +170,7 @@ export function PlayerCard({
         }}
       >
         {player?.selfie_url ? (
-          <img
-            src={player.selfie_url}
-            style={{ width: "100%", height: "100%" }}
-          />
+          <img src={player.selfie_url} style={{ width: "100%", height: "100%" }} />
         ) : (
           <div
             style={{
@@ -223,7 +200,7 @@ export function PlayerCard({
           fontWeight: 900,
         }}
       >
-        {player?.score ?? 0}
+        {score}
       </div>
 
       {/* NAME */}
@@ -240,7 +217,7 @@ export function PlayerCard({
         {player
           ? `${player.nickname?.split(" ")[0] || ""} ${
               player.nickname?.split(" ")[1]
-                ? player.nickname.split("")[1][0] + "."
+                ? player.nickname.split(" ")[1][0] + "."
                 : ""
             }`
           : "Open Slot"}
