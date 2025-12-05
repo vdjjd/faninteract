@@ -3,10 +3,8 @@
 import { useState, useEffect } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
-/* NEW 80/20 PHYSICS ENGINE */
 import {
   computeArcY,
-  computeArcX,
   detectRimCollision,
   detectBackboardCollision,
   rimDeflect,
@@ -25,6 +23,7 @@ interface Player {
 
 export interface BallState {
   active: boolean;
+  phase: "forward" | "return";      // NEW
   progress: number;
   power: number;
   spin: number;
@@ -35,176 +34,168 @@ export interface BallState {
   netStage: 0 | 1 | 2;
 }
 
-/* ------------------------------------------------------------
-   REAL SCREEN DEPTH — RIM MUST BE DEEPER
------------------------------------------------------------- */
-const RIM_Y = 48;     // was 24 → WAY too close
-const RIM_WIDTH = 14;
+const RIM_Y = 48;   // ← YOU SAID: Use the layout value
+const FLOOR_Y = 4;  // ← Bottom of cell
+const BALL_START_SCALE = 1;
+const BALL_FAR_SCALE = 0.45;
 
 /* ============================================================
-   HOOK: Shot Listener + Ball Animation Engine
+   MAIN HOOK
 ============================================================ */
-
 export function useShots(gameId: string, players: Player[]) {
+
   const [ballAnimations, setBallAnimations] = useState<BallState[]>(
     Array.from({ length: 10 }, () => ({
       active: false,
+      phase: "forward",
       progress: 0,
       power: 0,
       spin: 0,
       x: 0,
-      y: 4,
-      scale: 1,
+      y: FLOOR_Y,
+      scale: BALL_START_SCALE,
       rimShake: null,
       netStage: 0,
     }))
   );
 
-  /* -----------------------------------------------------------
-     ANIMATE SHOT
-  ----------------------------------------------------------- */
+  /* ============================================================
+     ANIMATE SINGLE SHOT
+  ============================================================= */
   function animateShot(lane: number, power: number) {
     if (lane < 0 || lane > 9) return;
 
     const spin = power;
-    const totalSteps = 62;
-    let step = 0;
 
-    // Reset lane ball
-    setBallAnimations((prev) => {
+    setBallAnimations(prev => {
       const next = [...prev];
       next[lane] = {
         active: true,
+        phase: "forward",      // start by going toward the rim
         progress: 0,
         power,
         spin,
         x: 0,
-        y: 4,
-        scale: 1,
+        y: FLOOR_Y,
+        scale: BALL_START_SCALE,
         rimShake: null,
         netStage: 0,
       };
       return next;
     });
 
+    let step = 0;
+    const totalSteps = 70;
+
     const interval = setInterval(() => {
       step++;
-      const progress = step / totalSteps;
+      let progress = step / totalSteps;
 
-      /* --------------------------------------------------------
-         NEW TRAJECTORY (deep, realistic)
-      -------------------------------------------------------- */
-      const arcY = computeArcY(progress, power); // true parabola
-      let y = 4 + arcY;
-
-      let x = computeArcX(progress, power, spin); // forward + curve
-
-      const scale = 1 - progress * 0.45;
-
-      /* --------------------------------------------------------
-         PHYSICAL OBJECTS
-      -------------------------------------------------------- */
-      const rim = { x: 0, y: RIM_Y, width: RIM_WIDTH };
-      const board = { x: 0, y: 36, width: 40 }; 
-      // moved board deeper (was 18)
-
-      /* --------------------------------------------------------
-         20% ARCADE RIM ASSIST
-      -------------------------------------------------------- */
-      x += rimAssist({ x, y }, rim);
-
-      /* --------------------------------------------------------
-         BACKBOARD COLLISION
-      -------------------------------------------------------- */
-      if (detectBackboardCollision({ x, y }, 18 * scale, board)) {
-        x += bounceHorizontal(x, power);
-        y += bounceVertical(y, power);
-      }
-
-      /* --------------------------------------------------------
-         RIM COLLISION + RATTLE
-      -------------------------------------------------------- */
-      const rimHit = detectRimCollision({ x, y }, 18 * scale, rim);
-
-      if (rimHit) {
-        const deflect = rimDeflect(x, rim.x, spin);
-
-        if (lipOutChance(power, spin)) {
-          x += deflect;
-          y += rimRattle(power);
-        } else {
-          x += deflect * 0.5;
-          y += rimRattle(power) * 0.5;
-        }
-      }
-
-      /* --------------------------------------------------------
-         AUTO-SCORE WINDOW
-      -------------------------------------------------------- */
-      if (progress > 0.82 && progress < 0.93) {
-        const player = players.find((p) => p.cell === lane);
-        if (player) {
-          supabase.from("bb_game_players")
-            .update({ score: player.score + 1 })
-            .eq("id", player.id);
-        }
-      }
-
-      /* --------------------------------------------------------
-         END ANIMATION
-      -------------------------------------------------------- */
-      if (step >= totalSteps) {
-        clearInterval(interval);
-
-        setBallAnimations((prev) => {
-          const next = [...prev];
-          next[lane] = {
-            active: false,
-            progress: 0,
-            power: 0,
-            spin: 0,
-            x: 0,
-            y: 4,
-            scale: 1,
-            rimShake: null,
-            netStage: 0,
-          };
-          return next;
-        });
-
-        return;
-      }
-
-      /* --------------------------------------------------------
-         FRAME UPDATE
-      -------------------------------------------------------- */
-      setBallAnimations((prev) => {
+      setBallAnimations(prev => {
         const next = [...prev];
-        next[lane] = {
-          active: true,
-          progress,
-          power,
-          spin,
-          x,
-          y,
-          scale,
-          rimShake: rimHit
-            ? power < 0.33
-              ? "soft"
-              : power < 0.66
-              ? "medium"
-              : "hard"
-            : null,
-          netStage: rimHit ? (power < 0.66 ? 1 : 2) : 0,
-        };
+        const ball = next[lane];
+
+        if (!ball.active) return next;
+
+        /* --------------------------------------------------------
+           PHASE 1: BALL MOVES TOWARD RIM (shrinks)
+        -------------------------------------------------------- */
+        if (ball.phase === "forward") {
+          const arc = computeArcY(progress, power);  // vertical arc
+
+          ball.y = FLOOR_Y + (RIM_Y - FLOOR_Y) * progress - arc;
+
+          // Ball shrinks as it moves “into the screen”
+          ball.scale = BALL_START_SCALE - progress * (BALL_START_SCALE - BALL_FAR_SCALE);
+
+          // Small spin drift only
+          ball.x = spin * progress * 4;
+
+          const rim = { x: 0, y: RIM_Y, width: 14 };
+          const board = { x: 0, y: RIM_Y - 6, width: 40 };
+
+          // Rim collisions
+          const rimHit = detectRimCollision({ x: ball.x, y: ball.y }, 18 * ball.scale, rim);
+
+          if (rimHit) {
+            if (lipOutChance(power, spin)) {
+              ball.x += rimDeflect(ball.x, rim.x, spin);
+              ball.y += rimRattle(power);
+            } else {
+              ball.x += rimDeflect(ball.x, rim.x, spin) * 0.5;
+              ball.y += rimRattle(power) * 0.4;
+            }
+
+            // Begin “return” phase shortly after rim contact
+            ball.phase = "return";
+            ball.progress = 0;
+          }
+
+          // Backboard
+          if (detectBackboardCollision({ x: ball.x, y: ball.y }, 18 * ball.scale, board)) {
+            ball.y += bounceVertical(ball.y, power);
+          }
+
+          // Score window
+          if (progress > 0.8 && progress < 0.95) {
+            const player = players.find(p => p.cell === lane);
+            if (player) {
+              supabase.from("bb_game_players")
+                .update({ score: player.score + 1 })
+                .eq("id", player.id);
+            }
+          }
+
+          // Switch to return at the peak if no rim hit
+          if (progress >= 1) {
+            ball.phase = "return";
+            ball.progress = 0;
+          }
+
+          return next;
+        }
+
+        /* --------------------------------------------------------
+           PHASE 2: BALL RETURNS TOWARD PLAYER (grows)
+        -------------------------------------------------------- */
+        if (ball.phase === "return") {
+          ball.progress += 0.03;
+
+          if (ball.progress > 1) ball.progress = 1;
+
+          // interpolate from rim back to floor
+          ball.y = RIM_Y + (FLOOR_Y - RIM_Y) * ball.progress;
+
+          // grow ball back to full scale
+          ball.scale = BALL_FAR_SCALE + (BALL_START_SCALE - BALL_FAR_SCALE) * ball.progress;
+
+          // slight spin drift
+          ball.x += spin * 0.2;
+
+          // End animation
+          if (ball.progress >= 1) {
+            ball.active = false;
+            ball.x = 0;
+            ball.y = FLOOR_Y;
+            ball.scale = BALL_START_SCALE;
+          }
+
+          return next;
+        }
+
         return next;
       });
+
+      if (step >= totalSteps * 2) {
+        clearInterval(interval);
+      }
+
     }, 16);
   }
 
-  /* -----------------------------------------------------------
-     LISTEN FOR shot_fired
-  ----------------------------------------------------------- */
+  /* ============================================================
+     LISTEN FOR SHOT EVENTS
+  ============================================================= */
   useEffect(() => {
     const channel = supabase
       .channel(`basketball-${gameId}`)
