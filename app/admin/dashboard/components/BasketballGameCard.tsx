@@ -34,58 +34,20 @@ export default function BasketballGameCard({
 
   if (!game?.id) {
     return (
-      <div className={cn('rounded-xl', 'p-4', 'text-center', 'bg-gray-700/20', 'text-gray-300', 'border', 'border-white/10')}>
+      <div className={cn(
+        "rounded-xl p-4 text-center bg-gray-700/20 text-gray-300 border border-white/10"
+      )}>
         Loading game…
       </div>
     );
   }
 
-  /* START GAME FIXED */
-  async function handleStartGame() {
-    if (!wallActivated) return;
-
-    console.log("▶ START GAME TRIGGERED");
-
-    // 1️⃣ Send postMessage → Active Wall popup
-    window._basketballPopup?.postMessage(
-      { type: "start_game", gameId: game.id },
-      "*"
-    );
-
-    // 2️⃣ Supabase Realtime broadcast → Shooters + Wall
-    const channel = supabase.channel(`basketball-${game.id}`);
-
-    // MUST subscribe before sending or broadcast will NOT fire
-    await channel.subscribe((status) => {
-      if (status === "SUBSCRIBED") {
-        channel.send({
-          type: "broadcast",
-          event: "start_countdown",
-          payload: { gameId: game.id },
-        });
-        console.log("📢 start_countdown broadcast sent!");
-      }
-    });
-
-    await onRefresh();
-  }
-
-  async function handleActivateWall() {
-    await supabase
-      .from("bb_games")
-      .update({
-        status: "running",
-        game_running: false,
-        game_timer_start: null,
-      })
-      .eq("id", game.id);
-
-    setWallActivated(true);
-    await onRefresh();
-  }
-
-  async function openWallWindow() {
+  /* ------------------------------------------------------------
+     LAUNCH WALL POPUP
+  ------------------------------------------------------------ */
+  function openWallWindow() {
     const url = `${window.location.origin}/basketball/${game.id}`;
+
     let popup = window._basketballPopup;
 
     if (!popup || popup.closed) {
@@ -101,13 +63,66 @@ export default function BasketballGameCard({
     return popup;
   }
 
+  /* ------------------------------------------------------------
+     ACTIVATE WALL (but do NOT start game)
+  ------------------------------------------------------------ */
+  async function handleActivateWall() {
+    await supabase
+      .from("bb_games")
+      .update({
+        status: "running",        // wall view mode
+        game_running: false,      // NOT running yet
+        game_timer_start: null,   // reset timer
+      })
+      .eq("id", game.id);
+
+    setWallActivated(true);
+    await onRefresh();
+  }
+
+  /* ------------------------------------------------------------
+     START GAME – FIXED + SAFE
+     Sends:
+       • postMessage → Wall
+       • start_countdown → Shooters + Wall
+  ------------------------------------------------------------ */
+  async function handleStartGame() {
+    if (!wallActivated) return;
+
+    console.log("▶ Start Game Triggered");
+
+    // Post to the active Wall popup
+    window._basketballPopup?.postMessage(
+      { type: "start_game", gameId: game.id },
+      "*"
+    );
+
+    // Broadcast to all Shooters + Wall
+    console.log("📢 Broadcasting start_countdown…");
+
+    await supabase.channel(`basketball-${game.id}`).send({
+      type: "broadcast",
+      event: "start_countdown",
+      payload: { gameId: game.id },
+    });
+
+    console.log("📢 start_countdown broadcast COMPLETE!");
+
+    await onRefresh();
+  }
+
+  /* ------------------------------------------------------------
+     STOP GAME
+  ------------------------------------------------------------ */
   async function handleStopClick() {
     await onStop(game.id);
     setWallActivated(false);
     await onRefresh();
   }
 
-  /* RENDER */
+  /* ------------------------------------------------------------
+     RENDER CARD UI
+  ------------------------------------------------------------ */
   return (
     <div
       className={cn(
@@ -118,16 +133,16 @@ export default function BasketballGameCard({
           ? "ring-4 ring-gray-400 shadow-gray-400/40"
           : "ring-0"
       )}
-      style={{
-        backgroundImage: "url('/BBgamebackground.png')",
-      }}
+      style={{ backgroundImage: "url('/BBgamebackground.png')" }}
     >
+      {/* HEADER */}
       <div>
         <h3 className={cn('font-bold', 'text-lg', 'mb-1')}>
           {game.title || "Untitled Game"}
         </h3>
+
         <p className={cn('text-sm', 'mb-3', 'flex', 'justify-center', 'items-center', 'gap-2')}>
-          <strong>Status:</strong>{" "}
+          <strong>Status:</strong>
           <span
             className={cn(
               "font-bold tracking-wide px-2 py-1 rounded-lg text-xs",
@@ -143,8 +158,10 @@ export default function BasketballGameCard({
         </p>
       </div>
 
-      {/* BUTTONS */}
+      {/* BUTTON GROUP */}
       <div className={cn('flex', 'flex-col', 'gap-3', 'mt-auto', 'pt-3', 'border-t', 'border-white/10')}>
+
+        {/* Moderate */}
         <button
           onClick={() => onOpenModeration(game.id)}
           className={cn('w-full', 'py-2', 'rounded', 'text-sm', 'font-semibold', 'bg-yellow-500', 'hover:bg-yellow-600', 'text-black')}
@@ -152,6 +169,7 @@ export default function BasketballGameCard({
           👥 Moderate Players
         </button>
 
+        {/* Launch Wall + Activate */}
         <div className={cn('grid', 'grid-cols-2', 'gap-2')}>
           <button
             onClick={openWallWindow}
@@ -167,6 +185,7 @@ export default function BasketballGameCard({
           </button>
         </div>
 
+        {/* Start + Stop */}
         <div className={cn('grid', 'grid-cols-2', 'gap-2')}>
           <button
             onClick={handleStartGame}
@@ -195,6 +214,7 @@ export default function BasketballGameCard({
           </button>
         </div>
 
+        {/* Options */}
         <button
           onClick={() => onOpenOptions(game)}
           className={cn('w-full', 'py-2', 'mt-2', 'rounded', 'text-sm', 'font-semibold', 'bg-indigo-500', 'hover:bg-indigo-600', 'text-white')}
@@ -202,6 +222,7 @@ export default function BasketballGameCard({
           ⚙ Game Options
         </button>
 
+        {/* Delete */}
         <button
           onClick={() => onDelete(game.id)}
           className={cn('w-full', 'py-2', 'rounded', 'text-sm', 'font-semibold', 'bg-red-700', 'hover:bg-red-800', 'text-white')}

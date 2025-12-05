@@ -31,7 +31,7 @@ export default function ShooterPage({
   const startY = useRef(0);
 
   /* -----------------------------------------------------------
-     LOAD PLAYER ID FROM LOCAL STORAGE
+     LOAD PLAYER ID
   ----------------------------------------------------------- */
   useEffect(() => {
     const stored = localStorage.getItem("bb_player_id");
@@ -39,8 +39,7 @@ export default function ShooterPage({
   }, []);
 
   /* -----------------------------------------------------------
-     LISTEN FOR START_COUNTDOWN BROADCAST FROM DASHBOARD
-     (This is the ONLY trigger for countdown)
+     LISTEN FOR START_COUNTDOWN (no async cleanup)
   ----------------------------------------------------------- */
   useEffect(() => {
     const channel = supabase
@@ -52,7 +51,9 @@ export default function ShooterPage({
       .subscribe();
 
     return () => {
-      supabase.removeChannel(channel).catch(() => {});
+      try {
+        supabase.removeChannel(channel); // <- NOT returned, no async
+      } catch {}
     };
   }, [gameId]);
 
@@ -67,12 +68,15 @@ export default function ShooterPage({
       return;
     }
 
-    const t = setTimeout(() => setPreCountdown((n) => (n !== null ? n - 1 : null)), 1000);
+    const t = setTimeout(
+      () => setPreCountdown((n) => (n !== null ? n - 1 : null)),
+      1000
+    );
     return () => clearTimeout(t);
   }, [preCountdown]);
 
   /* -----------------------------------------------------------
-     LOAD PLAYER DATA
+     LOAD PLAYER ROW
   ----------------------------------------------------------- */
   useEffect(() => {
     if (!playerId) return;
@@ -92,12 +96,13 @@ export default function ShooterPage({
     }
 
     loadPlayer();
+
     const interval = setInterval(loadPlayer, 2000);
     return () => clearInterval(interval);
   }, [playerId]);
 
   /* -----------------------------------------------------------
-     SCORE REALTIME LISTENER
+     REALTIME SCORE LISTENER (no async cleanup)
   ----------------------------------------------------------- */
   useEffect(() => {
     if (!playerId) return;
@@ -119,12 +124,14 @@ export default function ShooterPage({
       .subscribe();
 
     return () => {
-      supabase.removeChannel(channel).catch(() => {});
+      try {
+        supabase.removeChannel(channel);
+      } catch {}
     };
   }, [playerId]);
 
   /* -----------------------------------------------------------
-     LOAD GAME STATE (game_running, timer start, duration)
+     LOAD GAME STATUS & SYNC TIMER
   ----------------------------------------------------------- */
   useEffect(() => {
     async function loadGame() {
@@ -150,38 +157,43 @@ export default function ShooterPage({
     }
 
     loadGame();
-    const i = setInterval(loadGame, 1200);
-    return () => clearInterval(i);
+
+    const interval = setInterval(loadGame, 1200);
+    return () => clearInterval(interval);
   }, [gameId]);
 
   /* -----------------------------------------------------------
-     LOCAL TICK DOWN TIMER ON PHONE
+     LOCAL TIMER TICK
   ----------------------------------------------------------- */
   useEffect(() => {
     if (!gameRunning) return;
     if (timeLeft === null) return;
     if (timeLeft <= 0) return;
 
-    const t = setTimeout(() => setTimeLeft((t) => (t !== null ? t - 1 : null)), 1000);
+    const t = setTimeout(
+      () => setTimeLeft((t) => (t !== null ? t - 1 : null)),
+      1000
+    );
     return () => clearTimeout(t);
   }, [timeLeft, gameRunning]);
 
   /* -----------------------------------------------------------
-     SHOOTING INPUT
+     SHOOT LOGIC
   ----------------------------------------------------------- */
   async function sendShot(power: number) {
-    if (!playerId) return;
+    if (!playerId || laneIndex === null) return;
 
-    const made = Math.random() < (0.45 + power * 0.35);
-
+    const made = Math.random() < 0.45 + power * 0.35;
     if (!made) return;
 
-    await supabase.rpc("increment_player_score", { p_player_id: playerId });
+    await supabase.rpc("increment_player_score", {
+      p_player_id: playerId,
+    });
 
     await supabase.channel(`basketball-${gameId}`).send({
       type: "broadcast",
       event: "shot_fired",
-      payload: { player_id: playerId },
+      payload: { lane_index: laneIndex, power },
     });
   }
 
@@ -199,7 +211,7 @@ export default function ShooterPage({
   }
 
   /* -----------------------------------------------------------
-     RENDER
+     UI RENDER
   ----------------------------------------------------------- */
   return (
     <div
@@ -207,7 +219,7 @@ export default function ShooterPage({
         width: "100vw",
         height: "100vh",
         background: "black",
-        border: `min(5px, 1vw) solid ${laneColor}`,
+        border: `min(5px,1vw) solid ${laneColor}`,
         boxSizing: "border-box",
         display: "flex",
         flexDirection: "column",
@@ -216,13 +228,12 @@ export default function ShooterPage({
         userSelect: "none",
         touchAction: "none",
         position: "fixed",
-        top: 0,
-        left: 0,
+        inset: 0,
       }}
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
     >
-      {/* FULLSCREEN COUNTDOWN */}
+      {/* COUNTDOWN */}
       {preCountdown !== null && (
         <div
           style={{
@@ -232,8 +243,7 @@ export default function ShooterPage({
             display: "flex",
             justifyContent: "center",
             alignItems: "center",
-            color: "white",
-            fontSize: "clamp(5rem, 18vw, 12rem)",
+            fontSize: "clamp(5rem,18vw,12rem)",
             fontWeight: 900,
             zIndex: 9999,
             textShadow: "0 0 40px rgba(255,0,0,0.7)",
@@ -248,7 +258,7 @@ export default function ShooterPage({
         style={{
           display: "flex",
           justifyContent: "space-between",
-          fontSize: "clamp(1.6rem, 7vw, 3rem)",
+          fontSize: "clamp(1.6rem,7vw,3rem)",
           fontWeight: 900,
           marginBottom: "min(20px,4vw)",
         }}
@@ -258,14 +268,14 @@ export default function ShooterPage({
         <div>{timeLeft ?? "--"}</div>
       </div>
 
-      {/* MAIN PROMPT */}
+      {/* MAIN */}
       <div
         style={{
           flexGrow: 1,
           display: "flex",
           justifyContent: "center",
           alignItems: "center",
-          fontSize: "clamp(2rem, 8vw, 4rem)",
+          fontSize: "clamp(2rem,8vw,4rem)",
           opacity: 0.75,
           textAlign: "center",
         }}
