@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
 import ActiveBasketballPage from "../components/basketballActive";
@@ -9,10 +9,10 @@ import InactiveBasketballPage from "../components/basketballinactive";
 export default function Page({
   params,
 }: {
-  params: Promise<{ gameId: string }>;
+  params: { gameId: string };
 }) {
-  // ⭐ Next.js 15 unwrap
-  const { gameId } = use(params);
+  // ⭐ No unwrapping needed
+  const { gameId } = params;
 
   const [game, setGame] = useState<any>(null);
 
@@ -60,14 +60,13 @@ export default function Page({
   }
 
   /* ------------------------------------------------------------
-     SWITCH VIEW:
-     ACTIVE WALL = when game.status === "running"
-     INACTIVE WALL = all other states ("lobby", "ended")
+     SWITCH VIEW
   ------------------------------------------------------------ */
   const isGameRunning = game.status === "running";
 
   return isGameRunning ? (
-    <ActiveBasketballPage gameId={gameId} />
+    // ⭐ FIX: pass params or gameId correctly
+    <ActiveBasketballPage params={{ gameId }} />
   ) : (
     <InactiveBasketballPage game={game} />
   );
