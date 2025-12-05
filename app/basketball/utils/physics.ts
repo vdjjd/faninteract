@@ -1,13 +1,5 @@
 /* ============================================================
-   ULTRA-LIGHTWEIGHT PHYSICS ENGINE FOR ARCADE BASKETBALL
-   --------------------------------------------------------
-   Provides:
-   ✓ Rim collision + deflection
-   ✓ Spin-based roll-around
-   ✓ Backboard bank shots
-   ✓ Lip-outs (probability)
-   ✓ Rim rattles (micro bounce)
-   ✓ Gravity easing for smooth arcs
+   80% REALISTIC / 20% ARCADE BASKETBALL PHYSICS ENGINE
 ============================================================ */
 
 export interface Vec2 {
@@ -16,98 +8,128 @@ export interface Vec2 {
 }
 
 export interface Rim {
-  x: number;     // center X
-  y: number;     // height (Y position)
-  width: number; // interior width of rim
+  x: number;
+  y: number;
+  width: number;
 }
 
 export interface Backboard {
-  x: number;     // center X
-  y: number;     // vertical location
-  width: number; // board width
+  x: number;
+  y: number;
+  width: number;
 }
 
 /* ============================================================
-   GRAVITY EASING — smoother arc, more natural motion
+   TRUE PARABOLIC ARC + VISUAL GRAVITY EASING
 ============================================================ */
-export function gravityEase(progress: number): number {
-  return progress < 0.5
-    ? 2 * progress * progress
-    : -1 + (4 - 2 * progress) * progress;
+/**
+ * p = 0 → 1 → parabolic path (up then down)
+ * But eased visually so it *feels* smooth.
+ */
+export function computeArcY(progress: number, power: number): number {
+  const rawArc = 4 * progress * (1 - progress); // true parabola 0→1→0
+
+  // Add slight arcade exaggeration to apex height
+  const height = 80 + power * 60;
+
+  return rawArc * height;
 }
 
 /* ============================================================
-   RIM COLLISION DETECTION
+   SIDE-BIAS SPIN EFFECT (arcade realism)
 ============================================================ */
-export function detectRimCollision(
-  ball: Vec2,
-  radius: number,
-  rim: Rim
-): boolean {
+export function computeArcX(progress: number, power: number, spin: number) {
+  // forward motion based on shot strength
+  const forward = progress * (26 + power * 18);
+
+  // side deviation based on spin
+  const sideCurve = spin * (progress * 14);
+
+  return (progress - 0.5) * 10 + forward * 0.02 + sideCurve;
+}
+
+/* ============================================================
+   RIM COLLISION (REALISTIC CYLINDER)
+============================================================ */
+export function detectRimCollision(ball: Vec2, radius: number, rim: Rim): boolean {
   const half = rim.width / 2;
 
-  return (
-    ball.y <= rim.y + 3 &&
-    ball.y >= rim.y - 3 &&
-    ball.x > rim.x - half - radius &&
-    ball.x < rim.x + half + radius
-  );
+  // Check if ball intersects rim cylinder region
+  const withinX = ball.x > rim.x - half - radius && ball.x < rim.x + half + radius;
+  const withinY = Math.abs(ball.y - rim.y) < radius * 1.4;
+
+  return withinX && withinY;
 }
 
 /* ============================================================
-   RIM-BASED SPIN DEFLECTION
+   SPIN-BASED RIM DEFLECTION (REAL FEEL)
 ============================================================ */
-export function rimDeflect(x: number, spin: number): number {
-  // direction based on which side of rim center the ball hits
-  const dir = x > 0 ? 1 : -1;
-  return dir * (0.3 + spin * 0.25);
+export function rimDeflect(ballX: number, rimX: number, spin: number): number {
+  const side = ballX > rimX ? 1 : -1;
+  const base = 0.25 + spin * 0.4;
+
+  return side * base;
 }
 
 /* ============================================================
-   RIM RATTLING (micro shaking motion)
+   RIM RATTLING — natural but enhanced
 ============================================================ */
 export function rimRattle(power: number): number {
-  return (Math.random() - 0.5) * (0.6 + power * 0.5);
+  return (Math.random() - 0.5) * (0.4 + power * 0.6);
 }
 
 /* ============================================================
-   LIP OUT PROBABILITY — ball looks in, then pops out
+   ARCADE-STYLE “MAGNETIC RIM ASSIST”
+   Helps borderline shots feel satisfying.
+============================================================ */
+export function rimAssist(ball: Vec2, rim: Rim): number {
+  const dx = ball.x - rim.x;
+  const dist = Math.abs(dx);
+
+  if (dist < rim.width * 0.6) {
+    return -dx * 0.03; // small pull toward center
+  }
+
+  return 0;
+}
+
+/* ============================================================
+   LIP-OUT CHANCE
 ============================================================ */
 export function lipOutChance(power: number, spin: number): boolean {
-  const probability = 0.07 + power * 0.1 + spin * 0.05;
+  // realistic baseline + arcade spin influence
+  const probability = 0.05 + power * 0.06 + spin * 0.08;
   return Math.random() < probability;
 }
 
 /* ============================================================
-   BACKBOARD COLLISION
+   BACKBOARD COLLISION (REALISTIC)
 ============================================================ */
-export function detectBackboardCollision(
-  ball: Vec2,
-  radius: number,
-  board: Backboard
-): boolean {
-  return (
-    ball.y >= board.y - 2 &&
-    ball.y <= board.y + 2 &&
-    ball.x > board.x - board.width / 2 - radius &&
-    ball.x < board.x + board.width / 2 + radius
-  );
+export function detectBackboardCollision(ball: Vec2, radius: number, board: Backboard): boolean {
+  const withinY = Math.abs(ball.y - board.y) < radius * 1.4;
+  const withinX = Math.abs(ball.x - board.x) < board.width / 2 + radius;
+
+  return withinX && withinY;
 }
 
 /* ============================================================
-   BANK SHOT BOUNCE — dampened reflection
+   BANK SHOT BOUNCE (ENERGY LOSS)
 ============================================================ */
-export function bankShotBounce(angle: number, power: number): number {
-  return angle * -0.45 * (0.7 + power * 0.2);
+export function bankShotBounce(velocityX: number, power: number): number {
+  // Realistic dampened bounce with slight arcade push
+  return -velocityX * (0.45 + power * 0.2);
 }
 
 /* ============================================================
-   GENERAL BOUNCE HELPERS
+   VERTICAL BOUNCE — loss of energy
 ============================================================ */
-export function bounceVertical(y: number, power: number): number {
-  return -Math.abs(y) * (0.4 + power * 0.2);
+export function bounceVertical(vy: number, power: number): number {
+  return -Math.abs(vy) * (0.38 + power * 0.18);
 }
 
-export function bounceHorizontal(x: number, power: number): number {
-  return -x * (0.35 + power * 0.15);
+/* ============================================================
+   HORIZONTAL BOUNCE
+============================================================ */
+export function bounceHorizontal(vx: number, power: number): number {
+  return -vx * (0.35 + power * 0.2);
 }

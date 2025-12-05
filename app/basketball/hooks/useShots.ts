@@ -3,9 +3,10 @@
 import { useState, useEffect } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
-/* Physics imports */
+/* NEW 80/20 PHYSICS ENGINE */
 import {
-  gravityEase,
+  computeArcY,
+  computeArcX,
   detectRimCollision,
   detectBackboardCollision,
   rimDeflect,
@@ -13,7 +14,8 @@ import {
   lipOutChance,
   bankShotBounce,
   bounceVertical,
-  bounceHorizontal
+  bounceHorizontal,
+  rimAssist
 } from "@/app/basketball/utils/physics";
 
 interface Player {
@@ -34,11 +36,13 @@ export interface BallState {
   netStage: 0 | 1 | 2;
 }
 
+const RIM_Y = 24;
 const RIM_WIDTH = 14;
 
 /* ============================================================
    HOOK: Shot Listener + Ball Animation Engine
 ============================================================ */
+
 export function useShots(gameId: string, players: Player[]) {
   const [ballAnimations, setBallAnimations] = useState<BallState[]>(
     Array.from({ length: 10 }, () => ({
@@ -50,7 +54,7 @@ export function useShots(gameId: string, players: Player[]) {
       y: 4,
       scale: 1,
       rimShake: null,
-      netStage: 0
+      netStage: 0,
     }))
   );
 
@@ -85,41 +89,46 @@ export function useShots(gameId: string, players: Player[]) {
       step++;
 
       const progress = step / totalSteps;
-      const eased = gravityEase(progress);
 
-      // Basic trajectory
-      let x = (progress - 0.5) * (8 + power * 5);
-      let y = 4 + eased * (80 + power * 55);
+      /* BUILD TRAJECTORY USING NEW PHYSICS */
+      const arcY = computeArcY(progress, power); // true parabola + smooth easing
+      let y = 4 + arcY;
+
+      let x = computeArcX(progress, power, spin); // slight curve + spin drift
+
       const scale = 1 - progress * 0.45;
 
-      /* RIM + BOARD CONSTANTS */
-      const rim = { x: 0, y: 24, width: RIM_WIDTH * 1 };
+      /* RIM + BACKBOARD CONSTANTS */
+      const rim = { x: 0, y: RIM_Y, width: RIM_WIDTH };
       const board = { x: 0, y: 18, width: 40 };
+
+      /* 20% ARCADE RIM ASSIST */
+      x += rimAssist({ x, y }, rim);
 
       /* BACKBOARD COLLISION */
       if (detectBackboardCollision({ x, y }, 18 * scale, board)) {
-        y += bounceVertical(y, power);
         x += bounceHorizontal(x, power);
+        y += bounceVertical(y, power);
       }
 
       /* RIM COLLISION */
       const rimHit = detectRimCollision({ x, y }, 18 * scale, rim);
+
       if (rimHit) {
         if (lipOutChance(power, spin)) {
-          x += rimDeflect(x, spin);
+          x += rimDeflect(x, rim.x, spin);
           y += rimRattle(power);
         } else {
-          x += rimDeflect(x, spin) * 0.5;
-          y += rimRattle(power) * 0.6;
+          x += rimDeflect(x, rim.x, spin) * 0.5;
+          y += rimRattle(power) * 0.5;
         }
       }
 
       /* AUTO-SCORE WINDOW */
-      if (progress > 0.85 && progress < 0.94) {
+      if (progress > 0.83 && progress < 0.93) {
         const player = players.find((p) => p.cell === lane);
         if (player) {
-          supabase
-            .from("bb_game_players")
+          supabase.from("bb_game_players")
             .update({ score: player.score + 1 })
             .eq("id", player.id);
         }
@@ -166,7 +175,7 @@ export function useShots(gameId: string, players: Player[]) {
               ? "medium"
               : "hard"
             : null,
-          netStage: rimHit ? (power < 0.66 ? 1 : 2) : 0
+          netStage: rimHit ? (power < 0.66 ? 1 : 2) : 0,
         };
         return next;
       });
@@ -174,19 +183,21 @@ export function useShots(gameId: string, players: Player[]) {
   }
 
   /* -----------------------------------------------------------
-     LISTEN FOR Supabase "shot_fired" broadcast
+     LISTEN FOR shot_fired
   ----------------------------------------------------------- */
   useEffect(() => {
     const channel = supabase
       .channel(`basketball-${gameId}`)
       .on("broadcast", { event: "shot_fired" }, ({ payload }) => {
-        const { lane_index, power } = payload;
-        animateShot(lane_index, power);
+        animateShot(payload.lane_index, payload.power);
       })
       .subscribe();
 
+    /* SYNC CLEANUP — NO PROMISES */
     return () => {
-      supabase.removeChannel(channel).catch(() => {});
+      try {
+        supabase.removeChannel(channel);
+      } catch {}
     };
   }, [gameId, players]);
 
