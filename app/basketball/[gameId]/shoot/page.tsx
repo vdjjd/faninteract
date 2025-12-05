@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
+import { useParams } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
 /* Lane Colors */
@@ -9,12 +10,12 @@ const CELL_COLORS = [
   "#007AFF", "#5856D6", "#AF52DE", "#FF2D55",
 ];
 
-export default function ShooterPage({
-  params,
-}: {
-  params: { gameId: string };
-}) {
-  const { gameId } = params;
+export default function ShooterPage() {
+  /* -----------------------------------------------------------
+     FIXED: Get gameId using useParams() (Next.js 15+)
+  ----------------------------------------------------------- */
+  const params = useParams();
+  const gameId = Array.isArray(params.gameId) ? params.gameId[0] : params.gameId;
 
   const [playerId, setPlayerId] = useState<string | null>(null);
   const [laneIndex, setLaneIndex] = useState<number | null>(null);
@@ -39,9 +40,11 @@ export default function ShooterPage({
   }, []);
 
   /* -----------------------------------------------------------
-     LISTEN FOR START_COUNTDOWN (no async cleanup)
+     LISTEN FOR START_COUNTDOWN
   ----------------------------------------------------------- */
   useEffect(() => {
+    if (!gameId) return;
+
     const channel = supabase
       .channel(`basketball-${gameId}`)
       .on("broadcast", { event: "start_countdown" }, () => {
@@ -51,14 +54,12 @@ export default function ShooterPage({
       .subscribe();
 
     return () => {
-      try {
-        supabase.removeChannel(channel); // <- NOT returned, no async
-      } catch {}
+      supabase.removeChannel(channel);
     };
   }, [gameId]);
 
   /* -----------------------------------------------------------
-     COUNTDOWN TICKER
+     COUNTDOWN TIMER
   ----------------------------------------------------------- */
   useEffect(() => {
     if (preCountdown === null) return;
@@ -68,15 +69,16 @@ export default function ShooterPage({
       return;
     }
 
-    const t = setTimeout(
+    const timer = setTimeout(
       () => setPreCountdown((n) => (n !== null ? n - 1 : null)),
       1000
     );
-    return () => clearTimeout(t);
+
+    return () => clearTimeout(timer);
   }, [preCountdown]);
 
   /* -----------------------------------------------------------
-     LOAD PLAYER ROW
+     LOAD PLAYER DATA
   ----------------------------------------------------------- */
   useEffect(() => {
     if (!playerId) return;
@@ -102,7 +104,7 @@ export default function ShooterPage({
   }, [playerId]);
 
   /* -----------------------------------------------------------
-     REALTIME SCORE LISTENER (no async cleanup)
+     REALTIME SCORE LISTENER
   ----------------------------------------------------------- */
   useEffect(() => {
     if (!playerId) return;
@@ -124,16 +126,16 @@ export default function ShooterPage({
       .subscribe();
 
     return () => {
-      try {
-        supabase.removeChannel(channel);
-      } catch {}
+      supabase.removeChannel(channel);
     };
   }, [playerId]);
 
   /* -----------------------------------------------------------
-     LOAD GAME STATUS & SYNC TIMER
+     LOAD GAME STATUS + TIMER SYNC
   ----------------------------------------------------------- */
   useEffect(() => {
+    if (!gameId) return;
+
     async function loadGame() {
       const { data } = await supabase
         .from("bb_games")
@@ -170,11 +172,12 @@ export default function ShooterPage({
     if (timeLeft === null) return;
     if (timeLeft <= 0) return;
 
-    const t = setTimeout(
+    const timer = setTimeout(
       () => setTimeLeft((t) => (t !== null ? t - 1 : null)),
       1000
     );
-    return () => clearTimeout(t);
+
+    return () => clearTimeout(timer);
   }, [timeLeft, gameRunning]);
 
   /* -----------------------------------------------------------
@@ -233,7 +236,7 @@ export default function ShooterPage({
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
     >
-      {/* COUNTDOWN */}
+      {/* COUNTDOWN OVERLAY */}
       {preCountdown !== null && (
         <div
           style={{
@@ -268,7 +271,7 @@ export default function ShooterPage({
         <div>{timeLeft ?? "--"}</div>
       </div>
 
-      {/* MAIN */}
+      {/* MAIN DISPLAY */}
       <div
         style={{
           flexGrow: 1,
