@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
 import ActiveBasketballPage from "../components/basketballActive";
-import InactiveBasketballPage from "../components/basketballInactive"; // ⭐ FIXED Casing
+import InactiveBasketballPage from "../components/basketballinactive"; // ⭐ FIXED Casing
 
 export default function Page({
   params,
