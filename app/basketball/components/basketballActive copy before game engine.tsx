@@ -49,6 +49,14 @@ interface DBPlayerRow {
   disconnected_at: string | null;
 }
 
+interface BallState {
+  active: boolean;
+  /** 0 → 1 along the shot arc */
+  progress: number;
+  /** 0 → 1 power coming from phone */
+  power: number;
+}
+
 /* ============================================================
    ACTIVE GAME PAGE
 ============================================================ */
@@ -56,47 +64,70 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
   const [players, setPlayers] = useState<Player[]>([]);
   const [hostLogo, setHostLogo] = useState<string | null>(null);
 
-  /* ============================================
-     GLOBAL GAME TIMER
-  ============================================ */
+  /* GAME TIMER */
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
   const [duration, setDuration] = useState<number>(0);
   const [timerStartedAt, setTimerStartedAt] = useState<string | null>(null);
   const [timerExpired, setTimerExpired] = useState(false);
 
-  /* ============================================
-     FULLSCREEN COUNTDOWN (10 sec)
-  ============================================ */
+  /* COUNTDOWN */
   const [preCountdown, setPreCountdown] = useState<number | null>(null);
 
-  // Listen for "start_game" message
+  /* ========================================================================
+     Listen for popup "start_game" (dashboard → wall)
+  ======================================================================== */
   useEffect(() => {
     function onMessage(e: any) {
       if (e.data?.type === "start_game") {
+        console.log("🔥 WALL RECEIVED postMessage start_game");
         setPreCountdown(10);
       }
     }
+
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
   }, []);
 
-  // Run the fullscreen 10-second countdown
+  /* ========================================================================
+     Realtime broadcast start_countdown (dashboard → shooters + wall)
+  ======================================================================== */
+  useEffect(() => {
+    const channel = supabase
+      .channel(`basketball-${gameId}`)
+      .on("broadcast", { event: "start_countdown" }, () => {
+        console.log("🔥 WALL RECEIVED realtime start_countdown");
+        setPreCountdown(10);
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel).catch(() => {});
+    };
+  }, [gameId]);
+
+  /* ========================================================================
+     Countdown tick
+  ======================================================================== */
   useEffect(() => {
     if (preCountdown === null) return;
 
     if (preCountdown <= 0) {
+      console.log("⏱ Countdown finished → START GAME");
       setPreCountdown(null);
       beginGameTimer();
       return;
     }
 
-    const t = setTimeout(() => setPreCountdown(preCountdown - 1), 1000);
+    const t = setTimeout(
+      () => setPreCountdown((n) => (n !== null ? n - 1 : null)),
+      1000
+    );
     return () => clearTimeout(t);
   }, [preCountdown]);
 
-  /* ============================================================
-     LOAD GAME TIMER INFO (POLLING)
-  ============================================================ */
+  /* ========================================================================
+     PATCHED: loadTimer — handles 4 states: lobby, countdown, running, ended
+  ======================================================================== */
   async function loadTimer() {
     const { data } = await supabase
       .from("bb_games")
@@ -107,22 +138,54 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
     if (!data) return;
 
     setDuration(data.duration_seconds);
-    setTimerStartedAt(data.game_timer_start);
 
-    // ❗ FREEZE TIMER UNTIL 10-SECOND COUNTDOWN ENDS
-    if (preCountdown !== null) {
+    /* -------------------------------
+       STATE 1 → LOBBY (not running)
+    ------------------------------- */
+    if (!data.game_running && preCountdown === null && !data.game_timer_start) {
+      setTimerStartedAt(null);
       setTimeLeft(data.duration_seconds);
       return;
     }
 
-    if (!data.game_timer_start) return;
+    /* -------------------------------
+       STATE 2 → COUNTDOWN
+    ------------------------------- */
+    if (preCountdown !== null) {
+      setTimerStartedAt(null);
+      setTimeLeft(data.duration_seconds);
+      return;
+    }
 
-    const startDate = new Date(data.game_timer_start).getTime();
-    const now = Date.now();
-    const elapsed = Math.floor((now - startDate) / 1000);
-    const remaining = data.duration_seconds - elapsed;
+    /* -------------------------------
+       STATE 3 → RUNNING GAME
+    ------------------------------- */
+    if (data.game_running && data.game_timer_start) {
+      setTimerStartedAt(data.game_timer_start);
 
-    setTimeLeft(Math.max(remaining, 0));
+      const now = Date.now();
+      const start = new Date(data.game_timer_start).getTime();
+      const elapsed = Math.floor((now - start) / 1000);
+      const remaining = data.duration_seconds - elapsed;
+
+      setTimeLeft(Math.max(remaining, 0));
+      return;
+    }
+
+    /* -------------------------------
+       STATE 4 → GAME ENDED
+       (winner must show)
+    ------------------------------- */
+    if (!data.game_running && data.game_timer_start) {
+      const now = Date.now();
+      const start = new Date(data.game_timer_start).getTime();
+      const elapsed = Math.floor((now - start) / 1000);
+      const remaining = data.duration_seconds - elapsed;
+
+      setTimerStartedAt(data.game_timer_start);
+      setTimeLeft(Math.max(remaining, 0)); // will be 0
+      return;
+    }
   }
 
   useEffect(() => {
@@ -131,45 +194,49 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
     return () => clearInterval(t);
   }, []);
 
-  /* ============================================================
-     LOCAL TICK DOWN
-  ============================================================ */
+  /* ========================================================================
+     Local tick
+  ======================================================================== */
   useEffect(() => {
-    // ❗ DO NOT TICK WHILE FULLSCREEN COUNTDOWN IS ACTIVE
     if (preCountdown !== null) return;
-
-    if (timerStartedAt === null || timeLeft === null) return;
+    if (!timerStartedAt || timeLeft === null) return;
 
     if (timeLeft <= 0) {
       setTimerExpired(true);
       return;
     }
 
-    const t = setTimeout(() => setTimeLeft(timeLeft - 1), 1000);
+    const t = setTimeout(
+      () => setTimeLeft((t) => (t !== null ? t - 1 : null)),
+      1000
+    );
     return () => clearTimeout(t);
   }, [timeLeft, timerStartedAt, preCountdown]);
 
-  /* ============================================================
-     BEGIN GAME TIMER (DB writes start time)
-  ============================================================ */
+  /* ========================================================================
+     Start the actual game timer (only after countdown)
+  ======================================================================== */
   async function beginGameTimer() {
-    const start = new Date().toISOString();
+    const now = new Date().toISOString();
+
+    console.log("⏱ beginGameTimer → game_running TRUE");
 
     await supabase
       .from("bb_games")
       .update({
-        game_timer_start: start,
+        game_running: true,
+        game_timer_start: now,
         status: "running",
       })
       .eq("id", gameId);
 
-    setTimerStartedAt(start);
+    setTimerStartedAt(now);
     setTimeLeft(duration);
   }
 
-  /* ============================================================
+  /* ========================================================================
      LOAD PLAYERS
-  ============================================================ */
+  ======================================================================== */
   function mapRowToPlayer(row: DBPlayerRow): Player {
     return {
       id: row.id,
@@ -188,17 +255,16 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
         .eq("game_id", gameId)
         .order("lane_index", { ascending: true });
 
-      const active = (data as DBPlayerRow[])?.filter(
-        (r) => !r.disconnected_at
-      );
+      const active = (data as DBPlayerRow[])?.filter((p) => !p.disconnected_at);
       setPlayers(active.map(mapRowToPlayer));
     }
+
     loadPlayers();
   }, [gameId]);
 
-  /* ============================================================
-     REALTIME SCORE UPDATES
-  ============================================================ */
+  /* ========================================================================
+     REALTIME PLAYER UPDATES (patched cleanup)
+  ======================================================================== */
   useEffect(() => {
     const channel = supabase
       .channel(`bb_game_players_${gameId}`)
@@ -221,11 +287,11 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
           const mapped = mapRowToPlayer(row);
 
           setPlayers((prev) => {
-            const i = prev.findIndex((p) => p.id === mapped.id);
-            if (i === -1) return [...prev, mapped];
-            const c = [...prev];
-            c[i] = mapped;
-            return c;
+            const idx = prev.findIndex((p) => p.id === mapped.id);
+            if (idx === -1) return [...prev, mapped];
+            const copy = [...prev];
+            copy[idx] = mapped;
+            return copy;
           });
         }
       )
@@ -238,9 +304,9 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
     };
   }, [gameId]);
 
-  /* ============================================================
-     LOAD HOST LOGO
-  ============================================================ */
+  /* ========================================================================
+     HOST LOGO
+  ======================================================================== */
   useEffect(() => {
     async function loadLogo() {
       const { data: game } = await supabase
@@ -265,21 +331,19 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
           : "/faninteractlogo.png"
       );
     }
+
     loadLogo();
   }, [gameId]);
 
-  /* ============================================================
-     WINNER BLINK EFFECT
-  ============================================================ */
+  /* ========================================================================
+     WINNER CALCULATION
+  ======================================================================== */
   let winningCells: number[] = [];
   if (timerExpired) {
     const max = Math.max(...players.map((p) => p.score), 0);
     winningCells = players.filter((p) => p.score === max).map((p) => p.cell);
   }
 
-  /* ============================================================
-     FORMAT TIMER (MM:SS)
-  ============================================================ */
   function fmt(sec: number | null) {
     if (sec === null) return "--:--";
     const m = Math.floor(sec / 60);
@@ -287,9 +351,75 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
     return `${m}:${s.toString().padStart(2, "0")}`;
   }
 
-  /* ============================================================
-     FULLSCREEN HANDLER
-  ============================================================ */
+  /* ========================================================================
+     BALL ANIMATION – ARC INSIDE EACH CELL
+  ======================================================================== */
+  const [ballAnimations, setBallAnimations] = useState<BallState[]>(
+    () =>
+      Array.from({ length: 10 }, () => ({
+        active: false,
+        progress: 0,
+        power: 0,
+      }))
+  );
+
+  function animateShot(lane: number, power: number) {
+    if (lane < 0 || lane > 9) return;
+
+    setBallAnimations((prev) => {
+      const next = [...prev];
+      next[lane] = { active: true, progress: 0, power };
+      return next;
+    });
+
+    let step = 0;
+    const totalSteps = 40; // ~40 * 16ms ≈ 640ms flight
+
+    const interval = setInterval(() => {
+      step += 1;
+      const progress = step / totalSteps; // 0 → 1
+
+      if (progress >= 1) {
+        // End of arc → reset ball to idle state
+        setBallAnimations((prev) => {
+          const next = [...prev];
+          next[lane] = { active: false, progress: 0, power: 0 };
+          return next;
+        });
+        clearInterval(interval);
+        return;
+      }
+
+      setBallAnimations((prev) => {
+        const next = [...prev];
+        if (!next[lane]) return prev;
+        next[lane] = { ...next[lane], progress };
+        return next;
+      });
+    }, 16);
+  }
+
+  /* ========================================================================
+     Listen for shot_fired (patched cleanup)
+  ======================================================================== */
+  useEffect(() => {
+    const channel = supabase
+      .channel(`basketball-${gameId}`)
+      .on("broadcast", { event: "shot_fired" }, (payload) => {
+        animateShot(payload.payload.lane_index, payload.payload.power);
+      })
+      .subscribe();
+
+    return () => {
+      try {
+        supabase.removeChannel(channel);
+      } catch {}
+    };
+  }, [gameId]);
+
+  /* ========================================================================
+     FULLSCREEN
+  ======================================================================== */
   function toggleFullscreen() {
     if (!document.fullscreenElement) {
       document.documentElement.requestFullscreen().catch(() => {});
@@ -298,9 +428,9 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
     }
   }
 
-  /* ============================================================
-     RENDER
-  ============================================================ */
+  /* ========================================================================
+     RENDER UI
+  ======================================================================== */
   return (
     <div
       style={{
@@ -315,7 +445,7 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
         position: "relative",
       }}
     >
-      {/* FULLSCREEN PRE-GAME COUNTDOWN */}
+      {/* COUNTDOWN */}
       {preCountdown !== null && (
         <div
           style={{
@@ -323,8 +453,8 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
             inset: 0,
             background: "rgba(0,0,0,0.88)",
             display: "flex",
-            alignItems: "center",
             justifyContent: "center",
+            alignItems: "center",
             zIndex: 9999,
             color: "white",
             fontSize: "clamp(4rem, 10vw, 12rem)",
@@ -336,7 +466,7 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
         </div>
       )}
 
-      {/* ================= GRID ================= */}
+      {/* GRID */}
       <div
         style={{
           width: "94vw",
@@ -351,6 +481,20 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
           const player = players.find((p) => p.cell === i);
           const borderColor = CELL_COLORS[i];
           const isWinner = winningCells.includes(i);
+          const ball = ballAnimations[i];
+
+          // Arc maths:
+          //  progress: 0 → 1
+          //  arcTerm = 4*p*(1-p)  (0 at edges, 1 at middle)
+          //  baseBottom = 4% (resting ball)
+          //  peakHeight grows with power (30–55%)
+          const baseBottom = 4; // % from bottom
+          const peakHeight = 30 + (ball?.power ?? 0) * 25; // 30–55
+          const arcTerm =
+            ball && ball.active
+              ? 4 * ball.progress * (1 - ball.progress)
+              : 0;
+          const bottomPercent = baseBottom + peakHeight * arcTerm;
 
           return (
             <div
@@ -368,7 +512,6 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
                   : undefined,
               }}
             >
-              {/* WINNER ANIMATION */}
               <style>{`
                 @keyframes winnerBlink {
                   from { box-shadow: 0 0 6px ${borderColor}; }
@@ -376,7 +519,7 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
                 }
               `}</style>
 
-              {/* TOP RIGHT TIMER */}
+              {/* TIMER */}
               <div
                 style={{
                   position: "absolute",
@@ -394,7 +537,7 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
                 {fmt(timeLeft)}
               </div>
 
-              {/* PLAYER # TAG */}
+              {/* SLOT LABEL */}
               <div
                 style={{
                   position: "absolute",
@@ -449,7 +592,7 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
                   position: "absolute",
                   top: `calc(2% + ${7 * BACKBOARD_SCALE}vh - 0.3vh)`,
                   left: "50%",
-                  transform: "translateX(-50%)",
+                  transform: "translateX(-50%)`,
                   width: `${18 * RIM_SCALE}%`,
                   height: "4px",
                   background: "#ff5a00",
@@ -463,9 +606,9 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
                   position: "absolute",
                   top: `calc(2% + ${7 * BACKBOARD_SCALE}vh + 0.4vh)`,
                   left: "50%",
-                  transform: "translateX(-50%)",
                   width: `${15 * RIM_SCALE}%`,
                   height: "3vh",
+                  transform: "translateX(-50%)",
                   background:
                     "repeating-linear-gradient(135deg, white 0, white 2px, transparent 3px 6px)",
                   opacity: 0.4,
@@ -474,18 +617,38 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
               />
 
               {/* BALL */}
-              <div
-                style={{
-                  position: "absolute",
-                  bottom: "4%",
-                  left: "50%",
-                  transform: "translateX(-50%)",
-                  width: 30,
-                  height: 30,
-                  borderRadius: "50%",
-                  background: "radial-gradient(circle,#ff9d00,#ff6100)",
-                }}
-              />
+              {ball && ball.active ? (
+                <div
+                  style={{
+                    position: "absolute",
+                    bottom: `${bottomPercent}%`,
+                    left: "50%",
+                    transform: "translateX(-50%)",
+                    width: 30,
+                    height: 30,
+                    borderRadius: "50%",
+                    background:
+                      "radial-gradient(circle,#ff9d00,#ff6100)",
+                    transition: "bottom 0.016s linear",
+                    zIndex: 20,
+                  }}
+                />
+              ) : (
+                <div
+                  style={{
+                    position: "absolute",
+                    bottom: "4%",
+                    left: "50%",
+                    transform: "translateX(-50%)",
+                    width: 30,
+                    height: 30,
+                    borderRadius: "50%",
+                    background:
+                      "radial-gradient(circle,#ff9d00,#ff6100)",
+                    opacity: 0.5,
+                  }}
+                />
+              )}
 
               {/* SELFIE */}
               <div
@@ -561,7 +724,7 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
         })}
       </div>
 
-      {/* ================= FULLSCREEN BUTTON ================= */}
+      {/* FULLSCREEN BUTTON */}
       <div
         onClick={toggleFullscreen}
         style={{
