@@ -38,7 +38,9 @@ export function useCountdown(gameId: string) {
       .subscribe();
 
     return () => {
-      supabase.removeChannel(channel).catch(() => {});
+      try {
+        supabase.removeChannel(channel);
+      } catch {}
     };
   }, [gameId]);
 
@@ -50,6 +52,16 @@ export function useCountdown(gameId: string) {
 
     if (preCountdown <= 0) {
       setPreCountdown(null);
+
+      // ⭐ IMPORTANT: Start actual game timer in DB
+      supabase
+        .from("bb_games")
+        .update({
+          game_running: true,
+          game_timer_start: new Date().toISOString()
+        })
+        .eq("id", gameId);
+
       return;
     }
 
@@ -58,7 +70,7 @@ export function useCountdown(gameId: string) {
     }, 1000);
 
     return () => clearTimeout(t);
-  }, [preCountdown]);
+  }, [preCountdown, gameId]);
 
   return preCountdown;
 }
