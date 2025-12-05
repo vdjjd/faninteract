@@ -6,13 +6,13 @@ import { supabase } from "@/lib/supabaseClient";
 import ActiveBasketballPage from "../components/basketballActive";
 import InactiveBasketballPage from "../components/basketballinactive";
 
-// ⚠️ Next.js 15+ makes `params` a Promise — MUST use `use(params)`
+// Next.js 15+ — params is a Promise
 export default function Page({
   params,
 }: {
   params: Promise<{ gameId: string }>;
 }) {
-  // 🔥 Required fix — unwrap the params Promise
+  // Unwrap params Promise
   const { gameId } = use(params);
 
   const [game, setGame] = useState<any>(null);
@@ -28,15 +28,16 @@ export default function Page({
         .from("bb_games")
         .select("*")
         .eq("id", gameId)
-        .single();
+        .maybeSingle();
 
       if (error) console.error("GAME LOAD ERROR:", error);
+
       setGame(data);
     }
 
     loadGame();
 
-    const interval = setInterval(loadGame, 1500);
+    const interval = setInterval(loadGame, 1200);
     return () => clearInterval(interval);
   }, [gameId]);
 
@@ -62,13 +63,12 @@ export default function Page({
   }
 
   /* ------------------------------------------------------------
-     CHECK IF GAME IS RUNNING
+     WALL MODES
+     game_running = true → Active Game UI
+     game_running = false → Inactive Wall
   ------------------------------------------------------------ */
   const isGameRunning = game.game_running === true;
 
-  /* ------------------------------------------------------------
-     RENDER WALL MODE
-  ------------------------------------------------------------ */
   return isGameRunning ? (
     <ActiveBasketballPage params={{ gameId }} />
   ) : (

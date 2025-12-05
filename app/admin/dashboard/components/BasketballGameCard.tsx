@@ -34,9 +34,11 @@ export default function BasketballGameCard({
 
   if (!game?.id) {
     return (
-      <div className={cn(
-        "rounded-xl p-4 text-center bg-gray-700/20 text-gray-300 border border-white/10"
-      )}>
+      <div
+        className={cn(
+          "rounded-xl p-4 text-center bg-gray-700/20 text-gray-300 border border-white/10"
+        )}
+      >
         Loading game…
       </div>
     );
@@ -64,15 +66,15 @@ export default function BasketballGameCard({
   }
 
   /* ------------------------------------------------------------
-     ACTIVATE WALL (but do NOT start game)
+     ACTIVATE WALL — switch popup to ACTIVE display (no timer yet)
   ------------------------------------------------------------ */
   async function handleActivateWall() {
     await supabase
       .from("bb_games")
       .update({
-        status: "running",        // wall view mode
-        game_running: false,      // NOT running yet
-        game_timer_start: null,   // reset timer
+        status: "running",        // Wall UI glow/active style
+        game_running: true,       // REQUIRED so popup switches layouts
+        game_timer_start: null,   // Timer starts later
       })
       .eq("id", game.id);
 
@@ -81,32 +83,28 @@ export default function BasketballGameCard({
   }
 
   /* ------------------------------------------------------------
-     START GAME – FIXED + SAFE
-     Sends:
-       • postMessage → Wall
-       • start_countdown → Shooters + Wall
+     START GAME
+     - triggers countdown
+     - sends broadcast
+     - popup page will start timer
   ------------------------------------------------------------ */
   async function handleStartGame() {
     if (!wallActivated) return;
 
     console.log("▶ Start Game Triggered");
 
-    // Post to the active Wall popup
+    // Tell wall popup
     window._basketballPopup?.postMessage(
       { type: "start_game", gameId: game.id },
       "*"
     );
 
-    // Broadcast to all Shooters + Wall
-    console.log("📢 Broadcasting start_countdown…");
-
+    // Broadcast countdown to shooters + wall
     await supabase.channel(`basketball-${game.id}`).send({
       type: "broadcast",
       event: "start_countdown",
       payload: { gameId: game.id },
     });
-
-    console.log("📢 start_countdown broadcast COMPLETE!");
 
     await onRefresh();
   }
@@ -121,7 +119,7 @@ export default function BasketballGameCard({
   }
 
   /* ------------------------------------------------------------
-     RENDER CARD UI
+     RENDER CARD
   ------------------------------------------------------------ */
   return (
     <div
@@ -137,11 +135,15 @@ export default function BasketballGameCard({
     >
       {/* HEADER */}
       <div>
-        <h3 className={cn('font-bold', 'text-lg', 'mb-1')}>
+        <h3 className={cn("font-bold text-lg mb-1")}>
           {game.title || "Untitled Game"}
         </h3>
 
-        <p className={cn('text-sm', 'mb-3', 'flex', 'justify-center', 'items-center', 'gap-2')}>
+        <p
+          className={cn(
+            "text-sm mb-3 flex justify-center items-center gap-2"
+          )}
+        >
           <strong>Status:</strong>
           <span
             className={cn(
@@ -158,35 +160,45 @@ export default function BasketballGameCard({
         </p>
       </div>
 
-      {/* BUTTON GROUP */}
-      <div className={cn('flex', 'flex-col', 'gap-3', 'mt-auto', 'pt-3', 'border-t', 'border-white/10')}>
-
+      {/* BUTTONS */}
+      <div
+        className={cn(
+          "flex flex-col gap-3 mt-auto pt-3 border-t border-white/10"
+        )}
+      >
         {/* Moderate */}
         <button
           onClick={() => onOpenModeration(game.id)}
-          className={cn('w-full', 'py-2', 'rounded', 'text-sm', 'font-semibold', 'bg-yellow-500', 'hover:bg-yellow-600', 'text-black')}
+          className={cn(
+            "w-full py-2 rounded text-sm font-semibold bg-yellow-500 hover:bg-yellow-600 text-black"
+          )}
         >
           👥 Moderate Players
         </button>
 
-        {/* Launch Wall + Activate */}
-        <div className={cn('grid', 'grid-cols-2', 'gap-2')}>
+        {/* Launch + Activate */}
+        <div className={cn("grid grid-cols-2 gap-2")}>
           <button
             onClick={openWallWindow}
-            className={cn('w-full', 'py-2', 'rounded', 'text-sm', 'font-semibold', 'bg-purple-600', 'hover:bg-purple-700', 'text-white')}
+            className={cn(
+              "w-full py-2 rounded text-sm font-semibold bg-purple-600 hover:bg-purple-700 text-white"
+            )}
           >
             🚀 Launch Wall
           </button>
+
           <button
             onClick={handleActivateWall}
-            className={cn('w-full', 'py-2', 'rounded', 'text-sm', 'font-semibold', 'bg-blue-600', 'hover:bg-blue-700', 'text-white')}
+            className={cn(
+              "w-full py-2 rounded text-sm font-semibold bg-blue-600 hover:bg-blue-700 text-white"
+            )}
           >
             🟦 Activate Wall
           </button>
         </div>
 
         {/* Start + Stop */}
-        <div className={cn('grid', 'grid-cols-2', 'gap-2')}>
+        <div className={cn("grid grid-cols-2 gap-2")}>
           <button
             onClick={handleStartGame}
             disabled={!wallActivated}
@@ -217,7 +229,9 @@ export default function BasketballGameCard({
         {/* Options */}
         <button
           onClick={() => onOpenOptions(game)}
-          className={cn('w-full', 'py-2', 'mt-2', 'rounded', 'text-sm', 'font-semibold', 'bg-indigo-500', 'hover:bg-indigo-600', 'text-white')}
+          className={cn(
+            "w-full py-2 mt-2 rounded text-sm font-semibold bg-indigo-500 hover:bg-indigo-600 text-white"
+          )}
         >
           ⚙ Game Options
         </button>
@@ -225,7 +239,9 @@ export default function BasketballGameCard({
         {/* Delete */}
         <button
           onClick={() => onDelete(game.id)}
-          className={cn('w-full', 'py-2', 'rounded', 'text-sm', 'font-semibold', 'bg-red-700', 'hover:bg-red-800', 'text-white')}
+          className={cn(
+            "w-full py-2 rounded text-sm font-semibold bg-red-700 hover:bg-red-800 text-white"
+          )}
         >
           ❌ Delete
         </button>
