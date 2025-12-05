@@ -29,8 +29,8 @@ export default function ShooterPage({ params }: { params: Promise<{ gameId: stri
   const [playerId, setPlayerId] = useState<string | null>(null);
   const [laneIndex, setLaneIndex] = useState<number | null>(null);
   const [laneColor, setLaneColor] = useState<string>("#222");
-
   const [score, setScore] = useState(0);
+
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
   const [duration, setDuration] = useState<number>(0);
   const [timerStartedAt, setTimerStartedAt] = useState<string | null>(null);
@@ -39,26 +39,36 @@ export default function ShooterPage({ params }: { params: Promise<{ gameId: stri
 
   const startY = useRef(0);
 
-  /* Load local player id */
+  /* Load stored player ID */
   useEffect(() => {
     const stored = localStorage.getItem("bb_player_id");
     if (stored) setPlayerId(stored);
   }, []);
 
-  /* LISTEN FOR COUNTDOWN EVENTS */
+  /* ============================================
+     LISTEN FOR COUNTDOWN + START GAME EVENTS
+  ============================================ */
   useEffect(() => {
     const channel = supabase
       .channel(`basketball-${gameId}`)
 
-      .on("broadcast", { event: "start_countdown" }, () => {
-        console.log("📱 Phone received start_countdown");
-        setPreCountdown(10);
-      })
+      .on(
+        "broadcast",
+        { event: "start_countdown" },
+        () => {
+          console.log("📱 Received start_countdown");
+          setPreCountdown(10);
+        }
+      )
 
-      .on("broadcast", { event: "start_game" }, () => {
-        console.log("📱 Phone received start_game");
-        setPreCountdown(10);
-      })
+      .on(
+        "broadcast",
+        { event: "start_game" },
+        () => {
+          console.log("📱 Received start_game");
+          setPreCountdown(10);
+        }
+      )
 
       .subscribe();
 
@@ -67,7 +77,7 @@ export default function ShooterPage({ params }: { params: Promise<{ gameId: stri
     };
   }, [gameId]);
 
-  /* Countdown ticker */
+  /* COUNTDOWN TICKER */
   useEffect(() => {
     if (preCountdown === null) return;
     if (preCountdown <= 0) {
@@ -78,7 +88,7 @@ export default function ShooterPage({ params }: { params: Promise<{ gameId: stri
     return () => clearTimeout(t);
   }, [preCountdown]);
 
-  /* Load player info */
+  /* LOAD PLAYER INFO */
   useEffect(() => {
     if (!playerId) return;
 
@@ -102,7 +112,7 @@ export default function ShooterPage({ params }: { params: Promise<{ gameId: stri
     return () => clearInterval(interval);
   }, [playerId]);
 
-  /* Listen for realtime score updates */
+  /* REALTIME SCORE UPDATES */
   useEffect(() => {
     if (!playerId) return;
 
@@ -111,9 +121,7 @@ export default function ShooterPage({ params }: { params: Promise<{ gameId: stri
       .on(
         "postgres_changes",
         { event: "UPDATE", schema: "public", table: "bb_game_players", filter: `id=eq.${playerId}` },
-        (payload) => {
-          setScore(payload.new.score);
-        }
+        (payload) => setScore(payload.new.score)
       )
       .subscribe();
 
@@ -122,7 +130,7 @@ export default function ShooterPage({ params }: { params: Promise<{ gameId: stri
     };
   }, [playerId]);
 
-  /* Load game timer */
+  /* LOAD GAME TIMER */
   useEffect(() => {
     async function loadGame() {
       const { data } = await supabase
@@ -156,15 +164,16 @@ export default function ShooterPage({ params }: { params: Promise<{ gameId: stri
     return () => clearInterval(interval);
   }, [gameId]);
 
-  /* Timer local tick */
+  /* LOCAL TIMER TICK */
   useEffect(() => {
     if (timerStartedAt == null || timeLeft == null) return;
     if (timeLeft <= 0) return;
+
     const t = setTimeout(() => setTimeLeft(timeLeft - 1), 1000);
     return () => clearTimeout(t);
   }, [timeLeft, timerStartedAt]);
 
-  /* Shooting mechanics */
+  /* SHOOTING */
   async function sendShot(power: number) {
     if (!playerId) return;
 
@@ -172,6 +181,7 @@ export default function ShooterPage({ params }: { params: Promise<{ gameId: stri
 
     if (made) {
       await supabase.rpc("increment_player_score", { p_player_id: playerId });
+
       await supabase.channel(`basketball-${gameId}`).send({
         type: "broadcast",
         event: "update_score",
@@ -187,36 +197,38 @@ export default function ShooterPage({ params }: { params: Promise<{ gameId: stri
   function handleTouchEnd(e: any) {
     const endY = e.changedTouches[0].clientY;
     const distance = startY.current - endY;
+
     if (distance < 30) return;
+
     let power = Math.min(1, Math.max(0, distance / 500));
     sendShot(power);
   }
 
-  /* ============================
-     MOBILE-RESPONSIVE UI
-  ============================ */
+  /* ============================================
+     RENDER
+  ============================================ */
   return (
     <div
       style={{
         width: "100vw",
         height: "100vh",
         background: "black",
-        border: `min(5px, 1vw) solid ${laneColor}`,   // scaled border
+        border: `min(5px, 1vw) solid ${laneColor}`,
         boxSizing: "border-box",
         display: "flex",
         flexDirection: "column",
-        padding: "min(20px, 4vw)",                   // scaled padding
+        padding: "min(20px, 4vw)",
         color: "white",
         userSelect: "none",
         touchAction: "none",
-        position: "fixed",                            // lock to screen
+        position: "fixed",
         top: 0,
         left: 0,
       }}
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
     >
-      {/* COUNTDOWN OVERLAY */}
+      {/* FULLSCREEN COUNTDOWN */}
       {preCountdown !== null && (
         <div
           style={{
@@ -227,7 +239,7 @@ export default function ShooterPage({ params }: { params: Promise<{ gameId: stri
             justifyContent: "center",
             alignItems: "center",
             color: "white",
-            fontSize: "clamp(4rem, 20vw, 12rem)",   // responsive countdown
+            fontSize: "clamp(4rem, 20vw, 12rem)",
             fontWeight: 900,
             textShadow: "0 0 60px rgba(255,0,0,0.9)",
             zIndex: 9999,
@@ -237,12 +249,12 @@ export default function ShooterPage({ params }: { params: Promise<{ gameId: stri
         </div>
       )}
 
-      {/* HEADER AREA */}
+      {/* HEADER */}
       <div
         style={{
           display: "flex",
           justifyContent: "space-between",
-          fontSize: "clamp(1.6rem, 7vw, 3rem)", // scales per phone size
+          fontSize: "clamp(1.6rem, 7vw, 3rem)",
           fontWeight: 900,
           marginBottom: "min(20px, 4vw)",
         }}
@@ -252,7 +264,7 @@ export default function ShooterPage({ params }: { params: Promise<{ gameId: stri
         <div>{timeLeft ?? "--"}</div>
       </div>
 
-      {/* MAIN SWIPE AREA */}
+      {/* SWIPE AREA */}
       <div
         style={{
           flexGrow: 1,
