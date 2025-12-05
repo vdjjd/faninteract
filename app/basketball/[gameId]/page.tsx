@@ -1,17 +1,19 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { use, useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
 import ActiveBasketballPage from "../components/basketballActive";
-import InactiveBasketballPage from "../components/basketballinactive"; // ⭐ FIXED Casing
+import InactiveBasketballPage from "../components/basketballinactive";
 
+// ⚠️ Next.js 15+ makes `params` a Promise — MUST use `use(params)`
 export default function Page({
   params,
 }: {
-  params: { gameId: string };
+  params: Promise<{ gameId: string }>;
 }) {
-  const { gameId } = params;
+  // 🔥 Required fix — unwrap the params Promise
+  const { gameId } = use(params);
 
   const [game, setGame] = useState<any>(null);
 
@@ -19,6 +21,8 @@ export default function Page({
      LOAD GAME RECORD
   ------------------------------------------------------------ */
   useEffect(() => {
+    if (!gameId) return;
+
     async function loadGame() {
       const { data, error } = await supabase
         .from("bb_games")
@@ -27,11 +31,11 @@ export default function Page({
         .single();
 
       if (error) console.error("GAME LOAD ERROR:", error);
-
       setGame(data);
     }
 
     loadGame();
+
     const interval = setInterval(loadGame, 1500);
     return () => clearInterval(interval);
   }, [gameId]);
@@ -58,14 +62,12 @@ export default function Page({
   }
 
   /* ------------------------------------------------------------
-     FIXED: USE CORRECT FIELD
-     bb_games.status != game_running
-     game_running is TRUE only when activated+started
+     CHECK IF GAME IS RUNNING
   ------------------------------------------------------------ */
   const isGameRunning = game.game_running === true;
 
   /* ------------------------------------------------------------
-     RENDER
+     RENDER WALL MODE
   ------------------------------------------------------------ */
   return isGameRunning ? (
     <ActiveBasketballPage params={{ gameId }} />
