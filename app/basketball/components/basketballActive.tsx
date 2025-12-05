@@ -34,6 +34,15 @@ export default function ActiveBasketballPage({
   const hostLogo = "/faninteractlogo.png";
 
   /* -----------------------------------------------------------
+     WINNER CALCULATION
+     - true max score among all active players
+     - ensures winner highlight works
+  ----------------------------------------------------------- */
+  const maxScore = players.length
+    ? Math.max(...players.map((p) => p.score), 0)
+    : 0;
+
+  /* -----------------------------------------------------------
      RENDER UI GRID
   ----------------------------------------------------------- */
   return (
@@ -64,19 +73,25 @@ export default function ActiveBasketballPage({
           gridTemplateRows: "repeat(2, 1fr)",
         }}
       >
-        {Array.from({ length: 10 }).map((_, i) => (
-          <PlayerCard
-            key={i}
-            index={i}
-            player={players.find((p) => p.cell === i)}
-            ball={ballAnimations[i]}
-            timeLeft={timeLeft}
-            score={players.find((p) => p.cell === i)?.score ?? 0}
-            borderColor={CELL_COLORS[i]}
-            timerExpired={timerExpired}
-            hostLogo={hostLogo}
-          />
-        ))}
+        {Array.from({ length: 10 }).map((_, i) => {
+          const player = players.find((p) => p.cell === i);
+          const score = player?.score ?? 0;
+
+          return (
+            <PlayerCard
+              key={i}
+              index={i}
+              player={player}
+              ball={ballAnimations[i]}
+              timeLeft={timeLeft}
+              score={score}
+              borderColor={CELL_COLORS[i]}
+              timerExpired={timerExpired}
+              hostLogo={hostLogo}
+              maxScore={maxScore}        // ⭐ PASS maxScore HERE
+            />
+          );
+        })}
       </div>
 
       {/* FULLSCREEN BUTTON */}

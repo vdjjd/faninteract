@@ -19,6 +19,7 @@ export function PlayerCard({
   borderColor,
   timerExpired,
   hostLogo,
+  maxScore,       // ⭐ FIX: receives the true maxScore
 }: {
   index: number;
   player: Player | undefined;
@@ -28,9 +29,21 @@ export function PlayerCard({
   borderColor: string;
   timerExpired: boolean;
   hostLogo: string | null;
+  maxScore: number;   // ⭐ FIX
 }) {
-  const maxScore = score;
-  const isWinner = timerExpired && player && player.score === maxScore;
+
+  /* -----------------------------------------------------------
+     WINNER LOGIC (correct)
+     - timer must be expired
+     - player must exist
+     - player.score must match maxScore
+     - maxScore must be > 0 (so 0–0 ties don't highlight)
+  ----------------------------------------------------------- */
+  const isWinner =
+    timerExpired &&
+    player &&
+    player.score === maxScore &&
+    maxScore > 0;
 
   return (
     <div
@@ -61,9 +74,11 @@ export function PlayerCard({
           fontWeight: 700,
         }}
       >
-        {timeLeft !== null ? `${Math.floor(timeLeft / 60)}:${(timeLeft % 60)
-          .toString()
-          .padStart(2, "0")}` : "--:--"}
+        {timeLeft !== null
+          ? `${Math.floor(timeLeft / 60)}:${(timeLeft % 60)
+              .toString()
+              .padStart(2, "0")}`
+          : "--:--"}
       </div>
 
       {/* SLOT LABEL */}
@@ -225,7 +240,7 @@ export function PlayerCard({
         {player
           ? `${player.nickname?.split(" ")[0] || ""} ${
               player.nickname?.split(" ")[1]
-                ? player.nickname.split(" ")[1][0] + "."
+                ? player.nickname.split("")[1][0] + "."
                 : ""
             }`
           : "Open Slot"}
