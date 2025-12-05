@@ -17,7 +17,7 @@ export function useGameTimer(gameId: string, preCountdown: number | null) {
   const [gameRunning, setGameRunning] = useState(false);
 
   /* -----------------------------------------------------------
-     LOAD GAME STATUS
+     LOAD GAME STATUS + TIMER SYNC
   ----------------------------------------------------------- */
   useEffect(() => {
     async function loadGame() {
@@ -32,26 +32,37 @@ export function useGameTimer(gameId: string, preCountdown: number | null) {
 
       setDuration(row.duration_seconds);
       setGameRunning(row.game_running);
+
+      // Countdown overlay visible → freeze timer
+      if (preCountdown !== null) {
+        // Don't reset timer unless no start time exists
+        if (!row.game_timer_start) {
+          setTimeLeft(row.duration_seconds);
+        }
+        return;
+      }
+
+      /* ------------------------------
+         GAME NOT STARTED YET
+      ------------------------------ */
+      if (!row.game_running && !row.game_timer_start) {
+        setTimerStartedAt(null);
+        setTimeLeft(row.duration_seconds);
+        return;
+      }
+
+      /* ------------------------------
+         GAME RUNNING (or finished but started)
+      ------------------------------ */
       setTimerStartedAt(row.game_timer_start);
 
-      // Countdown is running → timer frozen
-      if (preCountdown !== null) {
-        setTimeLeft(row.duration_seconds);
-        return;
+      if (row.game_timer_start) {
+        const start = new Date(row.game_timer_start).getTime();
+        const elapsed = Math.floor((Date.now() - start) / 1000);
+        const remaining = Math.max(row.duration_seconds - elapsed, 0);
+
+        setTimeLeft(remaining);
       }
-
-      // Game hasn't started yet
-      if (!row.game_running || !row.game_timer_start) {
-        setTimeLeft(row.duration_seconds);
-        return;
-      }
-
-      // Compute remaining time
-      const start = new Date(row.game_timer_start).getTime();
-      const elapsed = Math.floor((Date.now() - start) / 1000);
-      const remaining = Math.max(row.duration_seconds - elapsed, 0);
-
-      setTimeLeft(remaining);
     }
 
     loadGame();
@@ -60,25 +71,27 @@ export function useGameTimer(gameId: string, preCountdown: number | null) {
   }, [gameId, preCountdown]);
 
   /* -----------------------------------------------------------
-     LOCAL TIMER TICK
+     LOCAL TIMER TICK (only runs after countdown ends)
   ----------------------------------------------------------- */
   useEffect(() => {
-    if (!gameRunning) return;
-    if (preCountdown !== null) return;
-    if (timerStartedAt === null) return;
-    if (timeLeft === null || timeLeft <= 0) {
+    if (preCountdown !== null) return;     // freeze until 10-sec overlay ends
+    if (!gameRunning) return;              // only tick if admin started game
+    if (!timerStartedAt) return;           // must have a timer start
+    if (timeLeft === null) return;
+
+    if (timeLeft <= 0) {
       setTimerExpired(true);
       return;
     }
 
     const t = setTimeout(() => {
-      setTimeLeft((old) => {
-        if (old === null) return null;
-        if (old <= 1) {
+      setTimeLeft((prev) => {
+        if (prev === null) return null;
+        if (prev <= 1) {
           setTimerExpired(true);
           return 0;
         }
-        return old - 1;
+        return prev - 1;
       });
     }, 1000);
 
