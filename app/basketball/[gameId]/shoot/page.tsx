@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, use } from "react";
+import { useState, useRef, useEffect } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
 /* Lane Colors (must match wall) */
@@ -23,8 +23,8 @@ interface DBGame {
   game_timer_start: string | null;
 }
 
-export default function ShooterPage({ params }: { params: Promise<{ gameId: string }> }) {
-  const { gameId } = use(params);
+export default function ShooterPage({ params }: { params: { gameId: string } }) {
+  const gameId = params.gameId;   // ✅ FIX — No Promise, no use()
 
   const [playerId, setPlayerId] = useState<string | null>(null);
   const [laneIndex, setLaneIndex] = useState<number | null>(null);
@@ -33,7 +33,6 @@ export default function ShooterPage({ params }: { params: Promise<{ gameId: stri
   const [score, setScore] = useState(0);
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
   const [duration, setDuration] = useState(0);
-
   const [timerStartedAt, setTimerStartedAt] = useState<string | null>(null);
 
   const [preCountdown, setPreCountdown] = useState<number | null>(null);
@@ -46,14 +45,24 @@ export default function ShooterPage({ params }: { params: Promise<{ gameId: stri
     if (stored) setPlayerId(stored);
   }, []);
 
-  /* Listen for realtime start_countdown broadcast */
+  /* ============================================
+     LISTEN FOR REALTIME start_countdown EVENT
+  ============================================ */
   useEffect(() => {
+    if (!gameId) return;
+
+    console.log("📱 Subscribing to channel:", `basketball-${gameId}`);
+
     const channel = supabase
       .channel(`basketball-${gameId}`)
-      .on("broadcast", { event: "start_countdown" }, () => {
-        console.log("📱 Shooter received start_countdown");
-        setPreCountdown(10);
-      })
+      .on(
+        "broadcast",
+        { event: "start_countdown" },
+        () => {
+          console.log("📱 Shooter RECEIVED start_countdown!");
+          setPreCountdown(10);
+        }
+      )
       .subscribe();
 
     return () => {
@@ -69,11 +78,12 @@ export default function ShooterPage({ params }: { params: Promise<{ gameId: stri
       setPreCountdown(null);
       return;
     }
+
     const t = setTimeout(() => setPreCountdown(preCountdown - 1), 1000);
     return () => clearTimeout(t);
   }, [preCountdown]);
 
-  /* Load player entry */
+  /* Load player info */
   useEffect(() => {
     if (!playerId) return;
 
@@ -86,8 +96,8 @@ export default function ShooterPage({ params }: { params: Promise<{ gameId: stri
 
       if (data) {
         setLaneIndex(data.lane_index);
-        setLaneColor(CELL_COLORS[data.lane_index] || "#444");
-        setScore(data.score || 0);
+        setLaneColor(CELL_COLORS[data.lane_index] ?? "#444");
+        setScore(data.score ?? 0);
       }
     }
 
@@ -105,9 +115,9 @@ export default function ShooterPage({ params }: { params: Promise<{ gameId: stri
       .on(
         "postgres_changes",
         {
-          schema: "public",
-          table: "bb_game_players",
           event: "UPDATE",
+          table: "bb_game_players",
+          schema: "public",
           filter: `id=eq.${playerId}`,
         },
         (payload) => {
@@ -121,7 +131,7 @@ export default function ShooterPage({ params }: { params: Promise<{ gameId: stri
     };
   }, [playerId]);
 
-  /* Load timer from game */
+  /* Load game timer */
   useEffect(() => {
     async function loadGame() {
       const { data } = await supabase
@@ -153,7 +163,7 @@ export default function ShooterPage({ params }: { params: Promise<{ gameId: stri
     return () => clearInterval(interval);
   }, [gameId]);
 
-  /* Local timer tick */
+  /* Local ticking */
   useEffect(() => {
     if (!timerStartedAt || timeLeft === null) return;
     if (timeLeft <= 0) return;
@@ -162,8 +172,9 @@ export default function ShooterPage({ params }: { params: Promise<{ gameId: stri
     return () => clearTimeout(t);
   }, [timeLeft, timerStartedAt]);
 
+  /* SEND SHOT */
   async function sendShot(power: number) {
-    if (!playerId) return;
+    if (!playerId || laneIndex === null) return;
 
     const made = Math.random() < (0.45 + power * 0.35);
 
@@ -184,14 +195,14 @@ export default function ShooterPage({ params }: { params: Promise<{ gameId: stri
 
   function handleTouchEnd(e: any) {
     const endY = e.changedTouches[0].clientY;
-    const dist = startY.current - endY;
-    if (dist < 30) return;
+    const distance = startY.current - endY;
+    if (distance < 30) return;
 
-    const power = Math.min(1, Math.max(0, dist / 500));
+    const power = Math.min(1, Math.max(0, distance / 500));
     sendShot(power);
   }
 
-  /* UI */
+  /* RENDER */
   return (
     <div
       style={{
@@ -211,6 +222,7 @@ export default function ShooterPage({ params }: { params: Promise<{ gameId: stri
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
     >
+      {/* FULLSCREEN COUNTDOWN */}
       {preCountdown !== null && (
         <div
           style={{
@@ -222,6 +234,7 @@ export default function ShooterPage({ params }: { params: Promise<{ gameId: stri
             alignItems: "center",
             fontSize: "clamp(4rem, 20vw, 12rem)",
             fontWeight: 900,
+            color: "white",
             zIndex: 9999,
           }}
         >
@@ -229,13 +242,14 @@ export default function ShooterPage({ params }: { params: Promise<{ gameId: stri
         </div>
       )}
 
+      {/* HEADER */}
       <div
         style={{
           display: "flex",
           justifyContent: "space-between",
           fontSize: "clamp(1.6rem, 7vw, 3rem)",
-          marginBottom: "min(20px, 4vw)",
           fontWeight: 900,
+          marginBottom: "min(20px, 4vw)",
         }}
       >
         <div>P{(laneIndex ?? 0) + 1}</div>
@@ -243,6 +257,7 @@ export default function ShooterPage({ params }: { params: Promise<{ gameId: stri
         <div>{timeLeft ?? "--"}</div>
       </div>
 
+      {/* SWIPE AREA */}
       <div
         style={{
           flexGrow: 1,
@@ -251,7 +266,6 @@ export default function ShooterPage({ params }: { params: Promise<{ gameId: stri
           alignItems: "center",
           fontSize: "clamp(1.8rem, 8vw, 3rem)",
           opacity: 0.85,
-          textAlign: "center",
         }}
       >
         SWIPE UP TO SHOOT
