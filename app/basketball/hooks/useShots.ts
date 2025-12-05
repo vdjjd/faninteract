@@ -12,7 +12,6 @@ import {
   rimDeflect,
   rimRattle,
   lipOutChance,
-  bankShotBounce,
   bounceVertical,
   bounceHorizontal,
   rimAssist
@@ -36,7 +35,10 @@ export interface BallState {
   netStage: 0 | 1 | 2;
 }
 
-const RIM_Y = 24;
+/* ------------------------------------------------------------
+   REAL SCREEN DEPTH — RIM MUST BE DEEPER
+------------------------------------------------------------ */
+const RIM_Y = 48;     // was 24 → WAY too close
 const RIM_WIDTH = 14;
 
 /* ============================================================
@@ -87,45 +89,59 @@ export function useShots(gameId: string, players: Player[]) {
 
     const interval = setInterval(() => {
       step++;
-
       const progress = step / totalSteps;
 
-      /* BUILD TRAJECTORY USING NEW PHYSICS */
-      const arcY = computeArcY(progress, power); // true parabola + smooth easing
+      /* --------------------------------------------------------
+         NEW TRAJECTORY (deep, realistic)
+      -------------------------------------------------------- */
+      const arcY = computeArcY(progress, power); // true parabola
       let y = 4 + arcY;
 
-      let x = computeArcX(progress, power, spin); // slight curve + spin drift
+      let x = computeArcX(progress, power, spin); // forward + curve
 
       const scale = 1 - progress * 0.45;
 
-      /* RIM + BACKBOARD CONSTANTS */
+      /* --------------------------------------------------------
+         PHYSICAL OBJECTS
+      -------------------------------------------------------- */
       const rim = { x: 0, y: RIM_Y, width: RIM_WIDTH };
-      const board = { x: 0, y: 18, width: 40 };
+      const board = { x: 0, y: 36, width: 40 }; 
+      // moved board deeper (was 18)
 
-      /* 20% ARCADE RIM ASSIST */
+      /* --------------------------------------------------------
+         20% ARCADE RIM ASSIST
+      -------------------------------------------------------- */
       x += rimAssist({ x, y }, rim);
 
-      /* BACKBOARD COLLISION */
+      /* --------------------------------------------------------
+         BACKBOARD COLLISION
+      -------------------------------------------------------- */
       if (detectBackboardCollision({ x, y }, 18 * scale, board)) {
         x += bounceHorizontal(x, power);
         y += bounceVertical(y, power);
       }
 
-      /* RIM COLLISION */
+      /* --------------------------------------------------------
+         RIM COLLISION + RATTLE
+      -------------------------------------------------------- */
       const rimHit = detectRimCollision({ x, y }, 18 * scale, rim);
 
       if (rimHit) {
+        const deflect = rimDeflect(x, rim.x, spin);
+
         if (lipOutChance(power, spin)) {
-          x += rimDeflect(x, rim.x, spin);
+          x += deflect;
           y += rimRattle(power);
         } else {
-          x += rimDeflect(x, rim.x, spin) * 0.5;
+          x += deflect * 0.5;
           y += rimRattle(power) * 0.5;
         }
       }
 
-      /* AUTO-SCORE WINDOW */
-      if (progress > 0.83 && progress < 0.93) {
+      /* --------------------------------------------------------
+         AUTO-SCORE WINDOW
+      -------------------------------------------------------- */
+      if (progress > 0.82 && progress < 0.93) {
         const player = players.find((p) => p.cell === lane);
         if (player) {
           supabase.from("bb_game_players")
@@ -134,7 +150,9 @@ export function useShots(gameId: string, players: Player[]) {
         }
       }
 
-      /* END ANIMATION */
+      /* --------------------------------------------------------
+         END ANIMATION
+      -------------------------------------------------------- */
       if (step >= totalSteps) {
         clearInterval(interval);
 
@@ -157,7 +175,9 @@ export function useShots(gameId: string, players: Player[]) {
         return;
       }
 
-      /* FRAME UPDATE */
+      /* --------------------------------------------------------
+         FRAME UPDATE
+      -------------------------------------------------------- */
       setBallAnimations((prev) => {
         const next = [...prev];
         next[lane] = {
@@ -193,7 +213,6 @@ export function useShots(gameId: string, players: Player[]) {
       })
       .subscribe();
 
-    /* SYNC CLEANUP — NO PROMISES */
     return () => {
       try {
         supabase.removeChannel(channel);

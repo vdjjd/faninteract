@@ -20,42 +20,45 @@ export interface Backboard {
 }
 
 /* ============================================================
-   TRUE PARABOLIC ARC + VISUAL GRAVITY EASING
+   TRUE PARABOLIC ARC WITH REALISTIC HEIGHT
 ============================================================ */
 /**
- * p = 0 → 1 → parabolic path (up then down)
- * But eased visually so it *feels* smooth.
+ * Uses a true 0→1→0 parabola for vertical arc
+ * Height tuned for realism + a slight arcade boost
  */
 export function computeArcY(progress: number, power: number): number {
-  const rawArc = 4 * progress * (1 - progress); // true parabola 0→1→0
-
-  // Add slight arcade exaggeration to apex height
-  const height = 80 + power * 60;
-
+  const rawArc = 4 * progress * (1 - progress); // true parabola
+  const height = 65 + power * 45; // more natural than 80 + 60
   return rawArc * height;
 }
 
 /* ============================================================
-   SIDE-BIAS SPIN EFFECT (arcade realism)
+   REAL FORWARD MOTION + ARCADE SPIN CURVE
 ============================================================ */
 export function computeArcX(progress: number, power: number, spin: number) {
-  // forward motion based on shot strength
-  const forward = progress * (26 + power * 18);
+  // Forward travel — the #1 thing missing before
+  const forwardDistance = 120 + power * 60; // MUCH deeper into the scene
 
-  // side deviation based on spin
-  const sideCurve = spin * (progress * 14);
+  // Progress-based forward push
+  const xForward = progress * forwardDistance;
 
-  return (progress - 0.5) * 10 + forward * 0.02 + sideCurve;
+  // Spin curve (gradual)
+  const xSpin = (progress * progress) * spin * 20;
+
+  // Center ball at start, push forward into rim
+  return xForward - forwardDistance / 2 + xSpin;
 }
 
 /* ============================================================
-   RIM COLLISION (REALISTIC CYLINDER)
+   RIM COLLISION — CYLINDER DETECTION
 ============================================================ */
 export function detectRimCollision(ball: Vec2, radius: number, rim: Rim): boolean {
   const half = rim.width / 2;
 
-  // Check if ball intersects rim cylinder region
-  const withinX = ball.x > rim.x - half - radius && ball.x < rim.x + half + radius;
+  const withinX =
+    ball.x > rim.x - half - radius &&
+    ball.x < rim.x + half + radius;
+
   const withinY = Math.abs(ball.y - rim.y) < radius * 1.4;
 
   return withinX && withinY;
@@ -67,69 +70,61 @@ export function detectRimCollision(ball: Vec2, radius: number, rim: Rim): boolea
 export function rimDeflect(ballX: number, rimX: number, spin: number): number {
   const side = ballX > rimX ? 1 : -1;
   const base = 0.25 + spin * 0.4;
-
   return side * base;
 }
 
 /* ============================================================
-   RIM RATTLING — natural but enhanced
+   RIM RATTLING — ENHANCED BOUNCE
 ============================================================ */
 export function rimRattle(power: number): number {
   return (Math.random() - 0.5) * (0.4 + power * 0.6);
 }
 
 /* ============================================================
-   ARCADE-STYLE “MAGNETIC RIM ASSIST”
-   Helps borderline shots feel satisfying.
+   RIM ASSIST — 20% ARCADE
 ============================================================ */
 export function rimAssist(ball: Vec2, rim: Rim): number {
   const dx = ball.x - rim.x;
   const dist = Math.abs(dx);
 
+  // Soft “magnetic pull” toward the rim center
   if (dist < rim.width * 0.6) {
-    return -dx * 0.03; // small pull toward center
+    return -dx * 0.03;
   }
-
   return 0;
 }
 
 /* ============================================================
-   LIP-OUT CHANCE
+   LIP-OUT CHANCE — LOOKS REAL
 ============================================================ */
 export function lipOutChance(power: number, spin: number): boolean {
-  // realistic baseline + arcade spin influence
   const probability = 0.05 + power * 0.06 + spin * 0.08;
   return Math.random() < probability;
 }
 
 /* ============================================================
-   BACKBOARD COLLISION (REALISTIC)
+   BACKBOARD COLLISION
 ============================================================ */
 export function detectBackboardCollision(ball: Vec2, radius: number, board: Backboard): boolean {
   const withinY = Math.abs(ball.y - board.y) < radius * 1.4;
   const withinX = Math.abs(ball.x - board.x) < board.width / 2 + radius;
-
   return withinX && withinY;
 }
 
 /* ============================================================
-   BANK SHOT BOUNCE (ENERGY LOSS)
+   BANK SHOT BOUNCE
 ============================================================ */
 export function bankShotBounce(velocityX: number, power: number): number {
-  // Realistic dampened bounce with slight arcade push
   return -velocityX * (0.45 + power * 0.2);
 }
 
 /* ============================================================
-   VERTICAL BOUNCE — loss of energy
+   ENERGY-LOSS BOUNCES
 ============================================================ */
 export function bounceVertical(vy: number, power: number): number {
   return -Math.abs(vy) * (0.38 + power * 0.18);
 }
 
-/* ============================================================
-   HORIZONTAL BOUNCE
-============================================================ */
 export function bounceHorizontal(vx: number, power: number): number {
   return -vx * (0.35 + power * 0.2);
 }
