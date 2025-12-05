@@ -44,7 +44,7 @@ export function computeArcVertical(depth: number, power: number): number {
   const arc = 4 * depth * (1 - depth);
 
   // Pop-A-Shot arc height (not too tall)
-  const HEIGHT = 18 + power * 24;
+  const HEIGHT = 40 + power * 50;
 
   return arc * HEIGHT;
 }
@@ -63,7 +63,7 @@ export function projectScreenY(
   const depthY = floorY + depth * (rimY - floorY);
 
   // Convert arc height to screen movement (smaller multiplier for Option B)
-  const ARC_VISUAL_SCALE = 0.55;
+  const ARC_VISUAL_SCALE = 1.0;
 
   return depthY + arcHeight * ARC_VISUAL_SCALE;
 }
