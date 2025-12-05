@@ -4,42 +4,40 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
 import ActiveBasketballPage from "../components/basketballActive";
-import InactiveBasketballPage from "../components/basketballinactive";
+import InactiveBasketballPage from "../components/basketballInactive"; // ⭐ FIXED Casing
 
 export default function Page({
   params,
 }: {
   params: { gameId: string };
 }) {
-  // ⭐ No unwrapping needed
   const { gameId } = params;
 
   const [game, setGame] = useState<any>(null);
 
   /* ------------------------------------------------------------
-     LOAD GAME RECORD (polling)
+     LOAD GAME RECORD
   ------------------------------------------------------------ */
   useEffect(() => {
-    if (!gameId) return;
-
-    const loadGame = async () => {
-      const { data } = await supabase
+    async function loadGame() {
+      const { data, error } = await supabase
         .from("bb_games")
-        .select("*, host:hosts(*)")
+        .select("*")
         .eq("id", gameId)
         .single();
 
-      if (data) setGame(data);
-    };
+      if (error) console.error("GAME LOAD ERROR:", error);
+
+      setGame(data);
+    }
 
     loadGame();
-
     const interval = setInterval(loadGame, 1500);
     return () => clearInterval(interval);
   }, [gameId]);
 
   /* ------------------------------------------------------------
-     LOADING STATE
+     LOADING SCREEN
   ------------------------------------------------------------ */
   if (!game) {
     return (
@@ -60,12 +58,16 @@ export default function Page({
   }
 
   /* ------------------------------------------------------------
-     SWITCH VIEW
+     FIXED: USE CORRECT FIELD
+     bb_games.status != game_running
+     game_running is TRUE only when activated+started
   ------------------------------------------------------------ */
-  const isGameRunning = game.status === "running";
+  const isGameRunning = game.game_running === true;
 
+  /* ------------------------------------------------------------
+     RENDER
+  ------------------------------------------------------------ */
   return isGameRunning ? (
-    // ⭐ FIX: pass params or gameId correctly
     <ActiveBasketballPage params={{ gameId }} />
   ) : (
     <InactiveBasketballPage game={game} />
