@@ -45,7 +45,7 @@ export function useCountdown(gameId: string) {
   }, [gameId]);
 
   /* -----------------------------------------------------------
-     COUNTDOWN TICKING
+     COUNTDOWN LOGIC + START GAME WHEN DONE
   ----------------------------------------------------------- */
   useEffect(() => {
     if (preCountdown === null) return;
@@ -53,14 +53,22 @@ export function useCountdown(gameId: string) {
     if (preCountdown <= 0) {
       setPreCountdown(null);
 
-      // ⭐ IMPORTANT: Start actual game timer in DB
-      supabase
-        .from("bb_games")
-        .update({
-          game_running: true,
-          game_timer_start: new Date().toISOString()
-        })
-        .eq("id", gameId);
+      // ⭐ ASYNC DB UPDATE ENSURES GAME ACTUALLY STARTS
+      (async () => {
+        const { error } = await supabase
+          .from("bb_games")
+          .update({
+            game_running: true,
+            game_timer_start: new Date().toISOString(),
+          })
+          .eq("id", gameId);
+
+        if (error) {
+          console.error("❌ Game start failed:", error);
+        } else {
+          console.log("✅ Game started successfully (timer now running)");
+        }
+      })();
 
       return;
     }
