@@ -8,21 +8,10 @@ import { supabase } from "@/lib/supabaseClient";
 ============================================================ */
 const GlobalAnimations = () => (
   <style>{`
-    /* BALL SPIN SPEEDS */
-    @keyframes ballSpinFast {
-      0% { transform: rotate(0deg); }
-      100% { transform: rotate(720deg); }
-    }
-    @keyframes ballSpinMedium {
-      0% { transform: rotate(0deg); }
-      100% { transform: rotate(540deg); }
-    }
-    @keyframes ballSpinSlow {
-      0% { transform: rotate(0deg); }
-      100% { transform: rotate(360deg); }
-    }
+    @keyframes ballSpinFast { 0% { transform: rotate(0deg); } 100% { transform: rotate(720deg); } }
+    @keyframes ballSpinMedium { 0% { transform: rotate(0deg); } 100% { transform: rotate(540deg); } }
+    @keyframes ballSpinSlow { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
 
-    /* RIM SHAKE INTENSITY */
     @keyframes rimShakeSoft {
       0% { transform: translateX(-50%) translateY(0); }
       50% { transform: translateX(-50%) translateY(2px); }
@@ -39,7 +28,6 @@ const GlobalAnimations = () => (
       100% { transform: translateX(-50%) translateY(0); }
     }
 
-    /* NET FLUTTER */
     @keyframes netFlutterMedium {
       0% { transform: translateX(-50%) scaleY(1); }
       50% { transform: translateX(-50%) scaleY(1.55); }
@@ -51,7 +39,6 @@ const GlobalAnimations = () => (
       100% { transform: translateX(-50%) scaleY(1); }
     }
 
-    /* WINNER BLINK */
     @keyframes winnerBlink {
       from { box-shadow: 0 0 6px var(--winner-color); }
       to { box-shadow: 0 0 28px var(--winner-color); }
@@ -102,7 +89,6 @@ interface DBPlayerRow {
   disconnected_at: string | null;
 }
 
-/* BALL STATE */
 interface BallState {
   active: boolean;
   progress: number;
@@ -119,7 +105,6 @@ interface BallState {
    MAIN COMPONENT
 ============================================================ */
 export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
-  /* ------------ STATE ------------ */
   const [players, setPlayers] = useState<Player[]>([]);
   const [hostLogo, setHostLogo] = useState<string | null>(null);
 
@@ -144,6 +129,19 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
   );
 
   /* ============================================================
+     BEGIN GAME TIMER (FIXED)
+  ============================================================= */
+  async function beginGameTimer() {
+    await supabase
+      .from("bb_games")
+      .update({
+        game_running: true,
+        game_timer_start: new Date().toISOString(),
+      })
+      .eq("id", gameId);
+  }
+
+  /* ============================================================
      DASHBOARD → WALL COUNTDOWN
   ============================================================= */
   useEffect(() => {
@@ -157,7 +155,6 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
     };
   }, []);
 
-  /* SUPABASE: countdown broadcast */
   useEffect(() => {
     const channel = supabase
       .channel(`basketball-${gameId}`)
@@ -167,11 +164,10 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
       .subscribe();
 
     return () => {
-      supabase.removeChannel(channel)?.catch(() => {});
+      supabase.removeChannel(channel).catch(() => {});
     };
   }, [gameId]);
 
-  /* COUNTDOWN ticking */
   useEffect(() => {
     if (preCountdown === null) return;
 
@@ -215,20 +211,16 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
     if (data.game_running && data.game_timer_start) {
       const start = new Date(data.game_timer_start).getTime();
       const elapsed = Math.floor((Date.now() - start) / 1000);
-      const remaining = data.duration_seconds - elapsed;
-
       setTimerStartedAt(data.game_timer_start);
-      setTimeLeft(Math.max(remaining, 0));
+      setTimeLeft(Math.max(data.duration_seconds - elapsed, 0));
       return;
     }
 
     if (!data.game_running && data.game_timer_start) {
       const start = new Date(data.game_timer_start).getTime();
       const elapsed = Math.floor((Date.now() - start) / 1000);
-      const remaining = data.duration_seconds - elapsed;
-
       setTimerStartedAt(data.game_timer_start);
-      setTimeLeft(Math.max(remaining, 0));
+      setTimeLeft(Math.max(data.duration_seconds - elapsed, 0));
       return;
     }
   }
@@ -239,7 +231,6 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
     return () => clearInterval(t);
   }, []);
 
-  /* LOCAL TIME DECREMENT */
   useEffect(() => {
     if (!timerStartedAt || preCountdown !== null) return;
     if (timeLeft === null || timeLeft <= 0) {
@@ -253,23 +244,6 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
 
     return () => clearTimeout(t);
   }, [timeLeft, timerStartedAt, preCountdown]);
-
-  /* start actual game timer */
-  async function beginGameTimer() {
-    const now = new Date().toISOString();
-
-    await supabase
-      .from("bb_games")
-      .update({
-        game_running: true,
-        game_timer_start: now,
-        status: "running",
-      })
-      .eq("id", gameId);
-
-    setTimerStartedAt(now);
-    setTimeLeft(duration);
-  }
 
   /* ============================================================
      LOAD PLAYERS
@@ -301,7 +275,6 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
     loadPlayers();
   }, [gameId]);
 
-  /* Realtime player listeners */
   useEffect(() => {
     const channel = supabase
       .channel(`bb_game_players_${gameId}`)
@@ -335,7 +308,7 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
       .subscribe();
 
     return () => {
-      supabase.removeChannel(channel)?.catch(() => {});
+      supabase.removeChannel(channel).catch(() => {});
     };
   }, [gameId]);
 
@@ -378,18 +351,13 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
   function animateShot(lane: number, power: number) {
     if (lane < 0 || lane > 9) return;
 
-    const spin: "slow" | "medium" | "fast" =
-      power < 0.33 ? "slow" : power < 0.66 ? "medium" : "fast";
+    const spin = power < 0.33 ? "slow" : power < 0.66 ? "medium" : "fast";
+    const rimShake = power < 0.33 ? "soft" : power < 0.66 ? "medium" : "hard";
+    const netStage = power < 0.66 ? 1 : 2;
 
-    const rimShake: "soft" | "medium" | "hard" =
-      power < 0.33 ? "soft" : power < 0.66 ? "medium" : "hard";
-
-    const netStage: 1 | 2 = power < 0.66 ? 1 : 2;
-
-    const totalSteps = 50;
+    const totalSteps = 60;
     let step = 0;
 
-    /* Initialize */
     setBallAnimations((prev) => {
       const next = [...prev];
       next[lane] = {
@@ -412,17 +380,27 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
       const p = step / totalSteps;
       const arc = 4 * p * (1 - p);
 
-      const height = 4 + arc * (55 + power * 40);
-      const forward = p * (32 + power * 22);
-      const x = (p - 0.5) * (10 + power * 8);
+      const height = 3 + arc * (75 + power * 55);
+      const forward = p * (26 + power * 18);
+      const x = (p - 0.5) * (8 + power * 5);
       const scale = 1 - p * 0.45;
 
       let rim: any = null;
       let net: any = 0;
 
-      if (p > 0.78 && p < 0.92) {
+      if (p > 0.74 && p < 0.88) {
         rim = rimShake;
         net = netStage;
+      }
+
+      if (p > 0.86 && p < 0.9) {
+        const player = players.find((pl) => pl.cell === lane);
+        if (player) {
+          supabase
+            .from("bb_game_players")
+            .update({ score: player.score + 1 })
+            .eq("id", player.id);
+        }
       }
 
       if (p >= 1) {
@@ -443,6 +421,7 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
           };
           return next;
         });
+
         return;
       }
 
@@ -465,23 +444,24 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
   }
 
   /* ============================================================
-     LISTEN FOR SHOTS
+     LISTEN FOR shot_fired
   ============================================================= */
   useEffect(() => {
     const channel = supabase
       .channel(`basketball-${gameId}`)
       .on("broadcast", { event: "shot_fired" }, (payload) => {
-        animateShot(payload.payload.lane_index, payload.payload.power);
+        const { lane_index, power } = payload.payload;
+        animateShot(lane_index, power);
       })
       .subscribe();
 
     return () => {
-      supabase.removeChannel(channel)?.catch(() => {});
+      supabase.removeChannel(channel).catch(() => {});
     };
   }, [gameId]);
 
   /* ============================================================
-     TIMER FORMATTER
+     FORMAT TIMER
   ============================================================= */
   function fmt(sec: number | null) {
     if (sec === null) return "--:--";
@@ -491,7 +471,7 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
   }
 
   /* ============================================================
-     BEGIN RENDER (CELL GRID)
+     RENDER
   ============================================================= */
   return (
     <div
@@ -509,7 +489,6 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
     >
       <GlobalAnimations />
 
-      {/* COUNTDOWN OVERLAY */}
       {preCountdown !== null && (
         <div
           style={{
@@ -530,7 +509,6 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
         </div>
       )}
 
-      {/* GRID */}
       <div
         style={{
           width: "94vw",
@@ -566,7 +544,6 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
                 "--winner-color": borderColor,
               } as any}
             >
-              {/* TIMER */}
               <div
                 style={{
                   position: "absolute",
@@ -584,7 +561,6 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
                 {fmt(timeLeft)}
               </div>
 
-              {/* SLOT LABEL */}
               <div
                 style={{
                   position: "absolute",
@@ -601,7 +577,6 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
                 P{i + 1}
               </div>
 
-              {/* BACKBOARD */}
               <div
                 style={{
                   position: "absolute",
@@ -633,7 +608,6 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
                 )}
               </div>
 
-              {/* RIM */}
               <div
                 style={{
                   position: "absolute",
@@ -655,7 +629,6 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
                 }}
               />
 
-              {/* NET */}
               <div
                 style={{
                   position: "absolute",
@@ -677,7 +650,6 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
                 }}
               />
 
-              {/* BALL + SHADOW */}
               {ball.active ? (
                 <>
                   <div
@@ -706,7 +678,7 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
                       height: `${38 * ball.scale}px`,
                       borderRadius: "50%",
                       background: `
-                        radial-gradient(circle at 30% 30%, rgba(255,255,255,0.65), rgba(255,255,255,0) 40%),
+                        radial-gradient(circle at 30% 30%, rgba(255,255,255,0.65), rgba(0,0,0,0) 40%),
                         radial-gradient(circle at 70% 70%, #ff9d00, #ff6100)
                       `,
                       boxShadow:
@@ -720,14 +692,12 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
                       zIndex: 20,
                     }}
                   >
-                    {/* SEAMS */}
                     <div
                       style={{
                         position: "absolute",
                         inset: 0,
                         borderRadius: "50%",
                         border: `${1.5 * ball.scale}px solid rgba(0,0,0,0.55)`,
-                        pointerEvents: "none",
                       }}
                     />
                     <div
@@ -768,7 +738,6 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
                 />
               )}
 
-              {/* SELFIE */}
               <div
                 style={{
                   position: "absolute",
@@ -803,7 +772,6 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
                 )}
               </div>
 
-              {/* SCORE */}
               <div
                 style={{
                   position: "absolute",
@@ -818,7 +786,6 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
                 {player?.score ?? 0}
               </div>
 
-              {/* NAME */}
               <div
                 style={{
                   position: "absolute",
@@ -842,7 +809,6 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
         })}
       </div>
 
-      {/* FULLSCREEN BUTTON */}
       <div
         onClick={() => {
           if (!document.fullscreenElement) {
