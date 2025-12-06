@@ -13,16 +13,12 @@ export default function LandingPage() {
   return (
     <main
       className={cn(
-        "relative",
-        "w-full",
-        "h-screen",          // Force exact screen fit
-        "flex",
-        "flex-col",
-        "items-center",
-        "justify-center",    // Perfect centering
-        "overflow-hidden",   // No scroll ever
-        "text-white",
-        "text-center"
+        "relative w-full",
+        "min-h-screen",              // ✅ scroll allowed on small phones
+        "flex flex-col items-center justify-center",
+        "overflow-x-hidden",         // ❗ NEVER allow horizontal overflow
+        "text-white text-center",
+        "px-4 md:px-0"               // mobile padding, removed on desktop
       )}
     >
       {/* Background */}
@@ -42,29 +38,30 @@ export default function LandingPage() {
       />
 
       {/* HERO CONTENT */}
-      <div className={cn('relative', 'z-10', 'flex', 'flex-col', 'items-center', 'gap-4')}>
+      <div className="relative z-10 flex flex-col items-center gap-4 w-full">
 
-        {/* LOGO — New file, pixel-perfect sizing */}
+        {/* LOGO (fully responsive) */}
         <motion.div
           animate={{ scale: [1, 1.06, 1] }}
           transition={{ duration: 7, repeat: Infinity, ease: "easeInOut" }}
         >
           <div
-  className={cn('mx-auto', 'drop-shadow-[0_0_30px_rgba(56,189,248,0.3)]', 'mt-[-175px]')}
+            className={cn(
+              "mx-auto drop-shadow-[0_0_30px_rgba(56,189,248,0.3)]",
+              "mt-[-60px]",            // mobile
+              "sm:mt-[-100px]",        // tablets
+              "md:mt-[-150px]",        // monitors
+              "lg:mt-[-200px]"         // ultrawide monitors
+            )}
             style={{
-              width: "300px",     // 🔥 Perfect desktop size
-              maxWidth: "90%",     // 🔥 Mobile auto-resize
-              height: "auto",
+              width: "240px",          // mobile
+              maxWidth: "90%",
             }}
           >
             <img
               src="/faninteractlogo-landing.png"
               alt="FanInteract Logo"
-              style={{
-                width: "100%",
-                height: "auto",
-                display: "block",
-              }}
+              className="w-full h-auto"
             />
           </div>
         </motion.div>
@@ -72,58 +69,50 @@ export default function LandingPage() {
         {/* HEADLINE */}
         <h1
           className={cn(
-            "text-4xl",
-            "md:text-6xl",
-            "font-extrabold",
-            "tracking-tight",
-            "bg-clip-text",
-            "text-transparent",
-            "bg-gradient-to-r",
-            "from-sky-400",
-            "via-blue-500",
-            "to-indigo-400",
-            "drop-shadow-[0_0_30px_rgba(56,189,248,0.25)]"
+            "font-extrabold tracking-tight",
+            "bg-clip-text text-transparent bg-gradient-to-r from-sky-400 via-blue-500 to-indigo-400",
+            "drop-shadow-[0_0_30px_rgba(56,189,248,0.25)]",
+
+            "text-3xl",       // mobile
+            "sm:text-4xl",    // tablets
+            "md:text-6xl",    // desktop monitors
+            "lg:text-7xl"     // large monitors
           )}
         >
           Turn Crowds Into Communities
         </h1>
 
-        {/* SUBTEXT — Never wraps */}
+        {/* SUBTEXT */}
         <p
           className={cn(
-            "text-lg",
-            "md:text-2xl",
-            "text-gray-300",
-            "leading-relaxed",
-            "whitespace-nowrap",   // 🔥 Lock in one line
-            "max-w-none"
+            "text-gray-300 leading-relaxed mx-auto",
+            "max-w-[90%]",
+
+            "text-base",      // mobile
+            "sm:text-lg",
+            "md:text-2xl"     // desktop monitors
           )}
-          style={{
-            overflow: "visible",
-            whiteSpace: "nowrap",
-          }}
         >
           FanInteract lets your audience post, vote, and play live — all on one wall.
         </p>
 
         {/* BUTTONS */}
-        <div className={cn('flex', 'flex-wrap', 'justify-center', 'gap-6', 'pt-2')}>
+        <div
+          className={cn(
+            "flex flex-wrap justify-center",
+            "gap-4 sm:gap-6",
+            "pt-4 md:pt-6"
+          )}
+        >
           <button
             onClick={() => setShowSignup(true)}
             className={cn(
-              "px-8",
-              "py-4",
-              "bg-gradient-to-r",
-              "from-sky-500",
-              "to-blue-600",
-              "rounded-2xl",
-              "font-semibold",
-              "shadow-lg",
-              "shadow-blue-600/40",
-              "hover:scale-105",
-              "hover:shadow-blue-500/60",
-              "transition-all",
-              "duration-300"
+              "px-8 py-4",
+              "bg-gradient-to-r from-sky-500 to-blue-600",
+              "rounded-2xl font-semibold",
+              "shadow-lg shadow-blue-600/40",
+              "hover:scale-105 hover:shadow-blue-500/60",
+              "transition-all duration-300"
             )}
           >
             Get Started
@@ -132,16 +121,11 @@ export default function LandingPage() {
           <Link
             href="/login"
             className={cn(
-              "px-8",
-              "py-4",
-              "border",
-              "border-sky-400",
-              "text-sky-400",
+              "px-8 py-4",
+              "border border-sky-400 text-sky-400",
               "hover:bg-sky-400/10",
-              "rounded-2xl",
-              "font-semibold",
-              "transition-all",
-              "duration-300"
+              "rounded-2xl font-semibold",
+              "transition-all duration-300"
             )}
           >
             Login
@@ -149,12 +133,12 @@ export default function LandingPage() {
         </div>
       </div>
 
-      {/* Sign-up Modal */}
+      {/* SIGNUP MODAL */}
       <Modal isOpen={showSignup} onClose={() => setShowSignup(false)}>
         <HostSignupForm />
       </Modal>
 
-      {/* FOOTER — always pinned, no scroll */}
+      {/* FOOTER */}
       <footer
         className={cn(
           "absolute bottom-0 left-0 w-full py-6 text-center",
@@ -163,7 +147,7 @@ export default function LandingPage() {
           "z-20"
         )}
       >
-        <p className={cn('text-gray-500', 'text-sm')}>
+        <p className="text-gray-500 text-sm">
           © {new Date().getFullYear()} FanInteract. All rights reserved.
         </p>
       </footer>
