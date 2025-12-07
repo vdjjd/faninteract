@@ -5,30 +5,8 @@ import { useRouter, useParams } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
 /* ---------------------------------------------------------
-   Load guest profile if previously saved
+   Component
 --------------------------------------------------------- */
-function getStoredGuestProfile() {
-  try {
-    const raw =
-      localStorage.getItem("guest_profile") ||
-      localStorage.getItem("guestInfo");
-    return raw ? JSON.parse(raw) : null;
-  } catch {
-    return null;
-  }
-}
-
-/* ---------------------------------------------------------
-   Local Vote Lock
---------------------------------------------------------- */
-function hasVoted(pollId: string) {
-  return localStorage.getItem(`voted_${pollId}`) === "true";
-}
-
-function setVoted(pollId: string) {
-  localStorage.setItem(`voted_${pollId}`, "true");
-}
-
 export default function VotePage() {
   const router = useRouter();
   const params = useParams();
@@ -37,26 +15,51 @@ export default function VotePage() {
   const [poll, setPoll] = useState<any>(null);
   const [options, setOptions] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+
   const [submitting, setSubmitting] = useState(false);
 
-  /* ---------------------------------------------------------
-     Enforce guest signup
---------------------------------------------------------- */
-  useEffect(() => {
-    const profile = getStoredGuestProfile();
-    if (!profile) {
-      router.push(`/guest/signup?redirect=/polls/${pollId}/vote`);
-      return;
-    }
-  }, []);
+  // localStorage hydration-safe states
+  const [guestProfile, setGuestProfile] = useState<any | undefined>(undefined);
+  const [hasLocalVoted, setHasLocalVoted] = useState<boolean | undefined>(undefined);
 
   /* ---------------------------------------------------------
-     Load poll + poll options
+     Safe localStorage load
+--------------------------------------------------------- */
+  useEffect(() => {
+    try {
+      const raw =
+        localStorage.getItem("guest_profile") ||
+        localStorage.getItem("guestInfo");
+
+      setGuestProfile(raw ? JSON.parse(raw) : null);
+
+      const voted = localStorage.getItem(`voted_${pollId}`) === "true";
+      setHasLocalVoted(voted);
+    } catch {
+      setGuestProfile(null);
+      setHasLocalVoted(false);
+    }
+  }, [pollId]);
+
+  /* ---------------------------------------------------------
+     Redirect only AFTER hydration finishes
+--------------------------------------------------------- */
+  useEffect(() => {
+    if (guestProfile === undefined) return; // not loaded yet
+    if (!pollId) return;
+
+    if (!guestProfile) {
+      router.push(`/guest/signup?redirect=/polls/${pollId}/vote`);
+    }
+  }, [guestProfile, pollId, router]);
+
+  /* ---------------------------------------------------------
+     Load poll + poll options (NO JOIN, SAFE FOR ANON USERS)
 --------------------------------------------------------- */
   async function loadEverything() {
     const { data: pollData } = await supabase
       .from("polls")
-      .select("*, host:host_id (branding_logo_url)")
+      .select("*")
       .eq("id", pollId)
       .maybeSingle();
 
@@ -65,17 +68,18 @@ export default function VotePage() {
       .select("*")
       .eq("poll_id", pollId);
 
-    setPoll(pollData);
+    setPoll(pollData || null);
     setOptions(opts || []);
     setLoading(false);
   }
 
   useEffect(() => {
+    if (!pollId) return;
     loadEverything();
   }, [pollId]);
 
   /* ---------------------------------------------------------
-     Realtime poll status only
+     Realtime poll status
 --------------------------------------------------------- */
   useEffect(() => {
     if (!pollId) return;
@@ -90,31 +94,30 @@ export default function VotePage() {
           table: "polls",
           filter: `id=eq.${pollId}`,
         },
-        (payload: any) => {
+        (payload) => {
           setPoll(payload.new);
         }
       )
       .subscribe();
 
-    // ★ FIXED CLEANUP — must NOT return a Promise
     return () => {
       supabase.removeChannel(channel);
     };
   }, [pollId]);
 
   /* ---------------------------------------------------------
-     Submit Vote (read → update)
+     Submit Vote
 --------------------------------------------------------- */
   async function submitVote(optionId: string) {
     if (submitting) return;
-    if (hasVoted(pollId)) {
+    if (hasLocalVoted) {
       alert("You already voted in this poll.");
       return;
     }
 
     setSubmitting(true);
 
-    // 1️⃣ Read current votes
+    // read option
     const { data: optionRow, error: fetchError } = await supabase
       .from("poll_options")
       .select("vote_count")
@@ -127,7 +130,6 @@ export default function VotePage() {
       return;
     }
 
-    // 2️⃣ Update +1
     const newCount = (optionRow.vote_count || 0) + 1;
 
     const { error: updateError } = await supabase
@@ -141,23 +143,29 @@ export default function VotePage() {
       return;
     }
 
-    // 3️⃣ Lock device vote
-    setVoted(pollId);
+    // lock vote locally
+    localStorage.setItem(`voted_${pollId}`, "true");
+    setHasLocalVoted(true);
 
     setSubmitting(false);
     router.push(`/thanks/${pollId}`);
   }
 
   /* ---------------------------------------------------------
-     Loading states
+     Loading States
 --------------------------------------------------------- */
-  if (loading) return <div style={{ color: "#fff" }}>Loading…</div>;
-  if (!poll) return <div style={{ color: "#fff" }}>Poll not found.</div>;
+  if (loading || guestProfile === undefined || hasLocalVoted === undefined) {
+    return <div style={{ color: "#fff" }}>Loading…</div>;
+  }
+
+  if (!poll) {
+    return <div style={{ color: "#fff" }}>Poll not found.</div>;
+  }
 
   const isActive = poll.status === "active";
 
   /* ---------------------------------------------------------
-     Background + Logo (MATCH WALL SUBMIT PAGE)
+     Background Logic
 --------------------------------------------------------- */
   const bg =
     poll.background_type === "image" &&
@@ -165,13 +173,10 @@ export default function VotePage() {
       ? `url(${poll.background_value})`
       : poll.background_value || "#111";
 
-  const logo =
-    poll.host?.branding_logo_url?.trim()
-      ? poll.host.branding_logo_url
-      : "/faninteractlogo.png";
+  const logo = "/faninteractlogo.png";
 
   /* ---------------------------------------------------------
-     BEAUTIFUL MODERN UI (Matches Wall Submit Page)
+     UI Rendering
 --------------------------------------------------------- */
   return (
     <div
@@ -183,7 +188,6 @@ export default function VotePage() {
         position: "relative",
       }}
     >
-      {/* overlay blur */}
       <div
         style={{
           position: "absolute",
@@ -193,7 +197,6 @@ export default function VotePage() {
         }}
       />
 
-      {/* CONTENT CARD */}
       <div
         style={{
           position: "relative",
@@ -208,7 +211,6 @@ export default function VotePage() {
           boxShadow: "0 0 30px rgba(0,0,0,0.7)",
         }}
       >
-        {/* LOGO */}
         <img
           src={logo}
           style={{
@@ -220,7 +222,6 @@ export default function VotePage() {
           }}
         />
 
-        {/* QUESTION */}
         <h1
           style={{
             color: "#fff",
@@ -233,11 +234,10 @@ export default function VotePage() {
           {poll.question}
         </h1>
 
-        {/* OPTIONS */}
         {options.map((opt) => (
           <button
             key={opt.id}
-            disabled={!isActive || hasVoted(pollId)}
+            disabled={!isActive || hasLocalVoted}
             onClick={() => submitVote(opt.id)}
             style={{
               width: "100%",
@@ -245,12 +245,13 @@ export default function VotePage() {
               marginBottom: 14,
               borderRadius: 14,
               background: opt.bar_color || "#1e3a8a",
-              opacity: isActive && !hasVoted(pollId) ? 1 : 0.35,
+              opacity: isActive && !hasLocalVoted ? 1 : 0.35,
               color: "#fff",
               fontWeight: 800,
               fontSize: "1.6rem",
               border: "none",
-              cursor: isActive && !hasVoted(pollId) ? "pointer" : "not-allowed",
+              cursor:
+                isActive && !hasLocalVoted ? "pointer" : "not-allowed",
               boxShadow: "0 0 25px rgba(0,0,0,0.6)",
               transition: "0.25s",
             }}
@@ -260,7 +261,6 @@ export default function VotePage() {
         ))}
       </div>
 
-      {/* PULSE ANIMATION */}
       <style>{`
         @keyframes pulse {
           0% { filter: drop-shadow(0 0 12px rgba(56,189,248,0.6)); }
