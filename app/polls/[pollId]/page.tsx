@@ -1,58 +1,54 @@
-'use client';
+'"use client";
 
-import { useEffect, useState, useRef } from 'react';
-import { useParams } from 'next/navigation';
-import { supabase } from '@/lib/supabaseClient';
+import { useEffect, useState, useRef } from "react";
+import { useParams } from "next/navigation";
+import { supabase } from "@/lib/supabaseClient";
 
-import InactivePollWall from '../components/InactivePollWall';
-import ActivePollWall from '../components/ActivePollWall';
-import { cn } from '../../../lib/utils';
+import InactivePollWall from "../components/InactivePollWall";
+import ActivePollWall from "../components/ActivePollWall";
+import { cn } from "../../../lib/utils";
 
-const POLL_REFRESH_MS = 2000; // JD requested
+const POLL_REFRESH_MS = 2000;
 
 export default function PollRouterPage() {
-  const { pollId } = useParams();
-  const id = Array.isArray(pollId) ? pollId[0] : pollId;
+  const params = useParams();
+  const id = Array.isArray(params.pollId) ? params.pollId[0] : params.pollId;
 
-  const [poll, setPoll] = useState<any>(null);
-  const [host, setHost] = useState<any>(null);
+  const [poll, setPoll] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
   const [isFading, setIsFading] = useState(false);
 
   const pollInterval = useRef<NodeJS.Timeout | null>(null);
 
-  /* ---------------------------------------------------------------------- */
-  /* 🔥 POLLING: Load poll + host every 2000ms                              */
-  /* ---------------------------------------------------------------------- */
+  /* ---------------------------------------------------------
+     SAFE POLL LOADING (NO JOIN — FIXES RLS ISSUES)
+  --------------------------------------------------------- */
   async function loadEverything() {
     if (!id) return;
 
     try {
       const { data: pollData } = await supabase
-        .from('polls')
-        .select('*, hosts(*)')
-        .eq('id', id)
+        .from("polls")
+        .select("*")
+        .eq("id", id)
         .maybeSingle();
 
-      if (!pollData) {
-        setLoading(false);
-        return;
-      }
-
-      setPoll(pollData);
-      setHost(pollData.hosts || null);
+      setPoll(pollData || null);
     } catch (err) {
-      console.error('❌ Poll load error:', err);
+      console.error("❌ Poll load error:", err);
     } finally {
       setLoading(false);
     }
   }
 
+  /* ---------------------------------------------------------
+     INITIAL LOAD + POLLING
+  --------------------------------------------------------- */
   useEffect(() => {
     if (!id) return;
+
     loadEverything();
 
-    // Start polling
     if (pollInterval.current) clearInterval(pollInterval.current);
     pollInterval.current = setInterval(loadEverything, POLL_REFRESH_MS);
 
@@ -61,24 +57,26 @@ export default function PollRouterPage() {
     };
   }, [id]);
 
-  /* ---------------------------------------------------------------------- */
-  /* ⭐ REALTIME: Update immediately when poll status changes                */
-  /* ---------------------------------------------------------------------- */
+  /* ---------------------------------------------------------
+     REALTIME UPDATES (SAFE MERGE)
+  --------------------------------------------------------- */
   useEffect(() => {
     if (!id) return;
 
     const channel = supabase
       .channel(`router-poll-${id}`)
       .on(
-        'postgres_changes',
+        "postgres_changes",
         {
-          schema: 'public',
-          table: 'polls',
-          event: '*',
+          schema: "public",
+          table: "polls",
+          event: "*",
           filter: `id=eq.${id}`,
         },
         (payload) => {
-          setPoll((prev) => ({ ...prev, ...payload.new }));
+          setPoll((prev) =>
+            prev ? { ...prev, ...payload.new } : payload.new
+          );
         }
       )
       .subscribe();
@@ -88,41 +86,32 @@ export default function PollRouterPage() {
     };
   }, [id]);
 
-  /* ---------------------------------------------------------------------- */
-  /* Fade Logic                                                             */
-  /* ---------------------------------------------------------------------- */
+  /* ---------------------------------------------------------
+     FADE LOGIC (SAFE + STABLE)
+  --------------------------------------------------------- */
   useEffect(() => {
     if (!poll) return;
 
-    // Fade in to Active Wall
-    if (poll.status === 'active') {
-      setIsFading(true);
-      const t = setTimeout(() => setIsFading(false), 1500);
-      return () => clearTimeout(t);
-    }
+    setIsFading(true);
+    const timeout = setTimeout(() => setIsFading(false), 1500);
 
-    // Fade back to Inactive Wall
-    if (poll.status === 'inactive' || poll.status === 'closed') {
-      setIsFading(true);
-      const t = setTimeout(() => setIsFading(false), 1500);
-      return () => clearTimeout(t);
-    }
+    return () => clearTimeout(timeout);
   }, [poll?.status]);
 
-  /* ---------------------------------------------------------------------- */
-  /* Render                                                                 */
-  /* ---------------------------------------------------------------------- */
+  /* ---------------------------------------------------------
+     RENDER
+  --------------------------------------------------------- */
   if (loading)
     return (
       <div
         className={cn(
-          'flex',
-          'items-center',
-          'justify-center',
-          'h-screen',
-          'text-white',
-          'text-2xl',
-          'bg-black'
+          "flex",
+          "items-center",
+          "justify-center",
+          "h-screen",
+          "text-white",
+          "text-2xl",
+          "bg-black"
         )}
       >
         Loading Poll…
@@ -133,55 +122,56 @@ export default function PollRouterPage() {
     return (
       <div
         className={cn(
-          'flex',
-          'items-center',
-          'justify-center',
-          'h-screen',
-          'text-white',
-          'text-2xl',
-          'bg-black'
+          "flex",
+          "items-center",
+          "justify-center",
+          "h-screen",
+          "text-white",
+          "text-2xl",
+          "bg-black"
         )}
       >
         Poll not found.
       </div>
     );
 
-  const showInactive = poll.status !== 'active' || (poll.status === 'active' && isFading);
-  const showActive = poll.status === 'active' && !isFading;
+  const showInactive =
+    poll.status !== "active" || (poll.status === "active" && isFading);
+  const showActive = poll.status === "active" && !isFading;
 
   return (
     <div
       style={{
-        width: '100%',
-        height: '100vh',
-        position: 'relative',
-        overflow: 'hidden',
+        width: "100%",
+        height: "100vh",
+        position: "relative",
+        overflow: "hidden",
       }}
     >
       {/* Inactive Wall */}
       <div
         style={{
-          position: 'absolute',
+          position: "absolute",
           inset: 0,
-          transition: 'opacity 1.5s ease',
           opacity: showInactive ? 1 : 0,
-          pointerEvents: showInactive ? 'auto' : 'none',
+          transition: "opacity 1.5s ease",
+          pointerEvents: showInactive ? "auto" : "none",
         }}
       >
-        <InactivePollWall poll={poll} host={host} />
+        <InactivePollWall poll={poll} />
       </div>
 
       {/* Active Wall */}
       <div
         style={{
-          position: 'absolute',
+          position: "absolute",
           inset: 0,
-          transition: 'opacity 1.5s ease',
           opacity: showActive ? 1 : 0,
-          pointerEvents: showActive ? 'auto' : 'none',
+          transition: "opacity 1.5s ease",
+          pointerEvents: showActive ? "auto" : "none",
         }}
       >
-        <ActivePollWall poll={poll} host={host} />
+        <ActivePollWall poll={poll} />
       </div>
     </div>
   );
