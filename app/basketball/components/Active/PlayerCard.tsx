@@ -1,11 +1,43 @@
 "use client";
 
-import React from "react";
+import React, { useMemo } from "react";
 import { BallState } from "@/app/basketball/hooks/usePhysicsEngine";
 import BallRenderer from "@/app/basketball/components/Active/BallRenderer";
 import Fire from "@/app/basketball/components/Effects/Fire";
 import Rainbow from "@/app/basketball/components/Effects/Rainbow";
 import { Player } from "@/app/basketball/hooks/usePlayers";
+
+// --- NEW NET COMPONENT ---
+function Net({ state }: { state: "idle" | "swish" | "hit" }) {
+  const frame = useMemo(() => {
+    switch (state) {
+      case "swish":
+        return "/net_swish.png";
+      case "hit":
+        return "/net_hit.png";
+      default:
+        return "/net_idle.png";
+    }
+  }, [state]);
+
+  return (
+    <img
+      src={frame}
+      alt="net"
+      style={{
+        position: "absolute",
+        top: "calc(4% + 7vh + 0.4vh)", // net positioned directly beneath rim
+        left: "50%",
+        transform: "translateX(-50%)",
+        width: "14%", // EXACT MATCH to rim width
+        height: "auto",
+        pointerEvents: "none",
+        zIndex: 3,
+        imageRendering: "auto", // ✔ FIXED: removed invalid "high-quality"
+      }}
+    />
+  );
+}
 
 /* Geometry */
 const BACKBOARD_SCALE = 1;
@@ -36,6 +68,34 @@ export default function PlayerCard({
 }) {
   const isWinner =
     timerExpired && player && player.score === maxScore && maxScore > 0;
+
+  // --- UPGRADED NET PHYSICS SYSTEM ---
+  let netState: "idle" | "swish" | "hit" = "idle";
+
+  for (const b of balls) {
+    const { x, y, vy, vx } = b;
+
+    // --- SWISH DETECTION ---
+    const isSwish =
+      vy > 0 && x > 47 && x < 53 && y > 12 && y < 22;
+
+    if (isSwish) {
+      netState = "swish";
+      break;
+    }
+
+    // --- HARD RIM HIT ---
+    const isHardHit =
+      y > 10 &&
+      y < 15 &&
+      (x < 45 || x > 55) &&
+      Math.abs(vx) + Math.abs(vy) > 0.6;
+
+    if (isHardHit) {
+      netState = "hit";
+      break;
+    }
+  }
 
   return (
     <div
@@ -129,57 +189,12 @@ export default function PlayerCard({
           background: "#ff6a00",
           borderRadius: 6,
           boxShadow: "0 0 12px rgba(255,120,0,0.8)",
+          zIndex: 3,
         }}
       />
 
-      {/* SVG NET */}
-      <svg
-        width="120"
-        height="100"
-        viewBox="0 0 120 100"
-        style={{
-          position: "absolute",
-          top: `calc(4% + ${7 * BACKBOARD_SCALE}vh + 0.4vh)`,
-          left: "50%",
-          transform: "translateX(-50%)",
-          opacity: 0.9,
-        }}
-      >
-        {/* Realistic net verticals */}
-        {[...Array(7)].map((_, i) => {
-          const x = 20 + i * 12;
-          return (
-            <line
-              key={i}
-              x1={x}
-              y1={0}
-              x2={x - 10}
-              y2={80}
-              stroke="white"
-              strokeWidth="3"
-              strokeOpacity="0.8"
-            />
-          );
-        })}
-
-        {/* Cross knots */}
-        {[...Array(5)].map((_, row) =>
-          [...Array(6)].map((_, col) => {
-            const cx = 26 + col * 12;
-            const cy = 20 + row * 15;
-            return (
-              <circle
-                key={`${row}-${col}`}
-                cx={cx}
-                cy={cy}
-                r={2.6}
-                fill="white"
-                opacity={0.9}
-              />
-            );
-          })
-        )}
-      </svg>
+      {/* NET */}
+      <Net state={netState} />
 
       {/* BALL + FX */}
       {balls.map((ball) => (
