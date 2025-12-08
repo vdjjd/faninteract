@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
 import { usePlayers } from "@/app/basketball/hooks/usePlayers";
@@ -16,43 +16,71 @@ const CELL_COLORS = [
   "#007AFF", "#5856D6", "#AF52DE", "#FF2D55", "#A2845E",
 ];
 
-// ⭐ MUST ACCEPT countdownTrigger to satisfy the page component
 export default function ActiveBasketballPage({
   gameId,
-  countdownTrigger,      // ✅ Option A fix – prop accepted
+  countdownTrigger,
 }: {
   gameId: string;
-  countdownTrigger?: boolean;  // ✅ needs to be declared
+  countdownTrigger?: boolean;
 }) {
   /* -------------------------------------------------------------
-     1. Pre-game 10-second overlay
+     HOST LOGO LOADING (matches InactiveWall logic)
+  ------------------------------------------------------------- */
+  const [hostLogo, setHostLogo] = useState<string | null>(null);
+
+  useEffect(() => {
+    async function loadHostLogo() {
+      const { data: gameRow } = await supabase
+        .from("bb_games")
+        .select("host_id")
+        .eq("id", gameId)
+        .single();
+
+      if (!gameRow?.host_id) return;
+
+      const { data: hostRow } = await supabase
+        .from("hosts")
+        .select("branding_logo_url, logo_url")
+        .eq("id", gameRow.host_id)
+        .single();
+
+      if (hostRow?.branding_logo_url?.trim()) {
+        setHostLogo(hostRow.branding_logo_url);
+      } else if (hostRow?.logo_url?.trim()) {
+        setHostLogo(hostRow.logo_url);
+      } else {
+        setHostLogo("/faninteractlogo.png");
+      }
+    }
+
+    loadHostLogo();
+  }, [gameId]);
+
+  /* -------------------------------------------------------------
+     10-second overlay
   ------------------------------------------------------------- */
   const preCountdown = useCountdown(gameId);
 
   /* -------------------------------------------------------------
-     2. Load players
+     Players & Game Timer
   ------------------------------------------------------------- */
   const players = usePlayers(gameId);
 
-  /* -------------------------------------------------------------
-     3. Central game timer (controlled by admin starting the game)
-  ------------------------------------------------------------- */
   const {
     duration,
     timeLeft,
     timerExpired,
     gameRunning,
-    startCountdownNow, // <-- OPTION A requires this
+    startCountdownNow,
   } = useGameTimer(gameId, preCountdown);
 
   /* -------------------------------------------------------------
-     4. Physics engine (runs only when gameRunning = true)
+     Physics Engine
   ------------------------------------------------------------- */
   const { balls, spawnBall } = usePhysicsEngine(gameRunning);
-  const hostLogo = "/faninteractlogo.png";
 
   /* -------------------------------------------------------------
-     5. SHOT LISTENER — adds balls to the wall
+     SHOT LISTENER
   ------------------------------------------------------------- */
   useEffect(() => {
     const channel = supabase
@@ -60,14 +88,12 @@ export default function ActiveBasketballPage({
       .on("broadcast", { event: "shot_fired" }, (payload) => {
         const { lane_index, power, streak } = payload.payload;
 
-        // Power-based effects
         const rainbow = power > 0.82;
         const fire = streak >= 2;
 
         spawnBall(lane_index, power, { rainbow, fire });
       })
       .on("broadcast", { event: "start_countdown" }, () => {
-        // Backup trigger: Start 10-second overlay
         startCountdownNow();
       })
       .subscribe();
@@ -80,15 +106,12 @@ export default function ActiveBasketballPage({
   }, [gameId, spawnBall, startCountdownNow]);
 
   /* -------------------------------------------------------------
-     6. Dashboard → Wall communication via window.postMessage
+     DASHBOARD → WALL POSTMESSAGE LISTENER
   ------------------------------------------------------------- */
   useEffect(() => {
     function handleMsg(event: MessageEvent) {
       if (!event.data) return;
-
-      if (event.data.type === "start_game") {
-        startCountdownNow(); // admin pressed "Start Game"
-      }
+      if (event.data.type === "start_game") startCountdownNow();
     }
 
     window.addEventListener("message", handleMsg);
@@ -96,14 +119,14 @@ export default function ActiveBasketballPage({
   }, [startCountdownNow]);
 
   /* -------------------------------------------------------------
-     7. Winner highlight
+     High Score Calculation
   ------------------------------------------------------------- */
   const maxScore = players.length
     ? Math.max(...players.map((p) => p.score), 0)
     : 0;
 
   /* -------------------------------------------------------------
-     8. RENDER WALL
+     RENDER
   ------------------------------------------------------------- */
   return (
     <div
@@ -119,10 +142,8 @@ export default function ActiveBasketballPage({
         position: "relative",
       }}
     >
-      {/* ⏱️ 10-second overlay countdown */}
       <Countdown preCountdown={preCountdown} />
 
-      {/* 10-player matrix */}
       <div
         style={{
           width: "94vw",
@@ -135,27 +156,30 @@ export default function ActiveBasketballPage({
       >
         {Array.from({ length: 10 }).map((_, i) => {
           const player = players.find((p) => p.cell === i);
-          const score = player?.score ?? 0;
           const laneBalls = balls[i] || [];
+          const score = player?.score ?? 0;
 
           return (
-            <PlayerCard
-              key={i}
-              index={i}
-              player={player}
-              balls={laneBalls}
-              timeLeft={timeLeft ?? duration}
-              score={score}
-              borderColor={CELL_COLORS[i]}
-              timerExpired={timerExpired}
-              hostLogo={hostLogo}
-              maxScore={maxScore}
-            />
+            <>
+              {/* REAL HOST LOGO */}
+              <PlayerCard
+                key={i}
+                index={i}
+                player={player}
+                balls={laneBalls}
+                timeLeft={timeLeft ?? duration}
+                score={score}
+                borderColor={CELL_COLORS[i]}
+                timerExpired={timerExpired}
+                hostLogo={hostLogo}
+                maxScore={maxScore}
+              />
+            </>
           );
         })}
       </div>
 
-      {/* Fullscreen toggle */}
+      {/* Fullscreen Button */}
       <div
         onClick={() => {
           if (!document.fullscreenElement) {
