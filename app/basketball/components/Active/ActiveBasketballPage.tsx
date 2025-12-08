@@ -22,6 +22,9 @@ export default function ActiveBasketballPage({
   gameId: string;
 }) {
 
+  /* -------------------------------------------------------------
+     HOST LOGO
+  ------------------------------------------------------------- */
   const [hostLogo, setHostLogo] = useState<string | null>(null);
 
   useEffect(() => {
@@ -48,28 +51,38 @@ export default function ActiveBasketballPage({
     loadHostLogo();
   }, [gameId]);
 
-
+  /* -------------------------------------------------------------
+     COUNTDOWN + TIMER
+  ------------------------------------------------------------- */
   const countdownValue = useCountdown(gameId);
+  const { duration, timeLeft, timerExpired, gameRunning } = useGameTimer(gameId);
 
-  const {
-    duration,
-    timeLeft,
-    timerExpired,
-    gameRunning,
-  } = useGameTimer(gameId);
-
+  /* -------------------------------------------------------------
+     PHYSICS ENGINE
+  ------------------------------------------------------------- */
   const { balls, spawnBall } = usePhysicsEngine(gameRunning);
 
-
+  /* -------------------------------------------------------------
+     SHOT LISTENERS
+  ------------------------------------------------------------- */
   useEffect(() => {
     const channel = supabase
       .channel(`basketball-${gameId}`)
+
+      // Ball shot → animate
       .on("broadcast", { event: "shot_fired" }, (payload) => {
         const { lane_index, power, streak } = payload.payload;
         const rainbow = power > 0.82;
         const fire = streak >= 2;
+
         spawnBall(lane_index, power, { rainbow, fire });
       })
+
+      // START GAME → make timer live
+      .on("broadcast", { event: "start_game" }, () => {
+        console.log("⏱ WALL RECEIVED start_game → timer sync starts automatically");
+      })
+
       .subscribe();
 
     return () => {
@@ -77,11 +90,17 @@ export default function ActiveBasketballPage({
     };
   }, [gameId, spawnBall]);
 
-
+  /* -------------------------------------------------------------
+     PLAYERS + SCORES
+  ------------------------------------------------------------- */
   const players = usePlayers(gameId);
-  const maxScore = players.length ? Math.max(...players.map((p) => p.score), 0) : 0;
+  const maxScore = players.length
+    ? Math.max(...players.map((p) => p.score), 0)
+    : 0;
 
-
+  /* -------------------------------------------------------------
+     RENDER WALL
+  ------------------------------------------------------------- */
   return (
     <div
       style={{
@@ -96,8 +115,10 @@ export default function ActiveBasketballPage({
         position: "relative",
       }}
     >
+      {/* ⭐ FULLSCREEN COUNTDOWN ⭐ */}
       <Countdown preCountdown={countdownValue} />
 
+      {/* ⭐ PLAYER GRID ⭐ */}
       <div
         style={{
           width: "94vw",
@@ -130,6 +151,7 @@ export default function ActiveBasketballPage({
         })}
       </div>
 
+      {/* Fullscreen Button */}
       <div
         onClick={() => {
           if (!document.fullscreenElement)

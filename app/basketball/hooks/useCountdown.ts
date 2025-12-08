@@ -4,28 +4,24 @@ import { useState, useEffect } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
 /**
- * STABLE VERSION — FanInteract Original Style
- * Returns ONLY a number.
+ * FINAL LOCKED VERSION
+ * ---------------------
+ * useCountdown ALWAYS returns a NUMBER or NULL.
+ * No objects. No .value. No .done. No .startCountdownNow.
  */
 export function useCountdown(gameId: string) {
   const [countdown, setCountdown] = useState<number | null>(null);
 
-  /* -----------------------------------------------------------
-     LISTEN FOR DASHBOARD → start_countdown
-  ----------------------------------------------------------- */
+  /* Dashboard → postMessage trigger */
   useEffect(() => {
-    function onMsg(e: MessageEvent) {
-      if (e.data?.type === "start_countdown") {
-        setCountdown(10);
-      }
+    function handleMsg(e: MessageEvent) {
+      if (e.data?.type === "start_countdown") setCountdown(10);
     }
-    window.addEventListener("message", onMsg);
-    return () => window.removeEventListener("message", onMsg);
+    window.addEventListener("message", handleMsg);
+    return () => window.removeEventListener("message", handleMsg);
   }, []);
 
-  /* -----------------------------------------------------------
-     LISTEN FOR SUPABASE BROADCAST
-  ----------------------------------------------------------- */
+  /* Supabase broadcast trigger */
   useEffect(() => {
     const channel = supabase
       .channel(`basketball-${gameId}`)
@@ -35,47 +31,43 @@ export function useCountdown(gameId: string) {
       .subscribe();
 
     return () => {
-      supabase.removeChannel(channel);
+      try { supabase.removeChannel(channel); } catch {}
     };
   }, [gameId]);
 
-  /* -----------------------------------------------------------
-     COUNTDOWN TICK + GAME START
-  ----------------------------------------------------------- */
+  /* Tick + start game */
   useEffect(() => {
     if (countdown === null) return;
 
     if (countdown <= 0) {
       setCountdown(null);
 
-      // START GAME
-      (async () => {
-        const startTime = new Date().toISOString();
+      const startTime = new Date().toISOString();
 
-        await supabase
-          .from("bb_games")
-          .update({
-            game_running: true,
-            game_timer_start: startTime,
-          })
-          .eq("id", gameId);
+      // Write game start to DB
+      supabase
+        .from("bb_games")
+        .update({
+          game_running: true,
+          game_timer_start: startTime,
+        })
+        .eq("id", gameId);
 
-        // Broadcast start_game
-        supabase.channel(`basketball-${gameId}`).send({
-          type: "broadcast",
-          event: "start_game",
-          payload: { startTime },
-        });
-      })();
+      // Broadcast start
+      supabase.channel(`basketball-${gameId}`).send({
+        type: "broadcast",
+        event: "start_game",
+        payload: { startTime },
+      });
 
       return;
     }
 
-    const t = setTimeout(() => {
-      setCountdown((n) => (n !== null ? n - 1 : null));
+    const timer = setTimeout(() => {
+      setCountdown((c) => (c !== null ? c - 1 : null));
     }, 1000);
 
-    return () => clearTimeout(t);
+    return () => clearTimeout(timer);
   }, [countdown, gameId]);
 
   return countdown;
