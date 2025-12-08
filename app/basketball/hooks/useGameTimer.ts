@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
 interface GameRow {
@@ -15,6 +15,48 @@ export function useGameTimer(gameId: string, preCountdown: number | null) {
   const [timerStartedAt, setTimerStartedAt] = useState<string | null>(null);
   const [timerExpired, setTimerExpired] = useState(false);
   const [gameRunning, setGameRunning] = useState(false);
+
+  // NEW — external countdown trigger
+  const externalCountdownTriggered = useRef(false);
+
+  /* -----------------------------------------------------------
+     FUNCTION: ADMIN TRIGGERS COUNTDOWN NOW
+  ----------------------------------------------------------- */
+  const startCountdownNow = useCallback(() => {
+    externalCountdownTriggered.current = true;
+  }, []);
+
+  /* -----------------------------------------------------------
+     LISTEN FOR postMessage FROM DASHBOARD
+  ----------------------------------------------------------- */
+  useEffect(() => {
+    function handleMessage(e: MessageEvent) {
+      if (e.data?.type === "start_game") {
+        startCountdownNow();
+      }
+    }
+
+    window.addEventListener("message", handleMessage);
+    return () => window.removeEventListener("message", handleMessage);
+  }, [startCountdownNow]);
+
+  /* -----------------------------------------------------------
+     LISTEN FOR REALTIME 'start_countdown'
+  ----------------------------------------------------------- */
+  useEffect(() => {
+    const channel = supabase
+      .channel(`timer-${gameId}`)
+      .on("broadcast", { event: "start_countdown" }, () => {
+        startCountdownNow();
+      })
+      .subscribe();
+
+    return () => {
+      try {
+        supabase.removeChannel(channel);
+      } catch {}
+    };
+  }, [gameId, startCountdownNow]);
 
   /* -----------------------------------------------------------
      LOAD GAME STATUS + TIMER SYNC
@@ -33,14 +75,16 @@ export function useGameTimer(gameId: string, preCountdown: number | null) {
       setDuration(row.duration_seconds);
       setGameRunning(row.game_running);
 
-      // Countdown overlay visible → freeze timer
+      // Freeze timer during countdown overlay
       if (preCountdown !== null) {
-        // Don't reset timer unless no start time exists
         if (!row.game_timer_start) {
           setTimeLeft(row.duration_seconds);
         }
         return;
       }
+
+      // If external countdown is triggered → do not override local timer until countdown ends
+      if (externalCountdownTriggered.current) return;
 
       /* ------------------------------
          GAME NOT STARTED YET
@@ -52,7 +96,7 @@ export function useGameTimer(gameId: string, preCountdown: number | null) {
       }
 
       /* ------------------------------
-         GAME RUNNING (or finished but started)
+         GAME RUNNING OR FINISHED
       ------------------------------ */
       setTimerStartedAt(row.game_timer_start);
 
@@ -60,7 +104,6 @@ export function useGameTimer(gameId: string, preCountdown: number | null) {
         const start = new Date(row.game_timer_start).getTime();
         const elapsed = Math.floor((Date.now() - start) / 1000);
         const remaining = Math.max(row.duration_seconds - elapsed, 0);
-
         setTimeLeft(remaining);
       }
     }
@@ -71,12 +114,12 @@ export function useGameTimer(gameId: string, preCountdown: number | null) {
   }, [gameId, preCountdown]);
 
   /* -----------------------------------------------------------
-     LOCAL TIMER TICK (only runs after countdown ends)
+     LOCAL TICK
   ----------------------------------------------------------- */
   useEffect(() => {
-    if (preCountdown !== null) return;     // freeze until 10-sec overlay ends
-    if (!gameRunning) return;              // only tick if admin started game
-    if (!timerStartedAt) return;           // must have a timer start
+    if (preCountdown !== null) return;
+    if (!gameRunning) return;
+    if (!timerStartedAt) return;
     if (timeLeft === null) return;
 
     if (timeLeft <= 0) {
@@ -98,11 +141,17 @@ export function useGameTimer(gameId: string, preCountdown: number | null) {
     return () => clearTimeout(t);
   }, [timeLeft, gameRunning, preCountdown, timerStartedAt]);
 
+  /* -----------------------------------------------------------
+     PUBLIC API RETURN
+  ----------------------------------------------------------- */
   return {
     duration,
     timeLeft,
     timerExpired,
     gameRunning,
-    timerStartedAt
+    timerStartedAt,
+
+    // NEW
+    startCountdownNow,
   };
 }

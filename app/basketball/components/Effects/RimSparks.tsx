@@ -19,10 +19,10 @@ export default function ShooterPage({ params }: { params: { gameId: string } }) 
   const [playerId, setPlayerId] = useState<string | null>(null);
   const [laneIndex, setLaneIndex] = useState<number | null>(null);
 
-  // Local physics simulation
+  // Local physics
   const { balls, spawnBall } = usePhysicsEngine(true);
 
-  // UI State
+  // Score + UI
   const [score, setScore] = useState(0);
   const [laneColor, setLaneColor] = useState("#222");
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
@@ -30,11 +30,11 @@ export default function ShooterPage({ params }: { params: { gameId: string } }) 
   // Swipe tracking
   const startY = useRef(0);
 
-  // FIRE streak counter
+  // FIRE streak
   const streakRef = useRef(0);
 
   /* -----------------------------------------------------------
-     SHOOTER FX STATES
+     SHOOTER FLASH EFFECT STATES
 ----------------------------------------------------------- */
   const [fx, setFx] = useState({
     fireFlash: false,
@@ -81,7 +81,7 @@ export default function ShooterPage({ params }: { params: { gameId: string } }) 
   }, [playerId]);
 
   /* -----------------------------------------------------------
-     SYNC GAME TIMER
+     GAME TIMER SYNC
 ----------------------------------------------------------- */
   useEffect(() => {
     async function loadGame() {
@@ -109,18 +109,19 @@ export default function ShooterPage({ params }: { params: { gameId: string } }) 
   }, [gameId]);
 
   /* -----------------------------------------------------------
-     BORDER PULSE (subtle camera-shake effect)
+     LOCAL BORDER-PULSE VIBRATION
 ----------------------------------------------------------- */
   function pulseBorder() {
     const el = document.getElementById("lane-border");
     if (!el) return;
-    el.classList.remove("border-pulse"); // reset animation
-    void el.offsetWidth; // force reflow
+
+    el.classList.remove("border-pulse");
+    void el.offsetWidth;         // force reflow → re-trigger animation
     el.classList.add("border-pulse");
   }
 
   /* -----------------------------------------------------------
-     SHOOT LOGIC
+     SHOOT HANDLER
 ----------------------------------------------------------- */
   async function handleShot(power: number) {
     if (laneIndex === null || !playerId) return;
@@ -132,20 +133,22 @@ export default function ShooterPage({ params }: { params: { gameId: string } }) 
     if (isRainbow) flash("rainbowFlash");
     if (isFire) flash("fireFlash");
 
+    // BORDER VIBRATION ON ANY SHOT
     pulseBorder();
 
-    // Local ball
+    // LOCAL BALL
     spawnBall(laneIndex, power, { rainbow: isRainbow, fire: isFire });
 
-    // Broadcast to wall
+    // BROADCAST
     supabase.channel(`basketball-${gameId}`).send({
       type: "broadcast",
       event: "shot_fired",
       payload: { lane_index: laneIndex, power, streak: streakRef.current },
     });
 
-    // SCORE CALC
+    // SCORING
     const made = Math.random() < (0.45 + power * 0.35);
+
     if (made) {
       streakRef.current += 1;
       flash("hitFlash");
@@ -177,7 +180,7 @@ export default function ShooterPage({ params }: { params: { gameId: string } }) 
   }
 
   /* -----------------------------------------------------------
-     RENDER UI
+     RENDER
 ----------------------------------------------------------- */
   return (
     <div
@@ -195,15 +198,15 @@ export default function ShooterPage({ params }: { params: { gameId: string } }) 
       onTouchStart={onTouchStart}
       onTouchEnd={onTouchEnd}
     >
-      {/* FX OVERLAYS */}
+      {/* FLASH EFFECTS */}
       {fx.fireFlash && (
         <div style={{
           position: "absolute",
           inset: 0,
           background: "rgba(255,80,0,0.28)",
           boxShadow: "inset 0 0 90px rgba(255,120,0,1)",
-          animation: "fireFlashAnim 0.38s ease-out",
           pointerEvents: "none",
+          animation: "fireFlashAnim 0.38s ease-out",
           zIndex: 10,
         }}/>
       )}
@@ -214,12 +217,35 @@ export default function ShooterPage({ params }: { params: { gameId: string } }) 
           inset: 0,
           background: "rgba(255,255,255,0.18)",
           backdropFilter: "hue-rotate(180deg) saturate(2)",
-          animation: "rainbowFlashAnim 0.38s ease-out",
           pointerEvents: "none",
+          animation: "rainbowFlashAnim 0.38s ease-out",
           zIndex: 10,
         }}/>
       )}
 
+      {fx.hitFlash && (
+        <div style={{
+          position: "absolute",
+          inset: 0,
+          background: "rgba(0,255,120,0.22)",
+          pointerEvents: "none",
+          animation: "hitFlashAnim 0.38s ease-out",
+          zIndex: 10,
+        }}/>
+      )}
+
+      {fx.missFlash && (
+        <div style={{
+          position: "absolute",
+          inset: 0,
+          background: "rgba(255,0,0,0.22)",
+          pointerEvents: "none",
+          animation: "missFlashAnim 0.32s ease-out",
+          zIndex: 10,
+        }}/>
+      )}
+
+      {/* BALLS */}
       {balls.flat().map((ball) => (
         <div
           key={ball.id}
@@ -278,17 +304,19 @@ export default function ShooterPage({ params }: { params: { gameId: string } }) 
         SWIPE UP TO SHOOT
       </div>
 
-      {/* KEYFRAMES */}
+      {/* ---- KEYFRAMES: FX + BORDER-PULSE ---- */}
       <style>{`
         @keyframes fireFlashAnim { 0% {opacity:1;} 100% {opacity:0;} }
         @keyframes rainbowFlashAnim { 0% {opacity:1;} 100% {opacity:0;} }
+        @keyframes hitFlashAnim { 0% {opacity:1;} 100% {opacity:0;} }
+        @keyframes missFlashAnim { 0% {opacity:1;} 100% {opacity:0;} }
 
         @keyframes borderPulse {
-          0%   { border-width: 8px; transform: translate(0,0); }
-          25%  { border-width: 10px; transform: translate(1px, -1px); }
-          50%  { border-width: 8px; transform: translate(-1px, 1px); }
-          75%  { border-width: 9px; transform: translate(0px,0px); }
-          100% { border-width: 8px; transform: translate(0,0); }
+          0%   { border-width: 8px; transform: translate(0,0); box-shadow: 0 0 0px rgba(255,255,255,0); }
+          25%  { border-width: 10px; transform: translate(1px, -1px); box-shadow: 0 0 10px rgba(255,255,255,0.4); }
+          50%  { border-width: 8px; transform: translate(-1px, 1px); box-shadow: 0 0 6px rgba(255,255,255,0.25); }
+          75%  { border-width: 9px; transform: translate(0px,0px); box-shadow: 0 0 12px rgba(255,255,255,0.4); }
+          100% { border-width: 8px; transform: translate(0,0); box-shadow: 0 0 0px rgba(255,255,255,0); }
         }
 
         .border-pulse {

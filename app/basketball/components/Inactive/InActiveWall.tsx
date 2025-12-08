@@ -4,33 +4,17 @@ import { QRCodeCanvas } from "qrcode.react";
 import { useEffect, useState, useRef } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
-interface GameHost {
-  branding_logo_url?: string | null;
-  logo_url?: string | null;
-}
-
-interface GameType {
-  id: number;
-  title?: string;
-  countdown: string | null;
-  countdown_active: boolean | null;
-  background_brightness?: number | null;
-  host?: GameHost | null;
-}
-
-interface InactiveBasketballProps {
-  game: GameType;
-}
-
-export default function InactiveBasketballPage({ game }: InactiveBasketballProps) {
+export default function InactiveWall({ game }: { game: any }) {
   const updateTimeout = useRef<NodeJS.Timeout | null>(null);
 
-  /* ALWAYS use this image */
+  /* FIXED BACKGROUND IMAGE ALWAYS USED */
   const FIXED_BACKGROUND = "/bbgame1920x1080.png";
 
-  const [brightness, setBrightness] = useState(game?.background_brightness ?? 100);
+  const [brightness, setBrightness] = useState(
+    game?.background_brightness ?? 100
+  );
 
-  /* POLL ONLY FOR BRIGHTNESS */
+  /* POLL ONLY BRIGHTNESS FROM DB */
   useEffect(() => {
     if (!game?.id) return;
 
@@ -44,6 +28,7 @@ export default function InactiveBasketballPage({ game }: InactiveBasketballProps
       if (!data) return;
 
       if (updateTimeout.current) clearTimeout(updateTimeout.current);
+
       updateTimeout.current = setTimeout(() => {
         setBrightness(data.background_brightness ?? 100);
       }, 50);
@@ -52,7 +37,7 @@ export default function InactiveBasketballPage({ game }: InactiveBasketballProps
     return () => clearInterval(interval);
   }, [game?.id]);
 
-  /* QR + LOGO */
+  /* QR + Host Logo */
   const origin =
     typeof window !== "undefined"
       ? window.location.origin
@@ -78,19 +63,17 @@ export default function InactiveBasketballPage({ game }: InactiveBasketballProps
         width: "100vw",
         height: "100vh",
 
-        /* 🚀 FIXED BACKGROUND IMAGE */
         backgroundImage: `url(${FIXED_BACKGROUND})`,
         backgroundSize: "cover",
         backgroundPosition: "center",
-        backgroundRepeat: "no-repeat",
 
         filter: `brightness(${brightness}%)`,
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
         paddingTop: "3vh",
-        position: "relative",
         overflow: "hidden",
+        position: "relative",
       }}
     >
       {/* TITLE */}
@@ -99,14 +82,7 @@ export default function InactiveBasketballPage({ game }: InactiveBasketballProps
           color: "#fff",
           fontSize: "clamp(2.5rem,4vw,5rem)",
           fontWeight: 900,
-          whiteSpace: "nowrap",
-          textShadow: `
-            -2px -2px 0 #000,
-            2px -2px 0 #000,
-            -2px 2px 0 #000,
-            2px 2px 0 #000,
-            0 0 12px rgba(0,0,0,0.8)
-          `,
+          textShadow: "-2px -2px 0 #000,2px -2px 0 #000,-2px 2px 0 #000,2px 2px 0 #000",
           marginBottom: "1vh",
         }}
       >
@@ -123,12 +99,12 @@ export default function InactiveBasketballPage({ game }: InactiveBasketballProps
           background: "rgba(255,255,255,0.08)",
           backdropFilter: "blur(20px)",
           borderRadius: 24,
-          position: "relative",
           display: "flex",
+          position: "relative",
           overflow: "hidden",
         }}
       >
-        {/* LEFT — QR */}
+        {/* LEFT = QR */}
         <div
           style={{
             position: "absolute",
@@ -150,7 +126,6 @@ export default function InactiveBasketballPage({ game }: InactiveBasketballProps
             style={{
               width: "100%",
               height: "100%",
-              objectFit: "contain",
               borderRadius: 18,
             }}
           />
@@ -167,9 +142,6 @@ export default function InactiveBasketballPage({ game }: InactiveBasketballProps
               transform: "translateX(-50%)",
               width: "clamp(300px,27vw,400px)",
               height: "clamp(300px,12vw,260px)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
             }}
           >
             <img
@@ -191,7 +163,7 @@ export default function InactiveBasketballPage({ game }: InactiveBasketballProps
             }}
           />
 
-          {/* TITLE on Glass */}
+          {/* TITLE */}
           <p
             style={{
               position: "absolute",
@@ -201,19 +173,15 @@ export default function InactiveBasketballPage({ game }: InactiveBasketballProps
               color: "#fff",
               fontSize: "clamp(2em,3.5vw,6rem)",
               fontWeight: 900,
+              textShadow: "-2px -2px 0 #000,2px -2px 0 #000,-2px 2px 0 #000,2px 2px 0 #000",
               whiteSpace: "nowrap",
-              textShadow: `
-                -2px -2px 0 #000,
-                2px -2px 0 #000,
-                -2px 2px 0 #000,
-                2px 2px 0 #000
-              `,
+
             }}
           >
             Basketball Battle
           </p>
 
-          {/* STATUS TEXT */}
+          {/* STARTING SOON */}
           <p
             style={{
               position: "absolute",
