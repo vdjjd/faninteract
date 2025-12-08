@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { usePhysicsEngine } from "@/app/basketball/hooks/usePhysicsEngine";
+import { useCountdown } from "@/app/basketball/hooks/useCountdown";
+import { Countdown } from "@/app/basketball/components/Countdown";
 
 /* -----------------------------------------------------------
    LANE COLORS
@@ -15,14 +17,25 @@ const CELL_COLORS = [
 export default function ShooterPage({ params }: { params: { gameId: string } }) {
   const { gameId } = params;
 
-  // Player info
+  /* -----------------------------------------------------------
+     FULL-SCREEN COUNTDOWN
+----------------------------------------------------------- */
+  const preCountdown = useCountdown(gameId);
+
+  /* -----------------------------------------------------------
+     PLAYER INFO
+----------------------------------------------------------- */
   const [playerId, setPlayerId] = useState<string | null>(null);
   const [laneIndex, setLaneIndex] = useState<number | null>(null);
 
-  // Local physics simulation
+  /* -----------------------------------------------------------
+     PHYSICS ENGINE
+----------------------------------------------------------- */
   const { balls, spawnBall } = usePhysicsEngine(true);
 
-  // UI State
+  /* -----------------------------------------------------------
+     UI STATE
+----------------------------------------------------------- */
   const [score, setScore] = useState(0);
   const [laneColor, setLaneColor] = useState("#222");
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
@@ -30,12 +43,10 @@ export default function ShooterPage({ params }: { params: { gameId: string } }) 
   // Swipe tracking
   const startY = useRef(0);
 
-  // FIRE streak counter
+  // streak counter
   const streakRef = useRef(0);
 
-  /* -----------------------------------------------------------
-     SHOOTER FX STATES
------------------------------------------------------------ */
+  // FX state
   const [fx, setFx] = useState({
     fireFlash: false,
     rainbowFlash: false,
@@ -51,13 +62,16 @@ export default function ShooterPage({ params }: { params: { gameId: string } }) 
   }
 
   /* -----------------------------------------------------------
-     LOAD PLAYER
+     LOAD PLAYER FROM LOCAL STORAGE
 ----------------------------------------------------------- */
   useEffect(() => {
     const stored = localStorage.getItem("bb_player_id");
     if (stored) setPlayerId(stored);
   }, []);
 
+  /* -----------------------------------------------------------
+     LOAD PLAYER FROM DATABASE
+----------------------------------------------------------- */
   useEffect(() => {
     if (!playerId) return;
 
@@ -81,7 +95,23 @@ export default function ShooterPage({ params }: { params: { gameId: string } }) 
   }, [playerId]);
 
   /* -----------------------------------------------------------
-     SYNC GAME TIMER
+     RECEIVE FULL-SCREEN COUNTDOWN TRIGGER
+----------------------------------------------------------- */
+  useEffect(() => {
+    const channel = supabase
+      .channel(`basketball-${gameId}`)
+      .on("broadcast", { event: "start_countdown" }, () => {
+        preCountdown.startCountdownNow();
+      })
+      .subscribe();
+
+    return () => {
+      try { supabase.removeChannel(channel); } catch {}
+    };
+  }, [gameId, preCountdown]);
+
+  /* -----------------------------------------------------------
+     SYNC GAME TIMER DISPLAY
 ----------------------------------------------------------- */
   useEffect(() => {
     async function loadGame() {
@@ -98,7 +128,6 @@ export default function ShooterPage({ params }: { params: { gameId: string } }) 
         const now = Date.now();
         const elapsed = Math.floor((now - start) / 1000);
         const remaining = data.duration_seconds - elapsed;
-
         setTimeLeft(Math.max(remaining, 0));
       }
     }
@@ -109,13 +138,13 @@ export default function ShooterPage({ params }: { params: { gameId: string } }) 
   }, [gameId]);
 
   /* -----------------------------------------------------------
-     BORDER PULSE (subtle camera-shake effect)
+     BORDER PULSE EFFECT
 ----------------------------------------------------------- */
   function pulseBorder() {
     const el = document.getElementById("lane-border");
     if (!el) return;
-    el.classList.remove("border-pulse"); // reset animation
-    void el.offsetWidth; // force reflow
+    el.classList.remove("border-pulse");
+    void el.offsetWidth;
     el.classList.add("border-pulse");
   }
 
@@ -134,17 +163,17 @@ export default function ShooterPage({ params }: { params: { gameId: string } }) 
 
     pulseBorder();
 
-    // Local ball
+    // Local ball animation
     spawnBall(laneIndex, power, { rainbow: isRainbow, fire: isFire });
 
-    // Broadcast to wall
+    // Broadcast to WALL
     supabase.channel(`basketball-${gameId}`).send({
       type: "broadcast",
       event: "shot_fired",
       payload: { lane_index: laneIndex, power, streak: streakRef.current },
     });
 
-    // SCORE CALC
+    // SCORE
     const made = Math.random() < (0.45 + power * 0.35);
     if (made) {
       streakRef.current += 1;
@@ -160,7 +189,7 @@ export default function ShooterPage({ params }: { params: { gameId: string } }) 
   }
 
   /* -----------------------------------------------------------
-     SWIPE DETECTION
+     SWIPE CONTROLS
 ----------------------------------------------------------- */
   function onTouchStart(e: React.TouchEvent) {
     startY.current = e.touches[0].clientY;
@@ -177,7 +206,7 @@ export default function ShooterPage({ params }: { params: { gameId: string } }) 
   }
 
   /* -----------------------------------------------------------
-     RENDER UI
+     RENDER
 ----------------------------------------------------------- */
   return (
     <div
@@ -195,6 +224,10 @@ export default function ShooterPage({ params }: { params: { gameId: string } }) 
       onTouchStart={onTouchStart}
       onTouchEnd={onTouchEnd}
     >
+
+      {/* ⭐ FULL SCREEN COUNTDOWN OVERLAY ⭐ */}
+      <Countdown preCountdown={preCountdown} />
+
       {/* FX OVERLAYS */}
       {fx.fireFlash && (
         <div style={{
@@ -203,18 +236,6 @@ export default function ShooterPage({ params }: { params: { gameId: string } }) 
           background: "rgba(255,80,0,0.28)",
           boxShadow: "inset 0 0 90px rgba(255,120,0,1)",
           animation: "fireFlashAnim 0.38s ease-out",
-          pointerEvents: "none",
-          zIndex: 10,
-        }}/>
-      )}
-
-      {fx.rainbowFlash && (
-        <div style={{
-          position: "absolute",
-          inset: 0,
-          background: "rgba(255,255,255,0.18)",
-          backdropFilter: "hue-rotate(180deg) saturate(2)",
-          animation: "rainbowFlashAnim 0.38s ease-out",
           pointerEvents: "none",
           zIndex: 10,
         }}/>
@@ -281,7 +302,6 @@ export default function ShooterPage({ params }: { params: { gameId: string } }) 
       {/* KEYFRAMES */}
       <style>{`
         @keyframes fireFlashAnim { 0% {opacity:1;} 100% {opacity:0;} }
-        @keyframes rainbowFlashAnim { 0% {opacity:1;} 100% {opacity:0;} }
 
         @keyframes borderPulse {
           0%   { border-width: 8px; transform: translate(0,0); }
