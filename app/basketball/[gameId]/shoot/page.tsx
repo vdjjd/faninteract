@@ -17,10 +17,9 @@ export default function ShooterPage({ params }: { params: { gameId: string } }) 
   const { gameId } = params;
 
   /* -----------------------------------------------------------
-     COUNTDOWN (number or null)
-     ❗ FIXED LINE BELOW
-  ----------------------------------------------------------- */
-  const countdownValue = useCountdown(gameId);   // ← FIXED
+     COUNTDOWN (NUMBER OR NULL — CORRECT)
+----------------------------------------------------------- */
+  const countdownValue = useCountdown(gameId);
 
   /* -----------------------------------------------------------
      PLAYER INFO
@@ -83,7 +82,7 @@ export default function ShooterPage({ params }: { params: { gameId: string } }) 
   }, [playerId]);
 
   /* -----------------------------------------------------------
-     GAME START → Sync timer
+     SYNC GAME TIMER
 ----------------------------------------------------------- */
   async function syncGameStart() {
     const { data } = await supabase
@@ -98,30 +97,25 @@ export default function ShooterPage({ params }: { params: { gameId: string } }) 
     const start = new Date(data.game_timer_start).getTime();
     const now = Date.now();
     const elapsed = Math.floor((now - start) / 1000);
+
     setTimeLeft(Math.max(data.duration_seconds - elapsed, 0));
   }
 
-  /* SUPABASE LISTENER — FIXED */
+  /* SUPABASE LISTENER */
   useEffect(() => {
-    let channel: any = null;
-
-    async function setup() {
-      channel = supabase
-        .channel(`basketball-${gameId}`)
-        .on("broadcast", { event: "start_game" }, syncGameStart);
-
-      await channel.subscribe();
-    }
-
-    setup();
+    const channel = supabase
+      .channel(`basketball-${gameId}`)
+      .on("broadcast", { event: "start_game" }, syncGameStart)
+      .subscribe();
 
     return () => {
       try {
-        if (channel) supabase.removeChannel(channel);
+        supabase.removeChannel(channel);
       } catch {}
     };
   }, [gameId]);
 
+  /* postMessage listener */
   useEffect(() => {
     function onMsg(e: MessageEvent) {
       if (e.data?.type === "start_game") syncGameStart();
@@ -130,9 +124,7 @@ export default function ShooterPage({ params }: { params: { gameId: string } }) 
     return () => window.removeEventListener("message", onMsg);
   }, []);
 
-  /* -----------------------------------------------------------
-     GAME TIMER LOOP
------------------------------------------------------------ */
+  /* TIMER POLLING */
   useEffect(() => {
     async function pullTimer() {
       const { data } = await supabase
@@ -156,7 +148,9 @@ export default function ShooterPage({ params }: { params: { gameId: string } }) 
     return () => clearInterval(int);
   }, [gameId]);
 
-  /* BORDER PULSE */
+  /* -----------------------------------------------------------
+     BORDER PULSE
+----------------------------------------------------------- */
   function pulseBorder() {
     const el = document.getElementById("lane-border");
     if (!el) return;
@@ -165,10 +159,14 @@ export default function ShooterPage({ params }: { params: { gameId: string } }) 
     el.classList.add("border-pulse");
   }
 
-  /* SHOOT LOGIC */
+  /* -----------------------------------------------------------
+     SHOOT LOGIC
+----------------------------------------------------------- */
   async function handleShot(power: number) {
     if (!playerId || laneIndex === null) return;
-    if (countdownValue !== null) return; // 🔥 STILL WORKS — countdownValue is now a number
+
+    // STOP SHOOTING DURING COUNTDOWN
+    if (countdownValue !== null) return;
 
     const isRainbow = power > 0.82;
     const isFire = streakRef.current >= 2;
@@ -178,12 +176,14 @@ export default function ShooterPage({ params }: { params: { gameId: string } }) 
 
     pulseBorder();
 
+    // SEND TO WALL
     supabase.channel(`basketball-${gameId}`).send({
       type: "broadcast",
       event: "shot_fired",
       payload: { lane_index: laneIndex, power, streak: streakRef.current },
     });
 
+    // SCORE
     const made = Math.random() < (0.45 + power * 0.35);
 
     if (made) {
@@ -196,7 +196,9 @@ export default function ShooterPage({ params }: { params: { gameId: string } }) 
     }
   }
 
-  /* TOUCH HANDLERS */
+  /* -----------------------------------------------------------
+     TOUCH HANDLERS
+----------------------------------------------------------- */
   function onTouchStart(e: React.TouchEvent) {
     startY.current = e.touches[0].clientY;
   }
@@ -211,7 +213,9 @@ export default function ShooterPage({ params }: { params: { gameId: string } }) 
     handleShot(power);
   }
 
-  /* UI */
+  /* -----------------------------------------------------------
+     RENDER UI
+----------------------------------------------------------- */
   return (
     <div
       id="lane-border"
@@ -228,58 +232,62 @@ export default function ShooterPage({ params }: { params: { gameId: string } }) 
       onTouchStart={onTouchStart}
       onTouchEnd={onTouchEnd}
     >
+      {/* COUNTDOWN OVERLAY */}
       <Countdown preCountdown={countdownValue} />
 
-      <div style={{
-        position: "absolute",
-        top: 20,
-        left: 20,
-        color: "white",
-        fontSize: "2.5rem",
-        fontWeight: 900,
-        zIndex: 20
-      }}>
+      {/* SCORE */}
+      <div
+        style={{
+          position: "absolute",
+          top: 20,
+          left: 20,
+          color: "white",
+          fontSize: "2.5rem",
+          fontWeight: 900,
+          zIndex: 20,
+        }}
+      >
         {score}
       </div>
 
-      <div style={{
-        position: "absolute",
-        top: 20,
-        right: 20,
-        color: "white",
-        fontSize: "2.5rem",
-        fontWeight: 900,
-        fontFamily: "Digital, monospace",
-        zIndex: 20
-      }}>
+      {/* TIMER */}
+      <div
+        style={{
+          position: "absolute",
+          top: 20,
+          right: 20,
+          color: "white",
+          fontSize: "2.5rem",
+          fontWeight: 900,
+          fontFamily: "Digital, monospace",
+          zIndex: 20,
+        }}
+      >
         {timeLeft ?? "--"}
       </div>
 
-      <div style={{
-        position: "absolute",
-        bottom: "5%",
-        width: "100%",
-        textAlign: "center",
-        color: "#ddd",
-        fontSize: "2rem",
-        opacity: 0.7,
-        zIndex: 20
-      }}>
+      {/* INSTRUCTIONS */}
+      <div
+        style={{
+          position: "absolute",
+          bottom: "5%",
+          width: "100%",
+          textAlign: "center",
+          color: "#ddd",
+          fontSize: "2rem",
+          opacity: 0.7,
+          zIndex: 20,
+        }}
+      >
         SWIPE UP TO SHOOT
       </div>
 
       <style>{`
-        @keyframes fireFlashAnim { 
-          0% {opacity:1;} 
-          100% {opacity:0;} 
-        }
-
         @keyframes borderPulse {
-          0%   { border-width: 8px; }
-          50%  { border-width: 12px; }
+          0% { border-width: 8px; }
+          50% { border-width: 12px; }
           100% { border-width: 8px; }
         }
-
         .border-pulse {
           animation: borderPulse 0.22s ease-out;
         }
