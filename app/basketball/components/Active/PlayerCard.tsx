@@ -2,8 +2,6 @@
 
 import React from "react";
 import { BallState } from "@/app/basketball/hooks/usePhysicsEngine";
-
-// Default import from BallRenderer
 import BallRenderer from "@/app/basketball/components/Active/BallRenderer";
 
 import Fire from "@/app/basketball/components/Effects/Fire";
@@ -13,16 +11,16 @@ import { Player } from "@/app/basketball/hooks/usePlayers";
 
 /* ---- GEOMETRY CONSTANTS ---- */
 const BACKBOARD_SCALE = 1;
-const RIM_WIDTH = 14;
+const RIM_WIDTH = 16;
 const RIM_SCALE = 1;
 const SELFIE_SIZE = 42;
 
-// FX thresholds (tuned for physics engine)
+/* FX geometry */
 const RIM_Y = 12;
 const RIM_ZONE_TOP = RIM_Y - 2;
 const RIM_ZONE_BOTTOM = RIM_Y + 2;
-const SWISH_CENTER_MIN = 47;
-const SWISH_CENTER_MAX = 53;
+const SWISH_MIN = 47;
+const SWISH_MAX = 53;
 
 export default function PlayerCard({
   index,
@@ -100,64 +98,89 @@ export default function PlayerCard({
         P{index + 1}
       </div>
 
-      {/* BACKBOARD */}
+      {/* BACKBOARD ⬛ (GLASS + LOGO + REFLECTION) */}
       <div
         style={{
           position: "absolute",
-          top: "4%",
+          top: "3.5%",
           left: "50%",
           transform: "translateX(-50%)",
-          width: `${35 * BACKBOARD_SCALE}%`,
-          height: `${7 * BACKBOARD_SCALE}vh`,
-          borderRadius: 6,
-          background: "rgba(255,255,255,0.1)",
-          border: "2px solid rgba(255,0,0,0.45)",
+          width: `${38 * BACKBOARD_SCALE}%`,
+          height: `${8 * BACKBOARD_SCALE}vh`,
+          borderRadius: 8,
+          border: "4px solid rgba(255,255,255,0.45)",
+          background: "rgba(255,255,255,0.10)",
+          overflow: "hidden",
+          boxShadow:
+            "inset 0 0 18px rgba(255,255,255,0.35), inset 0 0 28px rgba(0,0,0,0.35)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
         }}
       >
         {hostLogo && (
           <img
             src={hostLogo}
             style={{
-              width: "70%",
-              height: "70%",
+              width: "50%",
+              height: "50%",
               objectFit: "contain",
-              opacity: 0.3,
+              opacity: 0.5,
+              filter: "drop-shadow(0 0 6px rgba(0,0,0,0.35))",
             }}
           />
         )}
+
+        {/* GLOSS REFLECTION */}
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            background:
+              "linear-gradient(135deg, rgba(255,255,255,0.18), rgba(255,255,255,0.03) 45%, rgba(255,255,255,0))",
+            pointerEvents: "none",
+          }}
+        />
       </div>
 
-      {/* RIM */}
+      {/* RIM (NBA-STYLE METAL) */}
       <div
         style={{
           position: "absolute",
-          top: `calc(4% + ${7 * BACKBOARD_SCALE}vh)`,
+          top: `calc(3.5% + ${8 * BACKBOARD_SCALE}vh)`,
           left: "50%",
           transform: "translateX(-50%)",
-          width: `${RIM_WIDTH * RIM_SCALE}%`,
-          height: 4,
-          background: "#ff5a00",
-          borderRadius: 4,
-        }}
-      />
-
-      {/* NET */}
-      <div
-        style={{
-          position: "absolute",
-          top: `calc(4% + ${7 * BACKBOARD_SCALE}vh + 0.4vh)`,
-          left: "50%",
-          transform: "translateX(-50%)",
-          width: `${RIM_WIDTH * 0.8 * RIM_SCALE}%`,
-          height: "3vh",
-          opacity: 0.5,
+          width: `${RIM_WIDTH}%`,
+          height: 5,
           background:
-            "repeating-linear-gradient(135deg, white 0, white 2px, transparent 3px 6px)",
-          borderRadius: "0 0 10px 10px",
+            "linear-gradient(to bottom, #ff9a3c, #ff5a00, #b33900)", // metal gradient
+          borderRadius: 8,
+          boxShadow:
+            "0 0 6px rgba(255,100,0,0.9), inset 0 0 4px rgba(0,0,0,0.4)", // glow + depth
+          zIndex: 2,
         }}
       />
 
-      {/* BALL FX + BALL */}
+      {/* NET (ROPE TEXTURE + DEPTH) */}
+      <div
+        style={{
+          position: "absolute",
+          top: `calc(3.5% + ${8 * BACKBOARD_SCALE}vh + 0.5vh)`,
+          left: "50%",
+          transform: "translateX(-50%)",
+          width: `${RIM_WIDTH * 0.75}%`,
+          height: "4vh",
+          background:
+            "repeating-linear-gradient(135deg, white 0 2px, transparent 3px 6px)",
+          opacity: 0.75,
+          borderRadius: "0 0 15px 15px",
+          boxShadow: "0 4px 6px rgba(0,0,0,0.3)",
+          filter: "drop-shadow(0 2px 2px rgba(255,255,255,0.5))",
+          zIndex: 1,
+        }}
+      />
+
+      {/* BALL EFFECTS + RENDERING */}
       {balls.map((ball) => {
         const hitsRim =
           ball.y > RIM_ZONE_TOP &&
@@ -167,16 +190,13 @@ export default function PlayerCard({
 
         const swish =
           ball.y > RIM_Y &&
-          ball.x > SWISH_CENTER_MIN &&
-          ball.x < SWISH_CENTER_MAX &&
+          ball.x > SWISH_MIN &&
+          ball.x < SWISH_MAX &&
           ball.vy > 0;
 
         return (
           <React.Fragment key={ball.id}>
-            {/* Fire trail */}
             {ball.fire && <Fire x={ball.x} y={ball.y} />}
-
-            {/* Rainbow trail */}
             {ball.rainbow && <Rainbow x={ball.x} y={ball.y} />}
 
             {/* RIM SPARKS */}
@@ -186,33 +206,31 @@ export default function PlayerCard({
                   position: "absolute",
                   left: "50%",
                   top: `${RIM_Y}%`,
-                  width: "26%",
+                  width: "28%",
                   height: "3%",
                   transform: "translate(-50%, -50%)",
                   background:
-                    "radial-gradient(circle, #ffffff, rgba(255,200,0,0.3))",
+                    "radial-gradient(circle, #fff, rgba(255,180,0,0.4))",
                   borderRadius: "50%",
-                  filter: "drop-shadow(0 0 12px rgba(255,200,0,0.9))",
+                  filter: "drop-shadow(0 0 12px rgba(255,180,0,1))",
                   animation: "sparkAnim 0.22s ease-out",
-                  pointerEvents: "none",
                 }}
               />
             )}
 
-            {/* SWISH POP */}
+            {/* SWISH POP EFFECT */}
             {swish && (
               <div
                 style={{
                   position: "absolute",
                   left: "50%",
-                  top: `${RIM_Y + 4}%`,
+                  top: `${RIM_Y + 5}%`,
                   width: "20%",
                   height: "20%",
                   transform: "translate(-50%, -50%)",
                   borderRadius: "50%",
                   border: "3px solid rgba(255,255,255,0.9)",
-                  opacity: 0.8,
-                  animation: "swishPop 0.28s ease-out",
+                  animation: "swishPop 0.25s ease-out",
                 }}
               />
             )}
@@ -236,17 +254,14 @@ export default function PlayerCard({
         }}
       >
         {player?.selfie_url ? (
-          <img
-            src={player.selfie_url}
-            style={{ width: "100%", height: "100%" }}
-          />
+          <img src={player.selfie_url} style={{ width: "100%", height: "100%" }} />
         ) : (
           <div
             style={{
               background: "#444",
               display: "flex",
-              alignItems: "center",
               justifyContent: "center",
+              alignItems: "center",
               color: "#bbb",
             }}
           >
@@ -270,28 +285,16 @@ export default function PlayerCard({
         {score}
       </div>
 
-      {/* LOCAL KEYFRAMES */}
+      {/* KEYFRAMES */}
       <style>{`
         @keyframes sparkAnim {
-          0% {
-            opacity: 1;
-            transform: scale(1) translate(-50%, -50%);
-          }
-          100% {
-            opacity: 0;
-            transform: scale(1.8) translate(-50%, -50%);
-          }
+          0% { opacity:1; transform: scale(1) translate(-50%, -50%); }
+          100% { opacity:0; transform: scale(1.8) translate(-50%, -50%); }
         }
 
         @keyframes swishPop {
-          0% {
-            opacity: 1;
-            transform: scale(0.4) translate(-50%, -50%);
-          }
-          100% {
-            opacity: 0;
-            transform: scale(1.4) translate(-50%, -50%);
-          }
+          0% { opacity:1; transform: scale(0.4) translate(-50%, -50%); }
+          100% { opacity:0; transform: scale(1.3) translate(-50%, -50%); }
         }
       `}</style>
     </div>
