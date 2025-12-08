@@ -4,64 +4,30 @@ import { useState, useEffect } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
 /**
- * FINAL WORKING VERSION
- * ---------------------
- * Triggers countdown from ANY source:
- * - Dashboard (postMessage)
- * - Wall broadcast
- * - Phone broadcast
- * - Shooter forced event
- * - localStorage cross-sync
+ * FINAL SIMPLE VERSION (WORKS ON WALL + PHONE)
+ * - Returns number or null
+ * - Listens to broadcast "start_countdown"
  */
 export function useCountdown(gameId: string) {
   const [countdown, setCountdown] = useState<number | null>(null);
 
-  /* ------------------------------------------------------------
-     HELPER: Start countdown everywhere
-  ------------------------------------------------------------ */
-  function startCountdown() {
-    setCountdown(10);
-
-    // Cross-tab sync
-    window.localStorage.setItem("bb_force_countdown", String(Date.now()));
-
-    // Local tab sync
-    window.postMessage({ type: "start_countdown" }, "*");
-  }
-
-  /* ------------------------------------------------------------
-     LISTEN — Dashboard → postMessage
-  ------------------------------------------------------------ */
+  /* Dashboard → postMessage trigger */
   useEffect(() => {
-    function onMsg(e: MessageEvent) {
+    function handleMsg(e: MessageEvent) {
       if (e.data?.type === "start_countdown") {
-        startCountdown();
+        setCountdown(10);
       }
     }
-    window.addEventListener("message", onMsg);
-    return () => window.removeEventListener("message", onMsg);
+    window.addEventListener("message", handleMsg);
+    return () => window.removeEventListener("message", handleMsg);
   }, []);
 
-  /* ------------------------------------------------------------
-     LISTEN — ShooterPage forced event
-  ------------------------------------------------------------ */
-  useEffect(() => {
-    function onForced() {
-      startCountdown();
-    }
-    window.addEventListener("force-start-countdown", onForced);
-    return () =>
-      window.removeEventListener("force-start-countdown", onForced);
-  }, []);
-
-  /* ------------------------------------------------------------
-     LISTEN — Supabase broadcast
-  ------------------------------------------------------------ */
+  /* Supabase broadcast trigger (THIS IS WHAT PHONE NEEDS) */
   useEffect(() => {
     const channel = supabase
       .channel(`basketball-${gameId}`)
       .on("broadcast", { event: "start_countdown" }, () => {
-        startCountdown();
+        setCountdown(10);
       })
       .subscribe();
 
@@ -70,22 +36,7 @@ export function useCountdown(gameId: string) {
     };
   }, [gameId]);
 
-  /* ------------------------------------------------------------
-     LISTEN — localStorage cross-tab sync
-  ------------------------------------------------------------ */
-  useEffect(() => {
-    function onStorage(e: StorageEvent) {
-      if (e.key === "bb_force_countdown") {
-        startCountdown();
-      }
-    }
-    window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
-  }, []);
-
-  /* ------------------------------------------------------------
-     COUNTDOWN TICK LOGIC
-  ------------------------------------------------------------ */
+  /* Tick logic + start game */
   useEffect(() => {
     if (countdown === null) return;
 
@@ -94,7 +45,7 @@ export function useCountdown(gameId: string) {
 
       const startTime = new Date().toISOString();
 
-      // Mark game started
+      // Update DB
       supabase
         .from("bb_games")
         .update({
@@ -103,7 +54,7 @@ export function useCountdown(gameId: string) {
         })
         .eq("id", gameId);
 
-      // Broadcast start_game
+      // Broadcast "start_game"
       supabase.channel(`basketball-${gameId}`).send({
         type: "broadcast",
         event: "start_game",
@@ -114,7 +65,7 @@ export function useCountdown(gameId: string) {
     }
 
     const t = setTimeout(() => {
-      setCountdown((v) => (v !== null ? v - 1 : null));
+      setCountdown((c) => (c !== null ? c - 1 : null));
     }, 1000);
 
     return () => clearTimeout(t);
