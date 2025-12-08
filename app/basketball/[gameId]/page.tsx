@@ -2,7 +2,6 @@
 
 import { use, useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
-
 import ActiveBasketball from "@/app/basketball/components/Active";
 import InactiveBasketball from "@/app/basketball/components/Inactive";
 
@@ -14,74 +13,33 @@ export default function Page({
   const { gameId } = use(params);
 
   const [game, setGame] = useState<any>(null);
-  const [countdownTrigger, setCountdownTrigger] = useState(false);
 
-  /* ------------------------------------------------------------
-     LOAD GAME
-  ------------------------------------------------------------ */
   useEffect(() => {
-    if (!gameId) return;
-
-    async function loadGame() {
+    async function load() {
       const { data } = await supabase
         .from("bb_games")
         .select("*")
         .eq("id", gameId)
         .single();
-
       setGame(data);
     }
 
-    loadGame();
-    const interval = setInterval(loadGame, 1200);
-
-    return () => clearInterval(interval);
+    load();
+    const t = setInterval(load, 1000);
+    return () => clearInterval(t);
   }, [gameId]);
 
-  /* ------------------------------------------------------------
-     LISTEN FOR ADMIN "start_countdown"
-  ------------------------------------------------------------ */
-  useEffect(() => {
-    if (!gameId) return;
-
-    const channel = supabase
-      .channel(`basketball-${gameId}`)
-      .on("broadcast", { event: "start_countdown" }, () => {
-        setCountdownTrigger(true);
-      })
-      .subscribe();
-
-    return () => {
-      try {
-        supabase.removeChannel(channel);
-      } catch {}
-    };
-  }, [gameId]);
-
-  useEffect(() => {
-    if (countdownTrigger) {
-      const t = setTimeout(() => setCountdownTrigger(false), 100);
-      return () => clearTimeout(t);
-    }
-  }, [countdownTrigger]);
-
-  /* ------------------------------------------------------------
-     LOADING
-  ------------------------------------------------------------ */
-  if (!game) {
+  if (!game)
     return (
-      <div style={{ color: "#fff", fontSize: 40, padding: 40 }}>
+      <div style={{ color: "white", padding: 40, fontSize: 32 }}>
         Loading…
       </div>
     );
-  }
 
-  /* ------------------------------------------------------------
-     RENDER WALL
-  ------------------------------------------------------------ */
   return game.game_running ? (
     <ActiveBasketball gameId={gameId} />
   ) : (
     <InactiveBasketball game={game} />
   );
 }
+

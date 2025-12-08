@@ -3,26 +3,19 @@
 import { useState, useEffect } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
-/**
- * FINAL SIMPLE VERSION (WORKS ON WALL + PHONE)
- * - Returns number or null
- * - Listens to broadcast "start_countdown"
- */
 export function useCountdown(gameId: string) {
   const [countdown, setCountdown] = useState<number | null>(null);
 
-  /* Dashboard → postMessage trigger */
+  // Dashboard (postMessage)
   useEffect(() => {
     function handleMsg(e: MessageEvent) {
-      if (e.data?.type === "start_countdown") {
-        setCountdown(10);
-      }
+      if (e.data?.type === "start_countdown") setCountdown(10);
     }
     window.addEventListener("message", handleMsg);
     return () => window.removeEventListener("message", handleMsg);
   }, []);
 
-  /* Supabase broadcast trigger (THIS IS WHAT PHONE NEEDS) */
+  // Supabase broadcast (Shooter & Wall BOTH listen here)
   useEffect(() => {
     const channel = supabase
       .channel(`basketball-${gameId}`)
@@ -36,7 +29,7 @@ export function useCountdown(gameId: string) {
     };
   }, [gameId]);
 
-  /* Tick logic + start game */
+  // Tick + auto-start game
   useEffect(() => {
     if (countdown === null) return;
 
@@ -45,7 +38,6 @@ export function useCountdown(gameId: string) {
 
       const startTime = new Date().toISOString();
 
-      // Update DB
       supabase
         .from("bb_games")
         .update({
@@ -54,7 +46,6 @@ export function useCountdown(gameId: string) {
         })
         .eq("id", gameId);
 
-      // Broadcast "start_game"
       supabase.channel(`basketball-${gameId}`).send({
         type: "broadcast",
         event: "start_game",

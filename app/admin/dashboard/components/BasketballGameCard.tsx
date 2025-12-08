@@ -72,9 +72,9 @@ export default function BasketballGameCard({
     await supabase
       .from("bb_games")
       .update({
-        status: "running",        // Wall UI glow/active style
-        game_running: true,       // REQUIRED so popup switches layouts
-        game_timer_start: null,   // Timer starts later
+        status: "running",
+        game_running: true,
+        game_timer_start: null,
       })
       .eq("id", game.id);
 
@@ -83,10 +83,7 @@ export default function BasketballGameCard({
   }
 
   /* ------------------------------------------------------------
-     START GAME
-     - triggers countdown
-     - sends broadcast
-     - popup page will start timer
+     START GAME — sends countdown to BOTH CHANNELS
   ------------------------------------------------------------ */
   async function handleStartGame() {
     if (!wallActivated) return;
@@ -99,8 +96,17 @@ export default function BasketballGameCard({
       "*"
     );
 
-    // Broadcast countdown to shooters + wall
-    await supabase.channel(`basketball-${game.id}`).send({
+    // Broadcast to BOTH channels so shooters never miss it
+    const baseChannel = supabase.channel(`basketball-${game.id}`);
+    const shooterChannel = supabase.channel(`basketball-${game.id}-shooter`);
+
+    await baseChannel.send({
+      type: "broadcast",
+      event: "start_countdown",
+      payload: { gameId: game.id },
+    });
+
+    await shooterChannel.send({
       type: "broadcast",
       event: "start_countdown",
       payload: { gameId: game.id },
@@ -119,7 +125,7 @@ export default function BasketballGameCard({
   }
 
   /* ------------------------------------------------------------
-     RENDER CARD
+     RENDER CARD UI
   ------------------------------------------------------------ */
   return (
     <div
@@ -139,11 +145,7 @@ export default function BasketballGameCard({
           {game.title || "Untitled Game"}
         </h3>
 
-        <p
-          className={cn(
-            "text-sm mb-3 flex justify-center items-center gap-2"
-          )}
-        >
+        <p className={cn("text-sm mb-3 flex justify-center items-center gap-2")}>
           <strong>Status:</strong>
           <span
             className={cn(
