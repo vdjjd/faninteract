@@ -7,14 +7,34 @@ import { supabase } from "@/lib/supabaseClient";
 export default function InactiveWall({ game }: { game: any }) {
   const updateTimeout = useRef<NodeJS.Timeout | null>(null);
 
-  /* FIXED BACKGROUND IMAGE ALWAYS USED */
+  /* ALWAYS USE FIXED BACKGROUND */
   const FIXED_BACKGROUND = "/bbgame1920x1080.png";
 
   const [brightness, setBrightness] = useState(
     game?.background_brightness ?? 100
   );
 
-  /* POLL ONLY BRIGHTNESS FROM DB */
+  const [hostData, setHostData] = useState<any>(null);
+
+  /* ---------------------------------------------------------
+     LOAD HOST DATA USING host_id  (🔥 FIX HERE)
+  --------------------------------------------------------- */
+  useEffect(() => {
+    if (!game?.host_id) return;
+
+    supabase
+      .from("hosts")
+      .select("logo_url, branding_logo_url")
+      .eq("id", game.host_id)
+      .single()
+      .then(({ data }) => {
+        setHostData(data);
+      });
+  }, [game?.host_id]);
+
+  /* ---------------------------------------------------------
+     POLL FOR BRIGHTNESS ONLY
+  --------------------------------------------------------- */
   useEffect(() => {
     if (!game?.id) return;
 
@@ -37,19 +57,24 @@ export default function InactiveWall({ game }: { game: any }) {
     return () => clearInterval(interval);
   }, [game?.id]);
 
-  /* QR + Host Logo */
+  /* ---------------------------------------------------------
+     QR CODE
+  --------------------------------------------------------- */
   const origin =
     typeof window !== "undefined"
       ? window.location.origin
-      : "https://faninteract.vercel.app";
+      : "https://faninteract.com";
 
   const qrValue = `${origin}/guest/signup?basketball=${game.id}`;
 
+  /* ---------------------------------------------------------
+     HOST LOGO (🔥 FIXED)
+  --------------------------------------------------------- */
   const displayLogo =
-    game?.host?.branding_logo_url?.trim()
-      ? game.host.branding_logo_url
-      : game?.host?.logo_url?.trim()
-      ? game.host.logo_url
+    hostData?.branding_logo_url?.trim()
+      ? hostData.branding_logo_url
+      : hostData?.logo_url?.trim()
+      ? hostData.logo_url
       : "/faninteractlogo.png";
 
   const toggleFullscreen = () =>
@@ -57,16 +82,17 @@ export default function InactiveWall({ game }: { game: any }) {
       ? document.documentElement.requestFullscreen()
       : document.exitFullscreen();
 
+  /* ---------------------------------------------------------
+     JSX
+  --------------------------------------------------------- */
   return (
     <div
       style={{
         width: "100vw",
         height: "100vh",
-
         backgroundImage: `url(${FIXED_BACKGROUND})`,
         backgroundSize: "cover",
         backgroundPosition: "center",
-
         filter: `brightness(${brightness}%)`,
         display: "flex",
         flexDirection: "column",
@@ -82,7 +108,9 @@ export default function InactiveWall({ game }: { game: any }) {
           color: "#fff",
           fontSize: "clamp(2.5rem,4vw,5rem)",
           fontWeight: 900,
-          textShadow: "-2px -2px 0 #000,2px -2px 0 #000,-2px 2px 0 #000,2px 2px 0 #000",
+          whiteSpace: "nowrap", // ← FORCE one line
+          textShadow:
+            "-2px -2px 0 #000,2px -2px 0 #000,-2px 2px 0 #000,2px 2px 0 #000",
           marginBottom: "1vh",
         }}
       >
@@ -104,7 +132,7 @@ export default function InactiveWall({ game }: { game: any }) {
           overflow: "hidden",
         }}
       >
-        {/* LEFT = QR */}
+        {/* LEFT QR */}
         <div
           style={{
             position: "absolute",
@@ -133,7 +161,7 @@ export default function InactiveWall({ game }: { game: any }) {
 
         {/* RIGHT SIDE */}
         <div style={{ flexGrow: 1, marginLeft: "44%", position: "relative" }}>
-          {/* LOGO */}
+          {/* HOST LOGO */}
           <div
             style={{
               position: "absolute",
@@ -163,7 +191,7 @@ export default function InactiveWall({ game }: { game: any }) {
             }}
           />
 
-          {/* TITLE */}
+          {/* TITLE GLASS */}
           <p
             style={{
               position: "absolute",
@@ -173,9 +201,9 @@ export default function InactiveWall({ game }: { game: any }) {
               color: "#fff",
               fontSize: "clamp(2em,3.5vw,6rem)",
               fontWeight: 900,
-              textShadow: "-2px -2px 0 #000,2px -2px 0 #000,-2px 2px 0 #000,2px 2px 0 #000",
-              whiteSpace: "nowrap",
-
+              whiteSpace: "nowrap", // ← KEEP ONE LINE
+              textShadow:
+                "-2px -2px 0 #000,2px -2px 0 #000,-2px 2px 0 #000,2px 2px 0 #000",
             }}
           >
             Basketball Battle
@@ -206,7 +234,7 @@ export default function InactiveWall({ game }: { game: any }) {
         </div>
       </div>
 
-      {/* FULLSCREEN BUTTON */}
+      {/* FULLSCREEN */}
       <div
         onClick={toggleFullscreen}
         style={{
