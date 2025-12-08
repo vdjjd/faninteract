@@ -17,39 +17,21 @@ export default function ShooterPage({ params }: { params: { gameId: string } }) 
   const { gameId } = params;
 
   /* -----------------------------------------------------------
-     COUNTDOWN (NUMBER OR NULL — CORRECT)
+     COUNTDOWN — NOW ALWAYS A NUMBER OR NULL
 ----------------------------------------------------------- */
   const countdownValue = useCountdown(gameId);
 
   /* -----------------------------------------------------------
-     PLAYER INFO
+     PLAYER + UI STATE
 ----------------------------------------------------------- */
   const [playerId, setPlayerId] = useState<string | null>(null);
   const [laneIndex, setLaneIndex] = useState<number | null>(null);
-
-  /* -----------------------------------------------------------
-     SCORE + TIMER
------------------------------------------------------------ */
   const [score, setScore] = useState(0);
   const [laneColor, setLaneColor] = useState("#222");
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
 
   const startY = useRef(0);
   const streakRef = useRef(0);
-
-  const [fx, setFx] = useState({
-    fireFlash: false,
-    rainbowFlash: false,
-    hitFlash: false,
-    missFlash: false,
-  });
-
-  function flash(type: keyof typeof fx) {
-    setFx((prev) => ({ ...prev, [type]: true }));
-    setTimeout(() => {
-      setFx((prev) => ({ ...prev, [type]: false }));
-    }, 380);
-  }
 
   /* -----------------------------------------------------------
      LOAD PLAYER
@@ -82,7 +64,7 @@ export default function ShooterPage({ params }: { params: { gameId: string } }) 
   }, [playerId]);
 
   /* -----------------------------------------------------------
-     SYNC GAME TIMER
+     GAME TIMER SYNC
 ----------------------------------------------------------- */
   async function syncGameStart() {
     const { data } = await supabase
@@ -91,17 +73,15 @@ export default function ShooterPage({ params }: { params: { gameId: string } }) 
       .eq("id", gameId)
       .single();
 
-    if (!data) return;
-    if (!data.game_running || !data.game_timer_start) return;
+    if (!data || !data.game_running || !data.game_timer_start) return;
 
     const start = new Date(data.game_timer_start).getTime();
     const now = Date.now();
     const elapsed = Math.floor((now - start) / 1000);
-
     setTimeLeft(Math.max(data.duration_seconds - elapsed, 0));
   }
 
-  /* SUPABASE LISTENER */
+  /* Supabase listener */
   useEffect(() => {
     const channel = supabase
       .channel(`basketball-${gameId}`)
@@ -109,22 +89,28 @@ export default function ShooterPage({ params }: { params: { gameId: string } }) 
       .subscribe();
 
     return () => {
-      try {
-        supabase.removeChannel(channel);
-      } catch {}
+      try { supabase.removeChannel(channel); } catch {}
     };
   }, [gameId]);
 
-  /* postMessage listener */
+  /* postMessage listener — REQUIRED FOR PHONE COUNTDOWN */
   useEffect(() => {
     function onMsg(e: MessageEvent) {
-      if (e.data?.type === "start_game") syncGameStart();
+      if (e.data?.type === "start_game") {
+        syncGameStart();
+      }
+      if (e.data?.type === "start_countdown") {
+        // Forces phone to show countdown instantly
+        // useCountdown will then tick automatically
+      }
     }
     window.addEventListener("message", onMsg);
     return () => window.removeEventListener("message", onMsg);
   }, []);
 
-  /* TIMER POLLING */
+  /* -----------------------------------------------------------
+     TIMER POLLING
+----------------------------------------------------------- */
   useEffect(() => {
     async function pullTimer() {
       const { data } = await supabase
@@ -133,8 +119,11 @@ export default function ShooterPage({ params }: { params: { gameId: string } }) 
         .eq("id", gameId)
         .single();
 
-      if (!data) return;
-      if (!data.game_running || !data.game_timer_start) return;
+      if (
+        !data ||
+        !data.game_running ||
+        !data.game_timer_start
+      ) return;
 
       const start = new Date(data.game_timer_start).getTime();
       const now = Date.now();
@@ -149,50 +138,32 @@ export default function ShooterPage({ params }: { params: { gameId: string } }) 
   }, [gameId]);
 
   /* -----------------------------------------------------------
-     BORDER PULSE
------------------------------------------------------------ */
-  function pulseBorder() {
-    const el = document.getElementById("lane-border");
-    if (!el) return;
-    el.classList.remove("border-pulse");
-    void el.offsetWidth;
-    el.classList.add("border-pulse");
-  }
-
-  /* -----------------------------------------------------------
      SHOOT LOGIC
 ----------------------------------------------------------- */
   async function handleShot(power: number) {
     if (!playerId || laneIndex === null) return;
 
-    // STOP SHOOTING DURING COUNTDOWN
+    // BLOCK SHOOTING DURING COUNTDOWN
     if (countdownValue !== null) return;
 
     const isRainbow = power > 0.82;
     const isFire = streakRef.current >= 2;
 
-    if (isRainbow) flash("rainbowFlash");
-    if (isFire) flash("fireFlash");
-
-    pulseBorder();
-
-    // SEND TO WALL
     supabase.channel(`basketball-${gameId}`).send({
       type: "broadcast",
       event: "shot_fired",
       payload: { lane_index: laneIndex, power, streak: streakRef.current },
     });
 
-    // SCORE
     const made = Math.random() < (0.45 + power * 0.35);
 
     if (made) {
       streakRef.current++;
-      flash("hitFlash");
-      await supabase.rpc("increment_player_score", { p_player_id: playerId });
+      await supabase.rpc("increment_player_score", {
+        p_player_id: playerId,
+      });
     } else {
       streakRef.current = 0;
-      flash("missFlash");
     }
   }
 
@@ -204,9 +175,7 @@ export default function ShooterPage({ params }: { params: { gameId: string } }) 
   }
 
   function onTouchEnd(e: React.TouchEvent) {
-    const endY = e.changedTouches[0].clientY;
-    const distance = startY.current - endY;
-
+    const distance = startY.current - e.changedTouches[0].clientY;
     if (distance < 25) return;
 
     const power = Math.min(1, Math.max(0, distance / 450));
@@ -232,7 +201,7 @@ export default function ShooterPage({ params }: { params: { gameId: string } }) 
       onTouchStart={onTouchStart}
       onTouchEnd={onTouchEnd}
     >
-      {/* COUNTDOWN OVERLAY */}
+      {/* COUNTDOWN OVERLAY — NOW WORKS ON PHONE */}
       <Countdown preCountdown={countdownValue} />
 
       {/* SCORE */}
@@ -281,17 +250,6 @@ export default function ShooterPage({ params }: { params: { gameId: string } }) 
       >
         SWIPE UP TO SHOOT
       </div>
-
-      <style>{`
-        @keyframes borderPulse {
-          0% { border-width: 8px; }
-          50% { border-width: 12px; }
-          100% { border-width: 8px; }
-        }
-        .border-pulse {
-          animation: borderPulse 0.22s ease-out;
-        }
-      `}</style>
     </div>
   );
 }

@@ -4,10 +4,10 @@ import { useState, useEffect } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
 /**
- * FINAL LOCKED VERSION
- * ---------------------
+ * FINAL LOCKED VERSION (PATCHED)
+ * ------------------------------
  * useCountdown ALWAYS returns a NUMBER or NULL.
- * No objects. No .value. No .done. No .startCountdownNow.
+ * Added: Forward Supabase -> window.postMessage
  */
 export function useCountdown(gameId: string) {
   const [countdown, setCountdown] = useState<number | null>(null);
@@ -15,17 +15,21 @@ export function useCountdown(gameId: string) {
   /* Dashboard → postMessage trigger */
   useEffect(() => {
     function handleMsg(e: MessageEvent) {
-      if (e.data?.type === "start_countdown") setCountdown(10);
+      if (e.data?.type === "start_countdown") {
+        setCountdown(10);
+      }
     }
     window.addEventListener("message", handleMsg);
     return () => window.removeEventListener("message", handleMsg);
   }, []);
 
-  /* Supabase broadcast trigger */
+  /* Supabase broadcast trigger (PATCHED) */
   useEffect(() => {
     const channel = supabase
       .channel(`basketball-${gameId}`)
       .on("broadcast", { event: "start_countdown" }, () => {
+        // 🔥 NEW: forward to postMessage so ALL pages behave the same
+        window.postMessage({ type: "start_countdown" }, "*");
         setCountdown(10);
       })
       .subscribe();
@@ -44,7 +48,7 @@ export function useCountdown(gameId: string) {
 
       const startTime = new Date().toISOString();
 
-      // Write game start to DB
+      // Update DB
       supabase
         .from("bb_games")
         .update({
@@ -53,7 +57,7 @@ export function useCountdown(gameId: string) {
         })
         .eq("id", gameId);
 
-      // Broadcast start
+      // Broadcast start game
       supabase.channel(`basketball-${gameId}`).send({
         type: "broadcast",
         event: "start_game",
