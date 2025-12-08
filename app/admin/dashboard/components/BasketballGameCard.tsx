@@ -67,14 +67,15 @@ export default function BasketballGameCard({
 
   /* ------------------------------------------------------------
      ACTIVATE WALL — switch popup to ACTIVE display (no timer yet)
+     ❗ PATCH APPLIED HERE
   ------------------------------------------------------------ */
   async function handleActivateWall() {
     await supabase
       .from("bb_games")
       .update({
         status: "running",
-        game_running: true,
-        game_timer_start: null,
+        game_running: false,      // ✅ FIX: must stay FALSE until countdown ends
+        game_timer_start: null,   // countdown begins with no timer
       })
       .eq("id", game.id);
 
