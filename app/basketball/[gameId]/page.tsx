@@ -47,12 +47,10 @@ export default function Page({
     const channel = supabase
       .channel(`basketball-${gameId}`)
       .on("broadcast", { event: "start_countdown" }, () => {
-        console.log("🔥 Countdown event received on wall");
         setCountdownTrigger(true);
       })
       .subscribe();
 
-    // ❌ DO NOT RETURN AN ASYNC FUNCTION
     return () => {
       try {
         supabase.removeChannel(channel);
@@ -60,7 +58,6 @@ export default function Page({
     };
   }, [gameId]);
 
-  /* Clear countdownTrigger after ActiveBasketball consumes it */
   useEffect(() => {
     if (countdownTrigger) {
       const t = setTimeout(() => setCountdownTrigger(false), 100);
@@ -83,7 +80,7 @@ export default function Page({
      RENDER WALL
   ------------------------------------------------------------ */
   return game.game_running ? (
-    <ActiveBasketball gameId={gameId} countdownTrigger={countdownTrigger} />
+    <ActiveBasketball gameId={gameId} />
   ) : (
     <InactiveBasketball game={game} />
   );

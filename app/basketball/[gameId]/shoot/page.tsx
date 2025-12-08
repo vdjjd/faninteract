@@ -17,36 +17,20 @@ const CELL_COLORS = [
 export default function ShooterPage({ params }: { params: { gameId: string } }) {
   const { gameId } = params;
 
-  /* -----------------------------------------------------------
-     FULL-SCREEN COUNTDOWN
------------------------------------------------------------ */
-  const preCountdown = useCountdown(gameId);
+  const countdownValue = useCountdown(gameId);
 
-  /* -----------------------------------------------------------
-     PLAYER INFO
------------------------------------------------------------ */
   const [playerId, setPlayerId] = useState<string | null>(null);
   const [laneIndex, setLaneIndex] = useState<number | null>(null);
 
-  /* -----------------------------------------------------------
-     PHYSICS ENGINE
------------------------------------------------------------ */
   const { balls, spawnBall } = usePhysicsEngine(true);
 
-  /* -----------------------------------------------------------
-     UI STATE
------------------------------------------------------------ */
   const [score, setScore] = useState(0);
   const [laneColor, setLaneColor] = useState("#222");
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
 
-  // Swipe tracking
   const startY = useRef(0);
-
-  // streak counter
   const streakRef = useRef(0);
 
-  // FX state
   const [fx, setFx] = useState({
     fireFlash: false,
     rainbowFlash: false,
@@ -55,23 +39,16 @@ export default function ShooterPage({ params }: { params: { gameId: string } }) 
   });
 
   function flash(type: keyof typeof fx) {
-    setFx((prev) => ({ ...prev, [type]: true }));
-    setTimeout(() => {
-      setFx((prev) => ({ ...prev, [type]: false }));
-    }, 380);
+    setFx(prev => ({ ...prev, [type]: true }));
+    setTimeout(() => setFx(prev => ({ ...prev, [type]: false })), 380);
   }
 
-  /* -----------------------------------------------------------
-     LOAD PLAYER FROM LOCAL STORAGE
------------------------------------------------------------ */
+  /* LOAD PLAYER */
   useEffect(() => {
     const stored = localStorage.getItem("bb_player_id");
     if (stored) setPlayerId(stored);
   }, []);
 
-  /* -----------------------------------------------------------
-     LOAD PLAYER FROM DATABASE
------------------------------------------------------------ */
   useEffect(() => {
     if (!playerId) return;
 
@@ -90,31 +67,52 @@ export default function ShooterPage({ params }: { params: { gameId: string } }) 
     }
 
     loadPlayer();
-    const int = setInterval(loadPlayer, 1000);
+    const int = setInterval(loadPlayer, 1200);
     return () => clearInterval(int);
   }, [playerId]);
 
-  /* -----------------------------------------------------------
-     RECEIVE FULL-SCREEN COUNTDOWN TRIGGER
------------------------------------------------------------ */
+  /* LISTEN FOR START GAME */
   useEffect(() => {
     const channel = supabase
       .channel(`basketball-${gameId}`)
-      .on("broadcast", { event: "start_countdown" }, () => {
-        preCountdown.startCountdownNow();
+      .on("broadcast", { event: "start_game" }, () => {
+        syncGameStart();
       })
       .subscribe();
 
-    return () => {
-      try { supabase.removeChannel(channel); } catch {}
-    };
-  }, [gameId, preCountdown]);
+    return () => { try { supabase.removeChannel(channel); } catch {} };
+  }, [gameId]);
 
-  /* -----------------------------------------------------------
-     SYNC GAME TIMER DISPLAY
------------------------------------------------------------ */
   useEffect(() => {
-    async function loadGame() {
+    function handleMsg(e: MessageEvent) {
+      if (e.data?.type === "start_game") syncGameStart();
+    }
+
+    window.addEventListener("message", handleMsg);
+    return () => window.removeEventListener("message", handleMsg);
+  }, []);
+
+  /* SYNC TIMER */
+  async function syncGameStart() {
+    const { data } = await supabase
+      .from("bb_games")
+      .select("*")
+      .eq("id", gameId)
+      .single();
+
+    if (!data) return;
+
+    if (data.game_running && data.game_timer_start) {
+      const start = new Date(data.game_timer_start).getTime();
+      const now = Date.now();
+      const elapsed = Math.floor((now - start) / 1000);
+      setTimeLeft(Math.max(data.duration_seconds - elapsed, 0));
+    }
+  }
+
+  /* TIMER LOOP */
+  useEffect(() => {
+    async function pullTimer() {
       const { data } = await supabase
         .from("bb_games")
         .select("*")
@@ -127,19 +125,16 @@ export default function ShooterPage({ params }: { params: { gameId: string } }) 
         const start = new Date(data.game_timer_start).getTime();
         const now = Date.now();
         const elapsed = Math.floor((now - start) / 1000);
-        const remaining = data.duration_seconds - elapsed;
-        setTimeLeft(Math.max(remaining, 0));
+        setTimeLeft(Math.max(data.duration_seconds - elapsed, 0));
       }
     }
 
-    loadGame();
-    const int = setInterval(loadGame, 1000);
+    pullTimer();
+    const int = setInterval(pullTimer, 1000);
     return () => clearInterval(int);
   }, [gameId]);
 
-  /* -----------------------------------------------------------
-     BORDER PULSE EFFECT
------------------------------------------------------------ */
+  /* BORDER EFFECT */
   function pulseBorder() {
     const el = document.getElementById("lane-border");
     if (!el) return;
@@ -148,49 +143,40 @@ export default function ShooterPage({ params }: { params: { gameId: string } }) 
     el.classList.add("border-pulse");
   }
 
-  /* -----------------------------------------------------------
-     SHOOT LOGIC
------------------------------------------------------------ */
+  /* SHOOT */
   async function handleShot(power: number) {
     if (laneIndex === null || !playerId) return;
+    if (countdownValue !== null) return;
 
     const isRainbow = power > 0.82;
     const isFire = streakRef.current >= 2;
 
-    // FX
     if (isRainbow) flash("rainbowFlash");
     if (isFire) flash("fireFlash");
 
     pulseBorder();
 
-    // Local ball animation
     spawnBall(laneIndex, power, { rainbow: isRainbow, fire: isFire });
 
-    // Broadcast to WALL
     supabase.channel(`basketball-${gameId}`).send({
       type: "broadcast",
       event: "shot_fired",
       payload: { lane_index: laneIndex, power, streak: streakRef.current },
     });
 
-    // SCORE
     const made = Math.random() < (0.45 + power * 0.35);
+
     if (made) {
       streakRef.current += 1;
       flash("hitFlash");
-
-      await supabase.rpc("increment_player_score", {
-        p_player_id: playerId,
-      });
+      await supabase.rpc("increment_player_score", { p_player_id: playerId });
     } else {
       streakRef.current = 0;
       flash("missFlash");
     }
   }
 
-  /* -----------------------------------------------------------
-     SWIPE CONTROLS
------------------------------------------------------------ */
+  /* TOUCH CONTROLS */
   function onTouchStart(e: React.TouchEvent) {
     startY.current = e.touches[0].clientY;
   }
@@ -198,16 +184,13 @@ export default function ShooterPage({ params }: { params: { gameId: string } }) 
   function onTouchEnd(e: React.TouchEvent) {
     const endY = e.changedTouches[0].clientY;
     const distance = startY.current - endY;
-
     if (distance < 25) return;
 
     const power = Math.min(1, Math.max(0, distance / 450));
     handleShot(power);
   }
 
-  /* -----------------------------------------------------------
-     RENDER
------------------------------------------------------------ */
+  /* RENDER UI */
   return (
     <div
       id="lane-border"
@@ -225,23 +208,24 @@ export default function ShooterPage({ params }: { params: { gameId: string } }) 
       onTouchEnd={onTouchEnd}
     >
 
-      {/* ⭐ FULL SCREEN COUNTDOWN OVERLAY ⭐ */}
-      <Countdown preCountdown={preCountdown} />
+      <Countdown preCountdown={countdownValue} />
 
-      {/* FX OVERLAYS */}
       {fx.fireFlash && (
-        <div style={{
-          position: "absolute",
-          inset: 0,
-          background: "rgba(255,80,0,0.28)",
-          boxShadow: "inset 0 0 90px rgba(255,120,0,1)",
-          animation: "fireFlashAnim 0.38s ease-out",
-          pointerEvents: "none",
-          zIndex: 10,
-        }}/>
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            background: "rgba(255,80,0,0.28)",
+            boxShadow: "inset 0 0 90px rgba(255,120,0,1)",
+            animation: "fireFlashAnim 0.38s ease-out",
+            pointerEvents: "none",
+            zIndex: 10,
+          }}
+        />
       )}
 
-      {balls.flat().map((ball) => (
+      {/* FIXED BALL LOOP */}
+      {balls.flat().map(ball => (
         <div
           key={ball.id}
           style={{
@@ -258,7 +242,6 @@ export default function ShooterPage({ params }: { params: { gameId: string } }) 
         />
       ))}
 
-      {/* SCORE */}
       <div style={{
         position: "absolute",
         top: 20,
@@ -271,7 +254,6 @@ export default function ShooterPage({ params }: { params: { gameId: string } }) 
         {score}
       </div>
 
-      {/* TIMER */}
       <div style={{
         position: "absolute",
         top: 20,
@@ -285,7 +267,6 @@ export default function ShooterPage({ params }: { params: { gameId: string } }) 
         {timeLeft ?? "--"}
       </div>
 
-      {/* INSTRUCTIONS */}
       <div style={{
         position: "absolute",
         bottom: "5%",
@@ -299,7 +280,6 @@ export default function ShooterPage({ params }: { params: { gameId: string } }) 
         SWIPE UP TO SHOOT
       </div>
 
-      {/* KEYFRAMES */}
       <style>{`
         @keyframes fireFlashAnim { 0% {opacity:1;} 100% {opacity:0;} }
 

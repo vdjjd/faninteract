@@ -4,81 +4,79 @@ import { useState, useEffect } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
 /**
- * Manages:
- * - pre-countdown state (10 → 0)
- * - dashboard window message
- * - supabase broadcast event
+ * STABLE VERSION — FanInteract Original Style
+ * Returns ONLY a number.
  */
 export function useCountdown(gameId: string) {
-  const [preCountdown, setPreCountdown] = useState<number | null>(null);
+  const [countdown, setCountdown] = useState<number | null>(null);
 
   /* -----------------------------------------------------------
-     LISTEN FOR DASHBOARD "start_game"
+     LISTEN FOR DASHBOARD → start_countdown
   ----------------------------------------------------------- */
   useEffect(() => {
-    const handler = (e: any) => {
-      if (e.data?.type === "start_game") {
-        setPreCountdown(10);
+    function onMsg(e: MessageEvent) {
+      if (e.data?.type === "start_countdown") {
+        setCountdown(10);
       }
-    };
-
-    window.addEventListener("message", handler);
-    return () => window.removeEventListener("message", handler);
+    }
+    window.addEventListener("message", onMsg);
+    return () => window.removeEventListener("message", onMsg);
   }, []);
 
   /* -----------------------------------------------------------
-     LISTEN FOR SUPABASE start_countdown BROADCAST
+     LISTEN FOR SUPABASE BROADCAST
   ----------------------------------------------------------- */
   useEffect(() => {
     const channel = supabase
       .channel(`basketball-${gameId}`)
       .on("broadcast", { event: "start_countdown" }, () => {
-        setPreCountdown(10);
+        setCountdown(10);
       })
       .subscribe();
 
     return () => {
-      try {
-        supabase.removeChannel(channel);
-      } catch {}
+      supabase.removeChannel(channel);
     };
   }, [gameId]);
 
   /* -----------------------------------------------------------
-     COUNTDOWN LOGIC + START GAME WHEN DONE
+     COUNTDOWN TICK + GAME START
   ----------------------------------------------------------- */
   useEffect(() => {
-    if (preCountdown === null) return;
+    if (countdown === null) return;
 
-    if (preCountdown <= 0) {
-      setPreCountdown(null);
+    if (countdown <= 0) {
+      setCountdown(null);
 
-      // ⭐ ASYNC DB UPDATE ENSURES GAME ACTUALLY STARTS
+      // START GAME
       (async () => {
-        const { error } = await supabase
+        const startTime = new Date().toISOString();
+
+        await supabase
           .from("bb_games")
           .update({
             game_running: true,
-            game_timer_start: new Date().toISOString(),
+            game_timer_start: startTime,
           })
           .eq("id", gameId);
 
-        if (error) {
-          console.error("❌ Game start failed:", error);
-        } else {
-          console.log("✅ Game started successfully (timer now running)");
-        }
+        // Broadcast start_game
+        supabase.channel(`basketball-${gameId}`).send({
+          type: "broadcast",
+          event: "start_game",
+          payload: { startTime },
+        });
       })();
 
       return;
     }
 
     const t = setTimeout(() => {
-      setPreCountdown((n) => (n !== null ? n - 1 : null));
+      setCountdown((n) => (n !== null ? n - 1 : null));
     }, 1000);
 
     return () => clearTimeout(t);
-  }, [preCountdown, gameId]);
+  }, [countdown, gameId]);
 
-  return preCountdown;
+  return countdown;
 }

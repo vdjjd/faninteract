@@ -18,14 +18,10 @@ const CELL_COLORS = [
 
 export default function ActiveBasketballPage({
   gameId,
-  countdownTrigger,
 }: {
   gameId: string;
-  countdownTrigger?: boolean;
 }) {
-  /* -------------------------------------------------------------
-     HOST LOGO LOADING (matches InactiveWall logic)
-  ------------------------------------------------------------- */
+
   const [hostLogo, setHostLogo] = useState<string | null>(null);
 
   useEffect(() => {
@@ -44,90 +40,48 @@ export default function ActiveBasketballPage({
         .eq("id", gameRow.host_id)
         .single();
 
-      if (hostRow?.branding_logo_url?.trim()) {
-        setHostLogo(hostRow.branding_logo_url);
-      } else if (hostRow?.logo_url?.trim()) {
-        setHostLogo(hostRow.logo_url);
-      } else {
-        setHostLogo("/faninteractlogo.png");
-      }
+      if (hostRow?.branding_logo_url?.trim()) setHostLogo(hostRow.branding_logo_url);
+      else if (hostRow?.logo_url?.trim()) setHostLogo(hostRow.logo_url);
+      else setHostLogo("/faninteractlogo.png");
     }
 
     loadHostLogo();
   }, [gameId]);
 
-  /* -------------------------------------------------------------
-     10-second overlay
-  ------------------------------------------------------------- */
-  const preCountdown = useCountdown(gameId);
 
-  /* -------------------------------------------------------------
-     Players & Game Timer
-  ------------------------------------------------------------- */
-  const players = usePlayers(gameId);
+  const countdownValue = useCountdown(gameId);
 
   const {
     duration,
     timeLeft,
     timerExpired,
     gameRunning,
-    startCountdownNow,
-  } = useGameTimer(gameId, preCountdown);
+  } = useGameTimer(gameId);
 
-  /* -------------------------------------------------------------
-     Physics Engine
-  ------------------------------------------------------------- */
   const { balls, spawnBall } = usePhysicsEngine(gameRunning);
 
-  /* -------------------------------------------------------------
-     SHOT LISTENER
-  ------------------------------------------------------------- */
+
   useEffect(() => {
     const channel = supabase
       .channel(`basketball-${gameId}`)
       .on("broadcast", { event: "shot_fired" }, (payload) => {
         const { lane_index, power, streak } = payload.payload;
-
         const rainbow = power > 0.82;
         const fire = streak >= 2;
-
         spawnBall(lane_index, power, { rainbow, fire });
-      })
-      .on("broadcast", { event: "start_countdown" }, () => {
-        startCountdownNow();
       })
       .subscribe();
 
     return () => {
-      try {
-        supabase.removeChannel(channel);
-      } catch {}
+      try { supabase.removeChannel(channel); } catch {}
     };
-  }, [gameId, spawnBall, startCountdownNow]);
+  }, [gameId, spawnBall]);
 
-  /* -------------------------------------------------------------
-     DASHBOARD → WALL POSTMESSAGE LISTENER
-  ------------------------------------------------------------- */
-  useEffect(() => {
-    function handleMsg(event: MessageEvent) {
-      if (!event.data) return;
-      if (event.data.type === "start_game") startCountdownNow();
-    }
 
-    window.addEventListener("message", handleMsg);
-    return () => window.removeEventListener("message", handleMsg);
-  }, [startCountdownNow]);
+  const players = usePlayers(gameId);
+  const maxScore = players.length ? Math.max(...players.map((p) => p.score), 0) : 0;
 
-  /* -------------------------------------------------------------
-     High Score Calculation
-  ------------------------------------------------------------- */
-  const maxScore = players.length
-    ? Math.max(...players.map((p) => p.score), 0)
-    : 0;
 
-  /* -------------------------------------------------------------
-     RENDER
-  ------------------------------------------------------------- */
   return (
     <div
       style={{
@@ -142,7 +96,7 @@ export default function ActiveBasketballPage({
         position: "relative",
       }}
     >
-      <Countdown preCountdown={preCountdown} />
+      <Countdown preCountdown={countdownValue} />
 
       <div
         style={{
@@ -160,33 +114,27 @@ export default function ActiveBasketballPage({
           const score = player?.score ?? 0;
 
           return (
-            <>
-              {/* REAL HOST LOGO */}
-              <PlayerCard
-                key={i}
-                index={i}
-                player={player}
-                balls={laneBalls}
-                timeLeft={timeLeft ?? duration}
-                score={score}
-                borderColor={CELL_COLORS[i]}
-                timerExpired={timerExpired}
-                hostLogo={hostLogo}
-                maxScore={maxScore}
-              />
-            </>
+            <PlayerCard
+              key={i}
+              index={i}
+              player={player}
+              balls={laneBalls}
+              timeLeft={timeLeft ?? duration}
+              score={score}
+              borderColor={CELL_COLORS[i]}
+              timerExpired={timerExpired}
+              hostLogo={hostLogo}
+              maxScore={maxScore}
+            />
           );
         })}
       </div>
 
-      {/* Fullscreen Button */}
       <div
         onClick={() => {
-          if (!document.fullscreenElement) {
+          if (!document.fullscreenElement)
             document.documentElement.requestFullscreen().catch(() => {});
-          } else {
-            document.exitFullscreen();
-          }
+          else document.exitFullscreen();
         }}
         style={{
           position: "absolute",
