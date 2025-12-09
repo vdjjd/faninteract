@@ -4,6 +4,7 @@ import { useParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { useCountdown } from "@/app/basketball/hooks/useCountdown";
+import { Countdown } from "@/app/basketball/components/Countdown";
 
 const CELL_COLORS = [
   "#FF3B30", "#FF9500", "#FFCC00", "#34C759", "#5AC8FA",
@@ -13,9 +14,9 @@ const CELL_COLORS = [
 export default function ShooterPage() {
   const { gameId } = useParams() as { gameId: string };
 
-  const countdownValue = useCountdown(gameId);
+  const hookCountdown = useCountdown(gameId);
   const [localCountdown, setLocalCountdown] = useState<number | null>(null);
-  const displayCountdown = localCountdown ?? countdownValue;
+  const displayCountdown = localCountdown ?? hookCountdown;
 
   const [playerId, setPlayerId] = useState<string | null>(null);
   const [laneIndex, setLaneIndex] = useState<number | null>(null);
@@ -26,6 +27,9 @@ export default function ShooterPage() {
   const streakRef = useRef(0);
   const startY = useRef(0);
 
+  /* -----------------------------------------------
+     LOAD PLAYER
+  ------------------------------------------------- */
   useEffect(() => {
     const stored = localStorage.getItem("bb_player_id");
     if (stored) setPlayerId(stored);
@@ -53,6 +57,9 @@ export default function ShooterPage() {
     return () => clearInterval(t);
   }, [playerId]);
 
+  /* -----------------------------------------------
+     SYNC GAME TIMER
+  ------------------------------------------------- */
   async function syncGameStart() {
     const { data } = await supabase
       .from("bb_games")
@@ -67,6 +74,9 @@ export default function ShooterPage() {
     setTimeLeft(Math.max(data.duration_seconds - elapsed, 0));
   }
 
+  /* -----------------------------------------------
+     SUBSCRIBE TO WALL BROADCASTS
+  ------------------------------------------------- */
   useEffect(() => {
     const channel = supabase
       .channel(`basketball-${gameId}`)
@@ -81,6 +91,9 @@ export default function ShooterPage() {
     };
   }, [gameId]);
 
+  /* -----------------------------------------------
+     COUNTDOWN TICKER
+  ------------------------------------------------- */
   useEffect(() => {
     if (localCountdown === null) return;
 
@@ -97,6 +110,9 @@ export default function ShooterPage() {
     return () => clearTimeout(t);
   }, [localCountdown]);
 
+  /* -----------------------------------------------
+     SHOOT LOGIC
+  ------------------------------------------------- */
   async function handleShot(power: number) {
     if (!playerId || laneIndex === null) return;
     if (displayCountdown !== null) return;
@@ -118,6 +134,9 @@ export default function ShooterPage() {
     }
   }
 
+  /* -----------------------------------------------
+     UI
+  ------------------------------------------------- */
   return (
     <div
       style={{
@@ -140,25 +159,10 @@ export default function ShooterPage() {
         }
       }}
     >
-      {displayCountdown !== null && (
-        <div
-          style={{
-            position: "absolute",
-            inset: 0,
-            background: "rgba(0,0,0,0.85)",
-            display: "flex",
-            justifyContent: "center",
-            alignItems: "center",
-            color: "white",
-            fontSize: "clamp(4rem, 10vw, 12rem)",
-            fontWeight: 900,
-            zIndex: 9999,
-          }}
-        >
-          {displayCountdown > 0 ? displayCountdown : "START!"}
-        </div>
-      )}
+      {/* 🔥 MATCHES WALL EXACTLY */}
+      <Countdown preCountdown={displayCountdown} />
 
+      {/* SCORE */}
       <div
         style={{
           position: "absolute",
@@ -171,6 +175,7 @@ export default function ShooterPage() {
         {score}
       </div>
 
+      {/* TIMER */}
       <div
         style={{
           position: "absolute",
@@ -183,6 +188,7 @@ export default function ShooterPage() {
         {timeLeft ?? "--"}
       </div>
 
+      {/* SWIPE MSG */}
       <div
         style={{
           position: "absolute",
