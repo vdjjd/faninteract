@@ -30,7 +30,7 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
     useGameTimer(gameId);
 
   /* ------------------------------------------------------------
-     PHYSICS ONLY AFTER COUNTDOWN ENDS + GAME RUNNING
+     PHYSICS — ENABLE ONLY AFTER COUNTDOWN ENDS
   ------------------------------------------------------------ */
   const physicsEnabled = gameRunning && countdownValue === null;
   const { balls, spawnBall } = usePhysicsEngine(physicsEnabled);
@@ -77,7 +77,7 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
   }, [gameId]);
 
   /* ------------------------------------------------------------
-     SHOT EVENTS
+     SHOT EVENTS — NOW SUPPORTING vx + vy + power
   ------------------------------------------------------------ */
   useEffect(() => {
     const ch = supabase
@@ -86,13 +86,18 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
         const p = payload?.payload;
         if (!p) return;
 
-        // No balls during countdown
         if (countdownValue !== null) return;
 
-        spawnBall(p.lane_index, p.power, {
-          rainbow: p.power > 0.82,
-          fire: p.streak >= 2,
-        });
+        spawnBall(
+          p.lane_index,
+          p.power,
+          {
+            rainbow: p.power > 0.82,
+            fire: p.streak >= 2,
+          },
+          p.vx ?? 0,
+          p.vy ?? -0.02
+        );
       })
       .subscribe();
 

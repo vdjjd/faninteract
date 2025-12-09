@@ -5,29 +5,33 @@ import { useEffect, useRef, useState, useCallback } from "react";
 export interface BallState {
   id: string;
   lane: number;
-  x: number;   // left/right (%)
-  y: number;   // vertical (%)
-  z: number;   // DEPTH (0 = spawn, 1 = rim)
-  vx: number;
-  vy: number;
-  vz: number;  // forward velocity
+
+  x: number;   // 0–100% horizontal
+  y: number;   // 0–100% vertical
+  z: number;   // 0 = near player, 1 = rim depth
+
+  vx: number;  // horizontal velocity
+  vy: number;  // vertical velocity
+  vz: number;  // forward / depth velocity
+
   size: number;
   active: boolean;
+
   rainbow?: boolean;
   fire?: boolean;
 }
 
-/* -------------------------------------------
-   PHYSICS CONSTANTS
--------------------------------------------- */
-const GRAVITY = 0.0038;     // acts on Y only
-const DRAG = 0.995;
-const FLOOR_Z = 1.15;       // disappears slightly past rim depth
-const LAUNCH_POW = 0.022;   // affects vz
-const UP_FORCE = 0.018;     // affects vy
+/* ---------------------------------------------------------
+   PHYSICS CONSTANTS (tuned)
+--------------------------------------------------------- */
+const GRAVITY = 0.0042;    // acts downward
+const DRAG = 0.992;        // slows all motion
+const FLOOR_Z = 1.15;      // ball disappears past rim zone
 
+/* ---------------------------------------------------------
+   usePhysicsEngine
+--------------------------------------------------------- */
 export function usePhysicsEngine(gameRunning: boolean) {
-
   const [balls, setBalls] = useState<BallState[][]>(
     Array.from({ length: 10 }, () => [])
   );
@@ -35,90 +39,110 @@ export function usePhysicsEngine(gameRunning: boolean) {
   const rafRef = useRef<number | null>(null);
   const lastTime = useRef<number | null>(null);
 
-  /* -------------------------------------------
-     SPAWN BALL
-  -------------------------------------------- */
-  const spawnBall = useCallback((lane: number, power: number, fx?: any) => {
+  /* ---------------------------------------------------------
+     SPAWN BALL (NOW USES vx + vy FROM SHOOTER)
+  --------------------------------------------------------- */
+  const spawnBall = useCallback(
+    (
+      lane: number,
+      power: number,
+      fx: { rainbow?: boolean; fire?: boolean } = {},
+      vx: number,
+      vy: number
+    ) => {
+      const b: BallState = {
+        id: crypto.randomUUID(),
+        lane,
 
-    const b: BallState = {
-      id: crypto.randomUUID(),
-      lane,
-      x: 50,
-      y: 94,
-      z: 0,
+        x: 50,
+        y: 94,
+        z: 0,
 
-      vx: (Math.random() - 0.5) * 0.03,
-      vy: -power * UP_FORCE,
-      vz: power * LAUNCH_POW,   // the REAL forward motion
+        // REAL velocity from swipe gesture
+        vx: vx * 0.12,     // sideways influence
+        vy: vy * 0.15,     // arc upward
+        vz: power * 0.035, // forward depth (controls arc height)
 
-      size: 38,
-      active: true,
-      rainbow: fx?.rainbow,
-      fire: fx?.fire,
-    };
+        size: 38,
+        active: true,
 
-    setBalls(prev => {
-      const copy = prev.map(l => [...l]);
-      copy[lane].push(b);
-      return copy;
-    });
-  }, []);
+        rainbow: fx.rainbow,
+        fire: fx.fire,
+      };
 
-  /* -------------------------------------------
-     STEP PHYSICS
-  -------------------------------------------- */
-  const step = useCallback((t: number) => {
-    if (!lastTime.current) lastTime.current = t;
-    const dt = (t - lastTime.current) * 0.06; // scale for stability
-    lastTime.current = t;
+      setBalls((prev) => {
+        const copy = prev.map((laneBalls) => [...laneBalls]);
+        copy[lane].push(b);
+        return copy;
+      });
+    },
+    []
+  );
 
-    if (gameRunning) {
-      setBalls(prev =>
-        prev.map(laneBalls =>
-          laneBalls
-            .map(ball => {
-              if (!ball.active) return ball;
+  /* ---------------------------------------------------------
+     STEP PHYSICS (runs every animation frame)
+  --------------------------------------------------------- */
+  const step = useCallback(
+    (t: number) => {
+      if (!lastTime.current) lastTime.current = t;
+      const dt = (t - lastTime.current) * 0.06; // tuning factor
+      lastTime.current = t;
 
-              // Gravity
-              ball.vy += GRAVITY * dt;
+      if (gameRunning) {
+        setBalls((prev) =>
+          prev.map((laneBalls) =>
+            laneBalls
+              .map((ball) => {
+                if (!ball.active) return ball;
 
-              // Position updates
-              ball.x += ball.vx * dt;
-              ball.y += ball.vy * dt;
-              ball.z += ball.vz * dt;     // DEPTH!
+                /* --- GRAVITY ACTS DOWNWARD --- */
+                ball.vy += GRAVITY * dt;
 
-              // Rim zone check (2D)
-              const inRimBand = ball.y < 22 && ball.y > 14;
-              const inRimWidth = ball.x > 44 && ball.x < 56;
+                /* --- MOVE BALL --- */
+                ball.x += ball.vx * dt;
+                ball.y += ball.vy * dt;
+                ball.z += ball.vz * dt;
 
-              if (inRimBand && inRimWidth) {
-                ball.vy *= -0.32;
-                ball.vx *= 0.7;
-              }
+                /* --- SIMPLE RIM COLLISION (2D band) --- */
+                const inRimBand = ball.y < 22 && ball.y > 14;
+                const inRimWidth = ball.x > 44 && ball.x < 56;
 
-              // Slow down over time
-              ball.vx *= DRAG;
-              ball.vy *= DRAG;
-              ball.vz *= DRAG;
+                if (inRimBand && inRimWidth) {
+                  ball.vy *= -0.32;
+                  ball.vx *= 0.7;
+                }
 
-              // Kill ball past ground / depth
-              if (ball.z > FLOOR_Z || ball.y > 120) {
-                ball.active = false;
-              }
+                /* --- DRAG SLOWS EVERYTHING --- */
+                ball.vx *= DRAG;
+                ball.vy *= DRAG;
+                ball.vz *= DRAG;
 
-              return { ...ball };
-            })
-            .filter(b => b.active)
-        )
-      );
-    }
+                /* --- REMOVE BALL WHEN TOO FAR --- */
+                if (ball.z > FLOOR_Z || ball.y > 120) {
+                  ball.active = false;
+                }
 
-    rafRef.current = requestAnimationFrame(step);
-  }, [gameRunning]);
+                return { ...ball };
+              })
+              .filter((b) => b.active)
+          )
+        );
+      }
 
+      rafRef.current = requestAnimationFrame(step);
+    },
+    [gameRunning]
+  );
+
+  /* ---------------------------------------------------------
+     START PHYSICS LOOP
+  --------------------------------------------------------- */
   useEffect(() => {
     rafRef.current = requestAnimationFrame(step);
-    return () => rafRef.current && cancelAnimationFrame(rafRef.current);
+
+    return () => {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    };
   }, [step]);
 
   return { balls, spawnBall };
