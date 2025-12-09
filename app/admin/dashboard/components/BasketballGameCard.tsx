@@ -38,7 +38,7 @@ export default function BasketballGameCard({
     if (!popup || popup.closed) {
       popup = window.open(
         url,
-        "_blank",
+        "basketball_wall", // ✔ FIXED — must be a named popup, not "_blank"
         "width=1280,height=800,resizable=yes,scrollbars=yes"
       );
 
@@ -231,24 +231,28 @@ export default function BasketballGameCard({
         </button>
 
         {/* Launch + Activate */}
-        <div className={cn('grid', 'grid-cols-2', 'gap-2')}>
+        <div className={cn("grid grid-cols-2 gap-2")}>
           <button
             onClick={openWallWindow}
-            className={cn('w-full', 'py-2', 'rounded', 'text-sm', 'font-semibold', 'bg-purple-600', 'hover:bg-purple-700', 'text-white')}
+            className={cn(
+              "w-full py-2 rounded text-sm font-semibold bg-purple-600 hover:bg-purple-700 text-white"
+            )}
           >
             🚀 Launch Wall
           </button>
 
           <button
             onClick={handleActivateWall}
-            className={cn('w-full', 'py-2', 'rounded', 'text-sm', 'font-semibold', 'bg-blue-600', 'hover:bg-blue-700', 'text-white')}
+            className={cn(
+              "w-full py-2 rounded text-sm font-semibold bg-blue-600 hover:bg-blue-700 text-white"
+            )}
           >
             🟦 Activate Wall
           </button>
         </div>
 
         {/* Start + Stop */}
-        <div className={cn('grid', 'grid-cols-2', 'gap-2')}>
+        <div className={cn("grid grid-cols-2 gap-2")}>
           <button
             onClick={handleStartGame}
             disabled={!wallActivated}
@@ -264,7 +268,9 @@ export default function BasketballGameCard({
 
           <button
             onClick={handleStopClick}
-            className={cn('w-full', 'py-2', 'rounded', 'text-sm', 'font-semibold', 'bg-red-600', 'hover:bg-red-700', 'text-white')}
+            className={cn(
+              "w-full py-2 rounded text-sm font-semibold bg-red-600 hover:bg-red-700 text-white"
+            )}
           >
             ⛔ Stop
           </button>
@@ -273,7 +279,9 @@ export default function BasketballGameCard({
         {/* Reset Game */}
         <button
           onClick={handleResetGame}
-          className={cn('w-full', 'py-2', 'rounded', 'text-sm', 'font-semibold', 'bg-orange-500', 'hover:bg-orange-600', 'text-white')}
+          className={cn(
+            "w-full py-2 rounded text-sm font-semibold bg-orange-500 hover:bg-orange-600 text-white"
+          )}
         >
           🔄 Reset Game
         </button>
@@ -281,7 +289,9 @@ export default function BasketballGameCard({
         {/* Options */}
         <button
           onClick={() => onOpenOptions(game)}
-          className={cn('w-full', 'py-2', 'mt-2', 'rounded', 'text-sm', 'font-semibold', 'bg-indigo-500', 'hover:bg-indigo-600', 'text-white')}
+          className={cn(
+            "w-full py-2 mt-2 rounded text-sm font-semibold bg-indigo-500 hover:bg-indigo-600 text-white"
+          )}
         >
           ⚙ Game Options
         </button>
@@ -289,7 +299,9 @@ export default function BasketballGameCard({
         {/* Delete */}
         <button
           onClick={() => onDelete(game.id)}
-          className={cn('w-full', 'py-2', 'rounded', 'text-sm', 'font-semibold', 'bg-red-700', 'hover:bg-red-800', 'text-white')}
+          className={cn(
+            "w-full py-2 rounded text-sm font-semibold bg-red-700 hover:bg-red-800 text-white"
+          )}
         >
           ❌ Delete
         </button>
