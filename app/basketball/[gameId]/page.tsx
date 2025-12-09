@@ -5,16 +5,23 @@ import { supabase } from "@/lib/supabaseClient";
 import ActiveBasketball from "@/app/basketball/components/Active";
 import InactiveBasketball from "@/app/basketball/components/Inactive";
 
-export default function Page({ params }: { params?: { gameId?: string } } = {}) {
-  // SAFEST POSSIBLE EXTRACTION
-  const gameId = params?.gameId || null;
+export default function Page({ params }: { params: { gameId?: string } }) {
+  const gameId = params?.gameId ?? null;
 
   const [game, setGame] = useState<any>(null);
-  const [valid, setValid] = useState<boolean>(!!gameId);
+  const [loading, setLoading] = useState(true);
 
-  /* ------------------------------------------------------------
-     LISTEN FOR DASHBOARD → REFRESH WALL
-  ------------------------------------------------------------ */
+  /** ---------------------------------------------
+   *  SAFETY CHECK → Don't run ANYTHING until gameId is real
+   ----------------------------------------------*/
+  useEffect(() => {
+    if (!gameId) return; // ← prevents undefined errors
+    setLoading(false);
+  }, [gameId]);
+
+  /** ---------------------------------------------
+   * LISTEN FOR REFRESH COMMAND
+   ----------------------------------------------*/
   useEffect(() => {
     function handleMsg(e: MessageEvent) {
       if (e.data?.type === "refresh_wall") {
@@ -25,11 +32,11 @@ export default function Page({ params }: { params?: { gameId?: string } } = {}) 
     return () => window.removeEventListener("message", handleMsg);
   }, []);
 
-  /* ------------------------------------------------------------
-     POLL GAME STATE
-  ------------------------------------------------------------ */
+  /** ---------------------------------------------
+   * LOAD GAME DATA SAFELY
+   ----------------------------------------------*/
   useEffect(() => {
-    if (!gameId) return; // >> prevents undefined-API call
+    if (!gameId) return; // still prevents undefined
 
     async function load() {
       const { data, error } = await supabase
@@ -39,54 +46,54 @@ export default function Page({ params }: { params?: { gameId?: string } } = {}) 
         .maybeSingle();
 
       if (error) {
-        console.error("❌ Failed to load game:", error);
+        console.error("❌ Load error:", error);
         return;
       }
 
-      if (!data) return;
-
-      setGame(data);
-      setValid(true);
+      if (data) setGame(data);
     }
 
     load();
-
     const t = setInterval(load, 1000);
     return () => clearInterval(t);
   }, [gameId]);
 
-  /* ------------------------------------------------------------
-     INVALID GAME ID HANDLER
-  ------------------------------------------------------------ */
-  if (!valid || !gameId) {
+  /** ---------------------------------------------
+   * INVALID GAME ID SCREEN
+   ----------------------------------------------*/
+  if (loading) {
     return (
       <div style={{ color: "white", padding: 40, fontSize: 32 }}>
-        ❌ ERROR: Invalid game ID  
-        <br />
-        (Popup may have loaded too early — just close and relaunch)
+        Loading game ID…
       </div>
     );
   }
 
-  /* ------------------------------------------------------------
-     STILL LOADING
-  ------------------------------------------------------------ */
+  if (!gameId) {
+    return (
+      <div style={{ color: "white", padding: 40, fontSize: 32 }}>
+        ❌ ERROR: Invalid game ID
+        <br />
+        (Popup loaded before params were ready — close and relaunch)
+      </div>
+    );
+  }
+
+  /** ---------------------------------------------
+   * STILL FETCHING GAME
+   ----------------------------------------------*/
   if (!game) {
     return (
       <div style={{ color: "white", padding: 40, fontSize: 32 }}>
-        Loading…
+        Loading game…
       </div>
     );
   }
 
-  /* ------------------------------------------------------------
-     SWITCH BETWEEN QR WALL + ACTIVE GAME WALL
-  ------------------------------------------------------------ */
-  const isActive = Boolean(game.wall_active);
-
-  return isActive ? (
-    <ActiveBasketball gameId={gameId} />
-  ) : (
-    <InactiveBasketball game={game} />
-  );
+  /** ---------------------------------------------
+   * WALL SWITCH LOGIC
+   ----------------------------------------------*/
+  return game.wall_active
+    ? <ActiveBasketball gameId={gameId} />
+    : <InactiveBasketball game={game} />;
 }
