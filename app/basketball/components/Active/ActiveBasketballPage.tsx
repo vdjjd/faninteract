@@ -18,33 +18,33 @@ const CELL_COLORS = [
 
 export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
   if (!gameId) {
-    console.error("⛔ Active wall mounted with NO gameId.");
+    console.error("❌ Active wall mounted with NO gameId.");
     return null;
   }
 
-  /* ------------------------------------------------------------
+  /* ----------------------------------------------
      COUNTDOWN + GAME TIMER
-  ------------------------------------------------------------ */
+  ---------------------------------------------- */
   const countdownValue = useCountdown(gameId);
   const { duration, timeLeft, timerExpired, gameRunning } =
     useGameTimer(gameId);
 
-  /* ------------------------------------------------------------
-     PHYSICS — ENABLE ONLY AFTER COUNTDOWN ENDS
-  ------------------------------------------------------------ */
+  /* ----------------------------------------------
+     PHYSICS — ENABLE ONLY AFTER COUNTDOWN
+  ---------------------------------------------- */
   const physicsEnabled = gameRunning && countdownValue === null;
   const { balls, spawnBall } = usePhysicsEngine(physicsEnabled);
 
-  /* ------------------------------------------------------------
+  /* ----------------------------------------------
      PLAYERS
-  ------------------------------------------------------------ */
+  ---------------------------------------------- */
   const players = usePlayers(gameId);
   const maxScore =
     players.length ? Math.max(...players.map((p) => p.score ?? 0)) : 0;
 
-  /* ------------------------------------------------------------
+  /* ----------------------------------------------
      HOST LOGO
-  ------------------------------------------------------------ */
+  ---------------------------------------------- */
   const [hostLogo, setHostLogo] = useState<string | null>(null);
 
   useEffect(() => {
@@ -76,9 +76,10 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
     loadHost();
   }, [gameId]);
 
-  /* ------------------------------------------------------------
-     SHOT EVENTS — NOW SUPPORTING vx + vy + power
-  ------------------------------------------------------------ */
+  /* ----------------------------------------------
+     RECEIVE SHOT EVENTS
+     (new physics: vx + vy + power)
+  ---------------------------------------------- */
   useEffect(() => {
     const ch = supabase
       .channel(`basketball-${gameId}`)
@@ -89,14 +90,14 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
         if (countdownValue !== null) return;
 
         spawnBall(
-          p.lane_index,
-          p.power,
+          p.lane_index,      // lane
+          p.power,           // power
           {
             rainbow: p.power > 0.82,
             fire: p.streak >= 2,
           },
-          p.vx ?? 0,
-          p.vy ?? -0.02
+          p.vx ?? 0,         // horizontal
+          p.vy ?? -0.05      // vertical
         );
       })
       .subscribe();
@@ -106,17 +107,17 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
     };
   }, [gameId, spawnBall, countdownValue]);
 
-  /* ------------------------------------------------------------
+  /* ----------------------------------------------
      FULLSCREEN BUTTON
-  ------------------------------------------------------------ */
+  ---------------------------------------------- */
   const toggleFullscreen = () =>
     !document.fullscreenElement
       ? document.documentElement.requestFullscreen()
       : document.exitFullscreen();
 
-  /* ------------------------------------------------------------
-     UI
-  ------------------------------------------------------------ */
+  /* ----------------------------------------------
+     RENDER
+  ---------------------------------------------- */
   return (
     <div
       style={{
@@ -134,7 +135,7 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
       {/* COUNTDOWN OVERLAY */}
       <Countdown preCountdown={countdownValue} />
 
-      {/* PLAYER GRID */}
+      {/* GRID OF 10 LANES */}
       <div
         style={{
           width: "94vw",
@@ -165,7 +166,7 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
         })}
       </div>
 
-      {/* FULLSCREEN */}
+      {/* FULLSCREEN BUTTON */}
       <div
         onClick={toggleFullscreen}
         style={{
@@ -183,6 +184,7 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
           fontSize: 20,
           alignItems: "center",
           justifyContent: "center",
+          zIndex: 500,
         }}
       >
         ⛶

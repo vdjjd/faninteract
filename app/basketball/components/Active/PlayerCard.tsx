@@ -28,7 +28,7 @@ function Net({ state }: { state: "idle" | "swish" | "hit" }) {
         left: "50%",
         transform: "translateX(-50%)",
         width: "14%",
-        zIndex: 30, // ⬅ Net ABOVE rim + background
+        zIndex: 150, // Net ABOVE balls and rim
         pointerEvents: "none",
       }}
     />
@@ -39,6 +39,9 @@ const BACKBOARD_SCALE = 1;
 const RIM_WIDTH = 14;
 const SELFIE_SIZE = 54;
 
+/* --------------------------------------------------
+   MAIN PLAYERCARD COMPONENT
+--------------------------------------------------- */
 export default function PlayerCard({
   index,
   player,
@@ -50,20 +53,23 @@ export default function PlayerCard({
   hostLogo,
   maxScore,
 }) {
+  /* ---------------- WINNER CHECK ---------------- */
   const isWinner =
     timerExpired && player && player.score === maxScore && maxScore > 0;
 
-  /* ---------------- NET COLLISION DETECTION ---------------- */
+  /* ---------------- NET COLLISION LOGIC ---------------- */
   let netState: "idle" | "swish" | "hit" = "idle";
 
   for (const b of balls) {
     const { x, y, vy, vx } = b;
 
+    // SWEET SPOT SWISH REGION
     if (vy > 0 && x > 47 && x < 53 && y > 12 && y < 22) {
       netState = "swish";
       break;
     }
 
+    // SIDE HIT
     if (
       y > 10 &&
       y < 15 &&
@@ -85,16 +91,10 @@ export default function PlayerCard({
         backgroundImage: "url('/BBgamebackground.png')",
         backgroundSize: "cover",
         backgroundPosition: "center",
-
-        zIndex: 0, // ⬅ Background area at base layer
-
-        animation: isWinner ? "winnerPulse 1s infinite ease-in-out" : undefined,
-        boxShadow: isWinner
-          ? `0 0 25px ${borderColor}, 0 0 55px ${borderColor}AA`
-          : "none",
+        zIndex: 0, // card background
       }}
     >
-      {/* WINNER ANIMATION */}
+      {/* ---------------- WINNER ANIMATION ---------------- */}
       <style>
         {`
           @keyframes winnerPulse {
@@ -127,7 +127,7 @@ export default function PlayerCard({
           fontFamily: "Digital, monospace",
           fontSize: "1rem",
           fontWeight: 700,
-          zIndex: 40, // ⬅ ABOVE ALL BACKGROUND LAYERS
+          zIndex: 120,
         }}
       >
         {timeLeft !== null
@@ -149,7 +149,7 @@ export default function PlayerCard({
           background: borderColor,
           color: "white",
           fontWeight: 800,
-          zIndex: 40, // ⬅ Visible again
+          zIndex: 120,
         }}
       >
         P{index + 1}
@@ -170,7 +170,7 @@ export default function PlayerCard({
           display: "flex",
           justifyContent: "center",
           alignItems: "center",
-          zIndex: 10,
+          zIndex: 20,
         }}
       >
         {hostLogo && (
@@ -186,7 +186,7 @@ export default function PlayerCard({
         )}
       </div>
 
-      {/* ---------------- RIM (BAR) ---------------- */}
+      {/* ---------------- RIM (ORANGE BAR) ---------------- */}
       <div
         style={{
           position: "absolute",
@@ -198,10 +198,11 @@ export default function PlayerCard({
           background: "#ff6a00",
           borderRadius: 6,
           boxShadow: "0 0 12px rgba(255,120,0,0.8)",
-          zIndex: 20,
+          zIndex: 25,
         }}
       />
 
+      {/* ---------------- NET ---------------- */}
       <Net state={netState} />
 
       {/* ---------------- BALLS + FX ---------------- */}
@@ -225,7 +226,7 @@ export default function PlayerCard({
             width: SELFIE_SIZE * 0.8,
             filter: `drop-shadow(0 0 8px ${borderColor})`,
             transform: "rotate(-6deg)",
-            zIndex: 100,
+            zIndex: 200,
             pointerEvents: "none",
           }}
         />
@@ -239,7 +240,7 @@ export default function PlayerCard({
           left: "-3.5%",
           width: SELFIE_SIZE,
           height: SELFIE_SIZE,
-          zIndex: 50, // ⬅ FIXED — ABOVE BACKGROUND
+          zIndex: 130,
           display: "flex",
           justifyContent: "center",
           alignItems: "center",
@@ -297,7 +298,7 @@ export default function PlayerCard({
           fontFamily: "Digital, monospace",
           fontWeight: 900,
           color: "#ff2d2d",
-          zIndex: 50, // ⬅ FIXED
+          zIndex: 130,
         }}
       >
         {score}
@@ -324,6 +325,7 @@ export default function PlayerCard({
             textTransform: "uppercase",
             zIndex: 200,
             pointerEvents: "none",
+            userSelect: "none",
           }}
         >
           WINNER

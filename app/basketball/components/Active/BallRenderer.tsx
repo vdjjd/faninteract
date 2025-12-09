@@ -1,66 +1,61 @@
 "use client";
 
 import React from "react";
+import { BallState } from "@/app/basketball/hooks/usePhysicsEngine";
 
-export default function BallRenderer({ ball }) {
-  /* ---------------------------------------------------------
-     Perspective constants matched to BBgamebackground.png
-  --------------------------------------------------------- */
+export default function BallRenderer({ ball }: { ball: BallState }) {
+  /* -----------------------------------------------------
+     DEPTH SCALING
+     ball.size comes from physics engine (~50px at spawn)
+     We reduce it slightly more here for smoothness.
+  ------------------------------------------------------*/
 
-  const VP_X = 50;  // horizontal vanishing point
-  const VP_Y = 11;  // vertical vanishing point
+  const scale = 1 - ball.z * 0.45; // smoother arcade shrink
+  const renderSize = ball.size * scale;
 
-  const HORIZ_PERSPECTIVE = 0.55;
-  const VERT_PERSPECTIVE = 22;
-
-  // Depth shrink curve
-  const size = ball.size * (1 - ball.z * 0.65);
-
-  /* ---------------------------------------------------------
-     Perspective warp positions
-  --------------------------------------------------------- */
-  const perspX = ball.x + (VP_X - ball.x) * (ball.z * HORIZ_PERSPECTIVE);
-  const perspY = ball.y - ball.z * VERT_PERSPECTIVE;
-
-  /* ---------------------------------------------------------
-     Shadow under the ball
-  --------------------------------------------------------- */
-  const shadowSize = size * 1.1;
-  const shadowOpacity = 0.25 * (1 - ball.z);
+  /* -----------------------------------------------------
+     OPTIONAL SHADOW (small and soft)
+     Appears only when ball is still "in play"
+  ------------------------------------------------------*/
+  const showShadow = ball.z < 1;
 
   return (
     <>
-      {/* Shadow */}
-      <div
-        style={{
-          position: "absolute",
-          left: `${perspX}%`,
-          top: `${perspY + size * 0.55}%`,
-          width: `${shadowSize}%`,
-          height: `${shadowSize * 0.35}%`,
-          background: "rgba(0,0,0,0.4)",
-          filter: `blur(${shadowSize * 0.25}px)`,
-          borderRadius: "50%",
-          transform: "translate(-50%, -50%)",
-          pointerEvents: "none",
-          opacity: shadowOpacity,
-          zIndex: 1,
-        }}
-      />
+      {/* ------- Shadow (optional, below ball) ------- */}
+      {showShadow && (
+        <div
+          style={{
+            position: "absolute",
+            left: `${ball.x}%`,
+            top: `${ball.y + 3}%`, // slightly below ball
+            width: `${renderSize * 0.6}px`,
+            height: `${renderSize * 0.25}px`,
+            background: "rgba(0,0,0,0.35)",
+            filter: "blur(6px)",
+            transform: "translate(-50%, -50%)",
+            borderRadius: "50%",
+            zIndex: 8,
+            pointerEvents: "none",
+          }}
+        />
+      )}
 
-      {/* Ball */}
+      {/* ------- BALL IMAGE ------- */}
       <img
         src="/ball.png"
         alt="basketball"
         style={{
           position: "absolute",
-          left: `${perspX}%`,
-          top: `${perspY}%`,
-          width: `${size}%`,
-          height: `${size}%`,
+          left: `${ball.x}%`,
+          top: `${ball.y}%`,
+          width: `${renderSize}px`,
+          height: `${renderSize}px`,
           transform: "translate(-50%, -50%)",
-          zIndex: 5,
+          zIndex: 15, // above background, below net + labels
           pointerEvents: "none",
+          imageRendering: "auto",
+          opacity: 1, // prevents ghosting
+          filter: "drop-shadow(0 2px 3px rgba(0,0,0,0.35))",
         }}
       />
     </>

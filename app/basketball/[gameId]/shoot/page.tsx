@@ -5,13 +5,20 @@ import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { useCountdown } from "@/app/basketball/hooks/useCountdown";
 
+const CELL_COLORS = [
+  "#FF3B30", "#FF9500", "#FFCC00", "#34C759", "#5AC8FA",
+  "#007AFF", "#5856D6", "#AF52DE", "#FF2D55", "#A2845E",
+];
+
 export default function ShooterPage() {
   const { gameId } = useParams() as { gameId: string };
 
+  /* ---------------- COUNTDOWN ---------------- */
   const countdownValue = useCountdown(gameId);
   const [localCountdown, setLocalCountdown] = useState<number | null>(null);
   const displayCountdown = localCountdown ?? countdownValue;
 
+  /* ---------------- PLAYER STATE ---------------- */
   const [playerId, setPlayerId] = useState<string | null>(null);
   const [laneIndex, setLaneIndex] = useState<number | null>(null);
   const [laneColor, setLaneColor] = useState("#222");
@@ -21,11 +28,13 @@ export default function ShooterPage() {
   const streakRef = useRef(0);
   const swipeRef = useRef({ x: 0, y: 0, time: 0 });
 
-  /* Load player */
+  /* ---------------- LOAD PLAYER FROM LOCAL STORAGE ---------------- */
   useEffect(() => {
-    setPlayerId(localStorage.getItem("bb_player_id"));
+    const stored = localStorage.getItem("bb_player_id");
+    if (stored) setPlayerId(stored);
   }, []);
 
+  /* ---------------- LOAD PLAYER DETAILS ---------------- */
   useEffect(() => {
     if (!playerId) return;
 
@@ -39,15 +48,16 @@ export default function ShooterPage() {
       if (!data) return;
 
       setLaneIndex(data.lane_index);
+      setLaneColor(CELL_COLORS[data.lane_index]); // RESTORED BORDER COLOR
       setScore(data.score ?? 0);
     }
 
     loadPlayer();
-    const t = setInterval(loadPlayer, 1000);
-    return () => clearInterval(t);
+    const interval = setInterval(loadPlayer, 1000);
+    return () => clearInterval(interval);
   }, [playerId]);
 
-  /* Timer sync */
+  /* ---------------- GAME TIMER SYNC ---------------- */
   async function syncGameStart() {
     const { data } = await supabase
       .from("bb_games")
@@ -62,6 +72,7 @@ export default function ShooterPage() {
     setTimeLeft(Math.max(data.duration_seconds - elapsed, 0));
   }
 
+  /* ---------------- SUBSCRIPTIONS ---------------- */
   useEffect(() => {
     if (!gameId) return;
 
@@ -71,43 +82,97 @@ export default function ShooterPage() {
         setLocalCountdown(10);
       })
       .on("broadcast", { event: "start_game" }, () => {
-        syncGameStart(); // <-- FIX: do not return Promise
+        syncGameStart();
+      })
+      .on("broadcast", { event: "reset_game" }, () => {
+        setLocalCountdown(null);
+        setTimeLeft(null);
+        streakRef.current = 0;
       })
       .subscribe();
 
     return () => {
-      supabase.removeChannel(channel); // sync cleanup
+      supabase.removeChannel(channel);
     };
   }, [gameId]);
 
-  /* SHOOT FUNCTION */
+  /* ---------------- COUNTDOWN TICK ---------------- */
+  useEffect(() => {
+    if (localCountdown === null) return;
+
+    if (localCountdown <= 0) {
+      setLocalCountdown(null);
+      syncGameStart();
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      setLocalCountdown((c) => (c !== null ? c - 1 : null));
+    }, 1000);
+
+    return () => clearTimeout(timer);
+  }, [localCountdown]);
+
+  /* ---------------- 1-SECOND HEARTBEAT ---------------- */
+  useEffect(() => {
+    if (!gameId) return;
+
+    async function tick() {
+      const { data } = await supabase
+        .from("bb_games")
+        .select("game_running, game_timer_start, duration_seconds")
+        .eq("id", gameId)
+        .single();
+
+      if (!data?.game_running || !data.game_timer_start) return;
+
+      const startMS = new Date(data.game_timer_start).getTime();
+      const elapsed = Math.floor((Date.now() - startMS) / 1000);
+      setTimeLeft(Math.max(data.duration_seconds - elapsed, 0));
+    }
+
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [gameId]);
+
+  /* ---------------- SEND SHOT ---------------- */
   async function handleShot({ vx, vy, power }) {
     if (!playerId || laneIndex === null) return;
-    if (displayCountdown !== null) return;
-
-    const streak = streakRef.current;
+    if (displayCountdown !== null) return; // block during countdown
 
     supabase.channel(`basketball-${gameId}`).send({
       type: "broadcast",
       event: "shot_fired",
-      payload: { lane_index: laneIndex, vx, vy, power, streak },
+      payload: {
+        lane_index: laneIndex,
+        vx,
+        vy,
+        power,
+        streak: streakRef.current,
+      },
     });
   }
 
+  /* ---------------- UI ---------------- */
   return (
     <div
       style={{
         width: "100vw",
         height: "100vh",
         background: "black",
-        border: `8px solid ${laneColor}`,
+        border: `8px solid ${laneColor}`, // RESTORED BORDER COLOR
         position: "relative",
         overflow: "hidden",
         touchAction: "none",
       }}
       onTouchStart={(e) => {
         const t = e.touches[0];
-        swipeRef.current = { x: t.clientX, y: t.clientY, time: Date.now() };
+        swipeRef.current = {
+          x: t.clientX,
+          y: t.clientY,
+          time: Date.now(),
+        };
       }}
       onTouchEnd={(e) => {
         const t = e.changedTouches[0];
@@ -119,14 +184,16 @@ export default function ShooterPage() {
         if (dy < 10) return;
 
         const speed = dy / dt;
-        const vy = -Math.min(7, speed * 9);
-        const vx = dx * 0.015;
-        const power = Math.min(1, speed * 1.2);
+
+        // Pop-A-Shot tuned physics input
+        const vy = -Math.min(8, speed * 10);
+        const vx = dx * 0.018;
+        const power = Math.min(1, speed * 1.25);
 
         handleShot({ vx, vy, power });
       }}
     >
-      {/* Countdown */}
+      {/* COUNTDOWN OVERLAY */}
       {displayCountdown !== null && (
         <div
           style={{
@@ -139,7 +206,8 @@ export default function ShooterPage() {
             color: "white",
             fontSize: "clamp(4rem, 10vw, 12rem)",
             fontWeight: 900,
-            zIndex: 9999,
+            textShadow: "0 0 40px red",
+            zIndex: 1000,
           }}
         >
           {displayCountdown > 0 ? displayCountdown : "START!"}
@@ -181,6 +249,7 @@ export default function ShooterPage() {
           textAlign: "center",
           color: "#ccc",
           fontSize: "2rem",
+          opacity: displayCountdown !== null ? 0 : 1,
         }}
       >
         SWIPE UP TO SHOOT
