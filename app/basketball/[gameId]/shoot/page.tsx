@@ -11,66 +11,54 @@ const CELL_COLORS = [
 ];
 
 export default function ShooterPage() {
-  const params = useParams();
-
-  /** --------------------------------------------
-   *  SAFELY READ gameId (fixes eq.undefined bug)
-   * -------------------------------------------- */
-  const gameId =
-    typeof params.gameId === "string"
-      ? params.gameId
-      : Array.isArray(params.gameId)
-      ? params.gameId[0]
-      : null;
-
-  /** If gameId is not ready, render nothing (prevents 400 errors) */
+  /* ------------------------------------------------------------
+     GET GAME ID FROM URL
+  ------------------------------------------------------------ */
+  const { gameId } = useParams() as { gameId: string };
   if (!gameId) {
-    return (
-      <div style={{ color: "white", padding: 40 }}>
-        Loading game…
-      </div>
-    );
+    console.error("❌ ShooterPage mounted with NO gameId");
   }
 
-  /** --------------------------------------------
-   *  COUNTDOWN
-   * -------------------------------------------- */
+  /* ------------------------------------------------------------
+     COUNTDOWN (shared with wall)
+  ------------------------------------------------------------ */
   const countdownValue = useCountdown(gameId);
   const [localCountdown, setLocalCountdown] = useState<number | null>(null);
+
   const displayCountdown = localCountdown ?? countdownValue;
 
-  /** --------------------------------------------
-   *  PLAYER STATE
-   * -------------------------------------------- */
+  /* ------------------------------------------------------------
+     PLAYER & GAME STATE
+  ------------------------------------------------------------ */
   const [playerId, setPlayerId] = useState<string | null>(null);
   const [laneIndex, setLaneIndex] = useState<number | null>(null);
   const [laneColor, setLaneColor] = useState("#222");
+
   const [score, setScore] = useState(0);
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
 
   const streakRef = useRef(0);
   const startY = useRef(0);
 
-  /** --------------------------------------------
-   *  LOAD PLAYER FROM LOCAL STORAGE
-   * -------------------------------------------- */
+  /* ------------------------------------------------------------
+     LOAD PLAYER FROM LOCAL STORAGE
+  ------------------------------------------------------------ */
   useEffect(() => {
     const stored = localStorage.getItem("bb_player_id");
     if (stored) setPlayerId(stored);
   }, []);
 
-  /** --------------------------------------------
-   *  LOAD PLAYER FROM DB (lane + score)
-   * -------------------------------------------- */
+  /* ------------------------------------------------------------
+     LOAD PLAYER DATA
+  ------------------------------------------------------------ */
   useEffect(() => {
-    if (!playerId || !gameId) return;
+    if (!playerId) return;
 
     async function loadPlayer() {
       const { data } = await supabase
         .from("bb_game_players")
         .select("*")
         .eq("id", playerId)
-        .eq("game_id", gameId)
         .single();
 
       if (!data) return;
@@ -83,14 +71,12 @@ export default function ShooterPage() {
     loadPlayer();
     const t = setInterval(loadPlayer, 1000);
     return () => clearInterval(t);
-  }, [playerId, gameId]);
+  }, [playerId]);
 
-  /** --------------------------------------------
-   *  SYNC GAME TIMER SAFELY (only when gameId valid)
-   * -------------------------------------------- */
+  /* ------------------------------------------------------------
+     SYNC GAME START (start_game)
+  ------------------------------------------------------------ */
   async function syncGameStart() {
-    if (!gameId) return;
-
     const { data } = await supabase
       .from("bb_games")
       .select("*")
@@ -101,35 +87,45 @@ export default function ShooterPage() {
 
     const startMS = new Date(data.game_timer_start).getTime();
     const elapsed = Math.floor((Date.now() - startMS) / 1000);
-    const remaining = Math.max(data.duration_seconds - elapsed, 0);
+    const duration = data.duration_seconds;
 
-    setTimeLeft(remaining);
+    setTimeLeft(Math.max(duration - elapsed, 0));
   }
 
-  /** --------------------------------------------
-   *  WALL BROADCAST LISTENER (safe gameId)
-   * -------------------------------------------- */
+  /* ------------------------------------------------------------
+     SUBSCRIBE TO GAME EVENTS
+  ------------------------------------------------------------ */
   useEffect(() => {
     if (!gameId) return;
 
     const channel = supabase
       .channel(`basketball-${gameId}`)
-      .on("broadcast", { event: "start_countdown" }, () =>
-        setLocalCountdown(10)
-      )
-      .on("broadcast", { event: "start_game" }, syncGameStart)
+      .on("broadcast", { event: "start_countdown" }, () => {
+        setLocalCountdown(10);
+      })
+      .on("broadcast", { event: "start_game" }, () => {
+        syncGameStart();
+      })
+      .on("broadcast", { event: "game_reset" }, () => {
+        // 🔥 Shooter reacts instantly when game resets
+        setLocalCountdown(null);
+        setTimeLeft(null);
+        setScore(0);
+        streakRef.current = 0;
+
+        // Reload local player
+        setPlayerId(localStorage.getItem("bb_player_id") || null);
+      })
       .subscribe();
 
     return () => {
-      try {
-        supabase.removeChannel(channel);
-      } catch {}
+      try { supabase.removeChannel(channel); } catch {}
     };
   }, [gameId]);
 
-  /** --------------------------------------------
-   *  COUNTDOWN LOGIC
-   * -------------------------------------------- */
+  /* ------------------------------------------------------------
+     LOCAL COUNTDOWN TICKER
+  ------------------------------------------------------------ */
   useEffect(() => {
     if (localCountdown === null) return;
 
@@ -139,17 +135,16 @@ export default function ShooterPage() {
       return;
     }
 
-    const timer = setTimeout(
-      () => setLocalCountdown((c) => (c !== null ? c - 1 : null)),
-      1000
-    );
+    const t = setTimeout(() => {
+      setLocalCountdown((c) => (c !== null ? c - 1 : null));
+    }, 1000);
 
-    return () => clearTimeout(timer);
+    return () => clearTimeout(t);
   }, [localCountdown]);
 
-  /** --------------------------------------------
-   *  SHOOT LOGIC
-   * -------------------------------------------- */
+  /* ------------------------------------------------------------
+     SHOOT LOGIC
+  ------------------------------------------------------------ */
   async function handleShot(power: number) {
     if (!playerId || laneIndex === null) return;
     if (displayCountdown !== null) return;
@@ -165,17 +160,15 @@ export default function ShooterPage() {
     const made = Math.random() < (0.45 + power * 0.35);
     if (made) {
       streakRef.current++;
-      await supabase.rpc("increment_player_score", {
-        p_player_id: playerId,
-      });
+      await supabase.rpc("increment_player_score", { p_player_id: playerId });
     } else {
       streakRef.current = 0;
     }
   }
 
-  /** --------------------------------------------
-   *  UI
-   * -------------------------------------------- */
+  /* ------------------------------------------------------------
+     UI
+  ------------------------------------------------------------ */
   return (
     <div
       style={{
@@ -198,13 +191,13 @@ export default function ShooterPage() {
         }
       }}
     >
-      {/* COUNTDOWN OVERLAY */}
+      {/* COUNTDOWN */}
       {displayCountdown !== null && (
         <div
           style={{
             position: "absolute",
             inset: 0,
-            background: "rgba(0,0,0,0.88)",
+            background: "rgba(0,0,0,0.85)",
             display: "flex",
             justifyContent: "center",
             alignItems: "center",
