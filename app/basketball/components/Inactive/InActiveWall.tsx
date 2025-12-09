@@ -7,17 +7,17 @@ import { supabase } from "@/lib/supabaseClient";
 export default function InactiveWall({ game }: { game: any }) {
   const updateTimeout = useRef<NodeJS.Timeout | null>(null);
 
-  /* ALWAYS USE FIXED BACKGROUND */
   const FIXED_BACKGROUND = "/bbgame1920x1080.png";
 
-  const [brightness, setBrightness] = useState(
+  const [brightness, setBrightness] = useState<number>(
     game?.background_brightness ?? 100
   );
 
   const [hostData, setHostData] = useState<any>(null);
+  const [showStartingSoon, setShowStartingSoon] = useState(true);
 
   /* ---------------------------------------------------------
-     LOAD HOST DATA USING host_id  (🔥 FIX HERE)
+     LOAD HOST LOGO
   --------------------------------------------------------- */
   useEffect(() => {
     if (!game?.host_id) return;
@@ -33,32 +33,61 @@ export default function InactiveWall({ game }: { game: any }) {
   }, [game?.host_id]);
 
   /* ---------------------------------------------------------
-     POLL FOR BRIGHTNESS ONLY
+     REALTIME SUBSCRIPTION — reacts instantly to DB changes
   --------------------------------------------------------- */
   useEffect(() => {
     if (!game?.id) return;
 
-    const interval = setInterval(async () => {
-      const { data } = await supabase
-        .from("bb_games")
-        .select("background_brightness")
-        .eq("id", game.id)
-        .single();
+    const channel = supabase
+      .channel(`inactive-wall-${game.id}`)
+      .on(
+        "postgres_changes",
+        {
+          schema: "public",
+          table: "bb_games",
+          event: "*",
+          filter: `id=eq.${game.id}`,
+        },
+        (payload) => {
+          const updated = payload.new as any; // 👈 FIXED typing here
 
-      if (!data) return;
+          console.log("📡 LIVE WALL UPDATE", updated);
 
-      if (updateTimeout.current) clearTimeout(updateTimeout.current);
+          // Sync brightness
+          if (updated.background_brightness !== undefined) {
+            setBrightness(updated.background_brightness);
+          }
 
-      updateTimeout.current = setTimeout(() => {
-        setBrightness(data.background_brightness ?? 100);
-      }, 50);
-    }, 1500);
+          // When wall becomes active or countdown starts → hide "Starting Soon"
+          if (updated.wall_active === true || updated.game_running === true) {
+            setShowStartingSoon(false);
+          }
+        }
+      )
+      .subscribe();
 
-    return () => clearInterval(interval);
+    return () => {
+      try {
+        supabase.removeChannel(channel);
+      } catch {}
+    };
   }, [game?.id]);
 
   /* ---------------------------------------------------------
-     QR CODE
+     LISTEN FOR DASHBOARD start_countdown → hide "Starting Soon"
+  --------------------------------------------------------- */
+  useEffect(() => {
+    function handleMsg(e: MessageEvent) {
+      if (e.data?.type === "start_countdown") {
+        setShowStartingSoon(false);
+      }
+    }
+    window.addEventListener("message", handleMsg);
+    return () => window.removeEventListener("message", handleMsg);
+  }, []);
+
+  /* ---------------------------------------------------------
+     QR CODE VALUES
   --------------------------------------------------------- */
   const origin =
     typeof window !== "undefined"
@@ -68,7 +97,7 @@ export default function InactiveWall({ game }: { game: any }) {
   const qrValue = `${origin}/guest/signup?basketball=${game.id}`;
 
   /* ---------------------------------------------------------
-     HOST LOGO (🔥 FIXED)
+     HOST LOGO CHOOSER
   --------------------------------------------------------- */
   const displayLogo =
     hostData?.branding_logo_url?.trim()
@@ -83,7 +112,7 @@ export default function InactiveWall({ game }: { game: any }) {
       : document.exitFullscreen();
 
   /* ---------------------------------------------------------
-     JSX
+     RENDER UI
   --------------------------------------------------------- */
   return (
     <div
@@ -108,7 +137,7 @@ export default function InactiveWall({ game }: { game: any }) {
           color: "#fff",
           fontSize: "clamp(2.5rem,4vw,5rem)",
           fontWeight: 900,
-          whiteSpace: "nowrap", // ← FORCE one line
+          whiteSpace: "nowrap",
           textShadow:
             "-2px -2px 0 #000,2px -2px 0 #000,-2px 2px 0 #000,2px 2px 0 #000",
           marginBottom: "1vh",
@@ -132,7 +161,7 @@ export default function InactiveWall({ game }: { game: any }) {
           overflow: "hidden",
         }}
       >
-        {/* LEFT QR */}
+        {/* LEFT QR CODE */}
         <div
           style={{
             position: "absolute",
@@ -159,7 +188,7 @@ export default function InactiveWall({ game }: { game: any }) {
           />
         </div>
 
-        {/* RIGHT SIDE */}
+        {/* RIGHT CONTENT AREA */}
         <div style={{ flexGrow: 1, marginLeft: "44%", position: "relative" }}>
           {/* HOST LOGO */}
           <div
@@ -191,7 +220,7 @@ export default function InactiveWall({ game }: { game: any }) {
             }}
           />
 
-          {/* TITLE GLASS */}
+          {/* GLASS TITLE */}
           <p
             style={{
               position: "absolute",
@@ -201,7 +230,7 @@ export default function InactiveWall({ game }: { game: any }) {
               color: "#fff",
               fontSize: "clamp(2em,3.5vw,6rem)",
               fontWeight: 900,
-              whiteSpace: "nowrap", // ← KEEP ONE LINE
+              whiteSpace: "nowrap",
               textShadow:
                 "-2px -2px 0 #000,2px -2px 0 #000,-2px 2px 0 #000,2px 2px 0 #000",
             }}
@@ -209,22 +238,25 @@ export default function InactiveWall({ game }: { game: any }) {
             Basketball Battle
           </p>
 
-          {/* STARTING SOON */}
-          <p
-            style={{
-              position: "absolute",
-              top: "67%",
-              left: "53%",
-              transform: "translateX(-50%)",
-              color: "#bcd9ff",
-              fontWeight: 700,
-              fontSize: "clamp(1.6rem,2.5vw,3.2rem)",
-              animation: "pulse 2.4s infinite",
-            }}
-          >
-            Starting Soon!!
-          </p>
+          {/* STARTING SOON (auto hides when countdown starts) */}
+          {showStartingSoon && (
+            <p
+              style={{
+                position: "absolute",
+                top: "67%",
+                left: "53%",
+                transform: "translateX(-50%)",
+                color: "#bcd9ff",
+                fontWeight: 700,
+                fontSize: "clamp(1.6rem,2.5vw,3.2rem)",
+                animation: "pulse 2.4s infinite",
+              }}
+            >
+              Starting Soon!!
+            </p>
+          )}
 
+          {/* Pulse animation */}
           <style>{`
             @keyframes pulse {
               0%,100% { opacity: .7 }
@@ -234,7 +266,7 @@ export default function InactiveWall({ game }: { game: any }) {
         </div>
       </div>
 
-      {/* FULLSCREEN */}
+      {/* FULLSCREEN BUTTON */}
       <div
         onClick={toggleFullscreen}
         style={{
