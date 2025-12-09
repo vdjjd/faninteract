@@ -6,15 +6,19 @@ export interface BallState {
   id: string;
   lane: number;
 
-  x: number;   // 0–100% horizontal
-  y: number;   // 0–100% vertical
-  z: number;   // 0 = near player, 1 = rim depth
+  // Screen-space (0–100)
+  x: number; // horizontal
+  y: number; // vertical
 
-  vx: number;  // horizontal velocity
-  vy: number;  // vertical velocity
-  vz: number;  // forward / depth velocity
+  // Depth into scene
+  z: number; // 0 = shooter, 1 = rim, >1 = backboard
 
-  size: number;
+  // Velocities
+  vx: number;
+  vy: number;
+  vz: number;
+
+  size: number; // base size, scaled in renderer
   active: boolean;
 
   rainbow?: boolean;
@@ -22,11 +26,27 @@ export interface BallState {
 }
 
 /* ---------------------------------------------------------
-   PHYSICS CONSTANTS (tuned)
+   PHYSICS CONSTANTS — TUNED FOR 3D TUNNEL BACKGROUND
 --------------------------------------------------------- */
-const GRAVITY = 0.0042;    // acts downward
-const DRAG = 0.992;        // slows all motion
-const FLOOR_Z = 1.15;      // ball disappears past rim zone
+
+// Slightly lighter gravity for longer hang-time
+const GRAVITY = 0.00225;
+
+// Global drag
+const DRAG = 0.992;
+
+// Remove ball beyond this depth
+const FLOOR_Z = 1.2;
+
+/* --- Rim + Backboard geometry --- */
+
+const RIM_Z = 0.9;
+const RIM_X = 50;
+const RIM_Y = 18;
+const RIM_RADIUS = 5.2;
+
+const BACKBOARD_Z = 1.02;
+const BACKBOARD_BOUNCE = -0.6;
 
 /* ---------------------------------------------------------
    usePhysicsEngine
@@ -40,7 +60,8 @@ export function usePhysicsEngine(gameRunning: boolean) {
   const lastTime = useRef<number | null>(null);
 
   /* ---------------------------------------------------------
-     SPAWN BALL (NOW USES vx + vy FROM SHOOTER)
+     SPAWN BALL
+     (matches new BallRenderer perspective)
   --------------------------------------------------------- */
   const spawnBall = useCallback(
     (
@@ -54,16 +75,17 @@ export function usePhysicsEngine(gameRunning: boolean) {
         id: crypto.randomUUID(),
         lane,
 
+        // Start near shooter
         x: 50,
         y: 94,
         z: 0,
 
-        // REAL velocity from swipe gesture
-        vx: vx * 0.12,     // sideways influence
-        vy: vy * 0.15,     // arc upward
-        vz: power * 0.035, // forward depth (controls arc height)
+        // Tuned for realistic arc inside 3D tunnel
+        vx: vx * 0.12,
+        vy: vy * 0.62,
+        vz: 0.06 + power * 0.045,
 
-        size: 38,
+        size: 30,
         active: true,
 
         rainbow: fx.rainbow,
@@ -80,12 +102,14 @@ export function usePhysicsEngine(gameRunning: boolean) {
   );
 
   /* ---------------------------------------------------------
-     STEP PHYSICS (runs every animation frame)
-  --------------------------------------------------------- */
+     STEP PHYSICS — runs every animation frame
+--------------------------------------------------------- */
   const step = useCallback(
     (t: number) => {
-      if (!lastTime.current) lastTime.current = t;
-      const dt = (t - lastTime.current) * 0.06; // tuning factor
+      if (lastTime.current == null) {
+        lastTime.current = t;
+      }
+      const dt = (t - lastTime.current) * 0.06;
       lastTime.current = t;
 
       if (gameRunning) {
@@ -95,30 +119,57 @@ export function usePhysicsEngine(gameRunning: boolean) {
               .map((ball) => {
                 if (!ball.active) return ball;
 
-                /* --- GRAVITY ACTS DOWNWARD --- */
+                /* --- GRAVITY --- */
                 ball.vy += GRAVITY * dt;
 
-                /* --- MOVE BALL --- */
+                /* --- INTEGRATE POSITION --- */
                 ball.x += ball.vx * dt;
                 ball.y += ball.vy * dt;
                 ball.z += ball.vz * dt;
 
-                /* --- SIMPLE RIM COLLISION (2D band) --- */
-                const inRimBand = ball.y < 22 && ball.y > 14;
-                const inRimWidth = ball.x > 44 && ball.x < 56;
+                /* -------------------------------------------
+                   RIM COLLISION (3D ring, matches background)
+                -------------------------------------------- */
+                if (Math.abs(ball.z - RIM_Z) < 0.05) {
+                  const dx = ball.x - RIM_X;
+                  const dy = ball.y - RIM_Y;
+                  const dist = Math.sqrt(dx * dx + dy * dy);
 
-                if (inRimBand && inRimWidth) {
-                  ball.vy *= -0.32;
-                  ball.vx *= 0.7;
+                  if (dist < RIM_RADIUS) {
+                    const nx = dx / (dist || 1);
+                    const ny = dy / (dist || 1);
+
+                    const dot = ball.vx * nx + ball.vy * ny;
+
+                    const BOUNCE = 0.6;
+                    ball.vx -= 2 * dot * nx * BOUNCE;
+                    ball.vy -= 2 * dot * ny * BOUNCE;
+
+                    ball.vz *= 0.85; // lose a little forward energy
+                  }
                 }
 
-                /* --- DRAG SLOWS EVERYTHING --- */
+                /* -------------------------------------------
+                   BACKBOARD COLLISION (behind rim)
+                -------------------------------------------- */
+                if (ball.z >= BACKBOARD_Z) {
+                  ball.z = BACKBOARD_Z;
+                  ball.vz *= BACKBOARD_BOUNCE;
+                  ball.vx *= 0.8;
+                  ball.vy *= 0.8;
+                }
+
+                /* --- DRAG --- */
                 ball.vx *= DRAG;
                 ball.vy *= DRAG;
                 ball.vz *= DRAG;
 
-                /* --- REMOVE BALL WHEN TOO FAR --- */
-                if (ball.z > FLOOR_Z || ball.y > 120) {
+                /* --- SIZE SHRINKS WITH DEPTH (matches renderer) --- */
+                const depth = Math.min(Math.max(ball.z, 0), 1.1);
+                ball.size = 30 * (1 - depth * 0.6); // 30 → ~12
+
+                /* --- REMOVE BALL WHEN OUT OF VIEW --- */
+                if (ball.z > FLOOR_Z || ball.y > 120 || ball.y < -10) {
                   ball.active = false;
                 }
 
@@ -135,13 +186,13 @@ export function usePhysicsEngine(gameRunning: boolean) {
   );
 
   /* ---------------------------------------------------------
-     START PHYSICS LOOP
-  --------------------------------------------------------- */
+     START / STOP LOOP
+--------------------------------------------------------- */
   useEffect(() => {
     rafRef.current = requestAnimationFrame(step);
 
     return () => {
-      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
     };
   }, [step]);
 

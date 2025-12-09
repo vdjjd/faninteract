@@ -31,20 +31,17 @@ export default function ShooterPage() {
 
   const streakRef = useRef(0);
 
-  /* --- NEW FOR SWIPE VELOCITY --- */
+  /* --- SWIPE VELOCITY TRACKER --- */
   const swipeRef = useRef({ x: 0, y: 0, time: 0 });
 
   /* ------------------------------------------------------------
-     LOAD PLAYER FROM LOCAL STORAGE
+     LOAD PLAYER
   ------------------------------------------------------------ */
   useEffect(() => {
     const stored = localStorage.getItem("bb_player_id");
     if (stored) setPlayerId(stored);
   }, []);
 
-  /* ------------------------------------------------------------
-     LOAD PLAYER DETAILS FROM DB
-  ------------------------------------------------------------ */
   useEffect(() => {
     if (!playerId) return;
 
@@ -68,7 +65,7 @@ export default function ShooterPage() {
   }, [playerId]);
 
   /* ------------------------------------------------------------
-     GAME START SYNC (single-shot)
+     GAME TIMER SYNC
   ------------------------------------------------------------ */
   async function syncGameStart() {
     const { data } = await supabase
@@ -81,6 +78,7 @@ export default function ShooterPage() {
 
     const startMS = new Date(data.game_timer_start).getTime();
     const elapsed = Math.floor((Date.now() - startMS) / 1000);
+
     setTimeLeft(Math.max(data.duration_seconds - elapsed, 0));
   }
 
@@ -108,7 +106,7 @@ export default function ShooterPage() {
   }, [gameId]);
 
   /* ------------------------------------------------------------
-     COUNTDOWN TICKER
+     COUNTDOWN TICK
   ------------------------------------------------------------ */
   useEffect(() => {
     if (localCountdown === null) return;
@@ -127,7 +125,7 @@ export default function ShooterPage() {
   }, [localCountdown]);
 
   /* ------------------------------------------------------------
-     1-SECOND TIMER HEARTBEAT
+     TIMER HEARTBEAT
   ------------------------------------------------------------ */
   useEffect(() => {
     if (!gameId) return;
@@ -154,11 +152,11 @@ export default function ShooterPage() {
   }, [gameId]);
 
   /* ------------------------------------------------------------
-     SHOOT LOGIC — NOW USES vx + vy
+     SHOOT LOGIC (vx + vy tuned for 3D physics)
   ------------------------------------------------------------ */
   async function handleShot({ vx, vy, power }) {
     if (!playerId || laneIndex === null) return;
-    if (displayCountdown !== null) return; // BLOCK during countdown
+    if (displayCountdown !== null) return;
 
     const streak = streakRef.current;
 
@@ -179,7 +177,7 @@ export default function ShooterPage() {
   }
 
   /* ------------------------------------------------------------
-     UI + TOUCH HANDLING
+     RENDER
   ------------------------------------------------------------ */
   return (
     <div
@@ -193,7 +191,7 @@ export default function ShooterPage() {
         touchAction: "none",
       }}
 
-      /* --- SWIPE START (record position + time) --- */
+      /* --- SWIPE START --- */
       onTouchStart={(e) => {
         const touch = e.touches[0];
         swipeRef.current = {
@@ -203,7 +201,7 @@ export default function ShooterPage() {
         };
       }}
 
-      /* --- SWIPE END (compute velocity, send shot) --- */
+      /* --- SWIPE END → compute vx, vy, power --- */
       onTouchEnd={(e) => {
         const touch = e.changedTouches[0];
 
@@ -211,14 +209,13 @@ export default function ShooterPage() {
         const dy = swipeRef.current.y - touch.clientY; // upward = positive
         const dt = Date.now() - swipeRef.current.time;
 
-        if (dy < 10) return; // small swipe = ignore
+        if (dy < 10) return;
 
-        const speed = dy / dt; // px per ms
+        const speed = dy / dt;
 
-        // Convert to physics velocities
-        const vy = -Math.min(9, speed * 12); // upward
-        const vx = dx * 0.02; // small sideways influence
-
+        // Tuned velocities for new 3D physics engine:
+        const vy = -Math.min(7, speed * 9);     // upward throw strength
+        const vx = dx * 0.015;                 // subtle sideways curve
         const power = Math.min(1, speed * 1.2);
 
         handleShot({ vx, vy, power });
