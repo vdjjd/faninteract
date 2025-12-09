@@ -8,31 +8,30 @@ import { useEffect, useRef, useState, useCallback } from "react";
 export interface BallState {
   id: string;
   lane: number;
-  x: number;   // percentage (0–100)
-  y: number;   // percentage (0–100)
-  vx: number;
-  vy: number;
+  x: number;     // percent-based
+  y: number;     // percent-based
+  vx: number;    // px velocity
+  vy: number;    // px velocity
   size: number;
   active: boolean;
-  grounded?: boolean;  // NEW
   rainbow?: boolean;
   fire?: boolean;
 }
 
 /* ---------------------------------------------------------
-   Physics Constants
+   Physics Constants (Tuned for realism)
 --------------------------------------------------------- */
-const GRAVITY = 0.55;
-const LAUNCH_POWER = 3.4;
+const GRAVITY = 0.65;          // px/frame gravity
+const LAUNCH_POWER = 14.0;     // MUCH stronger to reach rim
+const FRICTION = 0.985;        // for rolling
+const FLOOR_Y = 108;           // floor percent
 
-const AIR_FRICTION = 0.992;
-const GROUND_FRICTION = 0.92;
-
-const FLOOR_Y = 108;     // percent
+// Rim collisions
 const RIM_Y = 16.5;
 const RIM_WIDTH = 20;
-const SIDE_WALL_LEFT = 20;
-const SIDE_WALL_RIGHT = 80;
+
+// Convert px → percent of game board
+const PX_TO_PERCENT = 0.12;    // tuned so shots reach rim naturally
 
 /* ---------------------------------------------------------
    Main Hook
@@ -54,16 +53,15 @@ export function usePhysicsEngine(gameRunning: boolean) {
       power: number,
       effects?: { rainbow?: boolean; fire?: boolean }
     ) => {
-      const b: BallState = {
+      const newBall: BallState = {
         id: crypto.randomUUID(),
         lane,
-        x: 50,
-        y: 94,
-        vx: (Math.random() - 0.5) * 1.4,
-        vy: -power * LAUNCH_POWER * (1 + Math.random() * 0.03),
-        size: 20,
+        x: 50,                 // mid-lane
+        y: 94,                 // bottom
+        vx: (Math.random() - 0.5) * 10, // px velocity → percent after scaling
+        vy: -(power * LAUNCH_POWER),    // upward velocity (px)
+        size: 22,              // bigger ball for visibility
         active: true,
-        grounded: false,
         rainbow: effects?.rainbow,
         fire: effects?.fire,
       };
@@ -71,15 +69,10 @@ export function usePhysicsEngine(gameRunning: boolean) {
       setBalls((prev) => {
         const copy = prev.map((laneBalls) => [...laneBalls]);
 
-        // KEEP ONLY 6 BALLS TOTAL (1 active + 5 ground)
-        if (copy[lane].length >= 6) {
-          // remove OLDEST grounded ball
-          const idx = copy[lane].findIndex((x) => x.grounded);
-          if (idx !== -1) copy[lane].splice(idx, 1);
-          else copy[lane].shift(); // fallback if none grounded
-        }
+        // Limit ground clutter → max 6 balls per lane
+        if (copy[lane].length > 6) copy[lane].shift();
 
-        copy[lane].push(b);
+        copy[lane].push(newBall);
         return copy;
       });
     },
@@ -87,7 +80,7 @@ export function usePhysicsEngine(gameRunning: boolean) {
   );
 
   /* ---------------------------------------------------------
-     Step Physics Loop
+     Physics Step (runs every animation frame)
   --------------------------------------------------------- */
   const step = useCallback(
     (timestamp: number) => {
@@ -102,66 +95,63 @@ export function usePhysicsEngine(gameRunning: boolean) {
               .map((ball) => {
                 if (!ball.active) return ball;
 
-                // -----------------------------------
-                // FLOOR CONTACT
-                // -----------------------------------
-                if (ball.grounded) {
-                  ball.vx *= GROUND_FRICTION;
-
-                  ball.x += ball.vx;
-
-                  // Stop completely if almost still
-                  if (Math.abs(ball.vx) < 0.05) {
-                    ball.vx = 0;
-                  }
-
-                  return { ...ball };
-                }
-
-                // -----------------------------------
-                // AIR PHYSICS
-                // -----------------------------------
+                /* ---------------------------------------------------------
+                   Apply gravity (in px)
+                --------------------------------------------------------- */
                 ball.vy += GRAVITY * (delta / 16.67);
-                ball.x += ball.vx;
-                ball.y += ball.vy;
 
-                ball.vx *= AIR_FRICTION;
-                ball.vy *= AIR_FRICTION;
+                /* ---------------------------------------------------------
+                   Convert px velocities into percent movement
+                --------------------------------------------------------- */
+                ball.x += ball.vx * PX_TO_PERCENT;
+                ball.y += ball.vy * PX_TO_PERCENT;
 
-                // -----------------------------------
-                // RIM COLLISION
-                // -----------------------------------
-                const inRimBand = ball.y > RIM_Y - 2 && ball.y < RIM_Y + 2;
-                const inRimWidth =
+                /* ---------------------------------------------------------
+                   Rim collision (soft bounce)
+                --------------------------------------------------------- */
+                const rimHit =
+                  ball.y > RIM_Y - 2 &&
+                  ball.y < RIM_Y + 2 &&
                   ball.x > 50 - RIM_WIDTH / 2 &&
                   ball.x < 50 + RIM_WIDTH / 2;
 
-                if (inRimBand && inRimWidth) {
-                  ball.vy *= -0.48;
-                  ball.vx *= 0.8;
+                if (rimHit) {
+                  ball.vy *= -0.45;   // bounce upward
+                  ball.vx *= 0.7;     // sideways deflection
                 }
 
-                // -----------------------------------
-                // SIDE WALLS
-                // -----------------------------------
-                if (ball.x < SIDE_WALL_LEFT) {
-                  ball.x = SIDE_WALL_LEFT;
-                  ball.vx *= -0.55;
-                }
-
-                if (ball.x > SIDE_WALL_RIGHT) {
-                  ball.x = SIDE_WALL_RIGHT;
-                  ball.vx *= -0.55;
-                }
-
-                // -----------------------------------
-                // FLOOR COLLISION → become grounded ball
-                // -----------------------------------
-                if (ball.y > FLOOR_Y) {
+                /* ---------------------------------------------------------
+                   Floor bounce + roll
+                --------------------------------------------------------- */
+                if (ball.y >= FLOOR_Y) {
                   ball.y = FLOOR_Y;
-                  ball.vy = 0;
-                  ball.grounded = true;
+
+                  // bounce until it’s basically dead
+                  ball.vy *= -0.35;
+                  ball.vx *= 0.9;
+
+                  if (Math.abs(ball.vy) < 0.15) {
+                    // ball stops moving → despawn
+                    ball.active = false;
+                  }
                 }
+
+                /* ---------------------------------------------------------
+                   Wall bounce (keep balls inside lane area)
+                --------------------------------------------------------- */
+                if (ball.x < 6) {
+                  ball.x = 6;
+                  ball.vx *= -0.6;
+                }
+                if (ball.x > 94) {
+                  ball.x = 94;
+                  ball.vx *= -0.6;
+                }
+
+                /* ---------------------------------------------------------
+                   Apply friction
+                --------------------------------------------------------- */
+                ball.vx *= FRICTION;
 
                 return { ...ball };
               })
@@ -176,10 +166,11 @@ export function usePhysicsEngine(gameRunning: boolean) {
   );
 
   /* ---------------------------------------------------------
-     Start Loop
+     Start engine loop
   --------------------------------------------------------- */
   useEffect(() => {
     rafRef.current = requestAnimationFrame(step);
+
     return () => {
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
     };
