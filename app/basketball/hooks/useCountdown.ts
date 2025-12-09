@@ -1,35 +1,48 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useEffect, useState, useRef } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
 export function useCountdown(gameId: string) {
   const [countdown, setCountdown] = useState<number | null>(null);
 
-  // Dashboard (postMessage)
-  useEffect(() => {
-    function handleMsg(e: MessageEvent) {
-      if (e.data?.type === "start_countdown") setCountdown(10);
-    }
-    window.addEventListener("message", handleMsg);
-    return () => window.removeEventListener("message", handleMsg);
-  }, []);
+  // We keep the channel persistent for the life of the component
+  const channelRef = useRef<any>(null);
 
-  // Supabase broadcast (Shooter & Wall BOTH listen here)
   useEffect(() => {
-    const channel = supabase
-      .channel(`basketball-${gameId}`)
+    // Create ONE unified channel for both Wall + Shooter
+    const channel = supabase.channel(`basketball-${gameId}`);
+
+    // Save ref
+    channelRef.current = channel;
+
+    channel
       .on("broadcast", { event: "start_countdown" }, () => {
         setCountdown(10);
+      })
+      .on("broadcast", { event: "start_game" }, (payload) => {
+        // If countdown somehow misses end logic, ensure we sync
+        const startTime = payload.payload?.startTime;
+        if (startTime) {
+          supabase
+            .from("bb_games")
+            .update({
+              game_running: true,
+              game_timer_start: startTime,
+            })
+            .eq("id", gameId);
+        }
       })
       .subscribe();
 
     return () => {
-      try { supabase.removeChannel(channel); } catch {}
+      try {
+        supabase.removeChannel(channel);
+      } catch {}
     };
   }, [gameId]);
 
-  // Tick + auto-start game
+  // Pure countdown engine
   useEffect(() => {
     if (countdown === null) return;
 
@@ -38,6 +51,7 @@ export function useCountdown(gameId: string) {
 
       const startTime = new Date().toISOString();
 
+      // Set DB game_running = true
       supabase
         .from("bb_games")
         .update({
@@ -46,7 +60,8 @@ export function useCountdown(gameId: string) {
         })
         .eq("id", gameId);
 
-      supabase.channel(`basketball-${gameId}`).send({
+      // Tell shooters & wall that game has begun
+      channelRef.current?.send({
         type: "broadcast",
         event: "start_game",
         payload: { startTime },
@@ -56,7 +71,7 @@ export function useCountdown(gameId: string) {
     }
 
     const t = setTimeout(() => {
-      setCountdown((c) => (c !== null ? c - 1 : null));
+      setCountdown((c) => (c === null ? null : c - 1));
     }, 1000);
 
     return () => clearTimeout(t);

@@ -4,21 +4,10 @@ import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/lib/supabaseClient";
 
-// Global popup reference
 declare global {
   interface Window {
     _basketballPopup?: Window | null;
   }
-}
-
-interface BasketballGameCardProps {
-  game: any;
-  onOpenModeration: (gameId: string) => void;
-  onStart: (gameId: string) => Promise<void>;
-  onStop: (gameId: string) => Promise<void>;
-  onDelete: (gameId: string) => Promise<void>;
-  onOpenOptions: (game: any) => void;
-  onRefresh: () => Promise<void>;
 }
 
 export default function BasketballGameCard({
@@ -29,27 +18,11 @@ export default function BasketballGameCard({
   onDelete,
   onOpenOptions,
   onRefresh,
-}: BasketballGameCardProps) {
+}) {
   const [wallActivated, setWallActivated] = useState(false);
 
-  if (!game?.id) {
-    return (
-      <div
-        className={cn(
-          "rounded-xl p-4 text-center bg-gray-700/20 text-gray-300 border border-white/10"
-        )}
-      >
-        Loading game…
-      </div>
-    );
-  }
-
-  /* ------------------------------------------------------------
-     LAUNCH WALL POPUP
-  ------------------------------------------------------------ */
   function openWallWindow() {
     const url = `${window.location.origin}/basketball/${game.id}`;
-
     let popup = window._basketballPopup;
 
     if (!popup || popup.closed) {
@@ -60,22 +33,18 @@ export default function BasketballGameCard({
       );
       window._basketballPopup = popup;
     }
-
     popup?.focus();
     return popup;
   }
 
-  /* ------------------------------------------------------------
-     ACTIVATE WALL — switch popup to ACTIVE display (no timer yet)
-     ❗ PATCH APPLIED HERE
-  ------------------------------------------------------------ */
   async function handleActivateWall() {
     await supabase
       .from("bb_games")
       .update({
-        status: "running",
-        game_running: false,      // ✅ FIX: must stay FALSE until countdown ends
-        game_timer_start: null,   // countdown begins with no timer
+        wall_active: true,
+        game_running: false,
+        game_timer_start: null,
+        status: "ready",
       })
       .eq("id", game.id);
 
@@ -83,31 +52,18 @@ export default function BasketballGameCard({
     await onRefresh();
   }
 
-  /* ------------------------------------------------------------
-     START GAME — sends countdown to BOTH CHANNELS
-  ------------------------------------------------------------ */
   async function handleStartGame() {
     if (!wallActivated) return;
 
-    console.log("▶ Start Game Triggered");
+    console.log("▶ Countdown Started");
 
-    // Tell wall popup
-    window._basketballPopup?.postMessage(
-      { type: "start_game", gameId: game.id },
-      "*"
-    );
+    // Tell popup to visually enter countdown mode
+    window._basketballPopup?.postMessage({ type: "start_countdown" }, "*");
 
-    // Broadcast to BOTH channels so shooters never miss it
-    const baseChannel = supabase.channel(`basketball-${game.id}`);
-    const shooterChannel = supabase.channel(`basketball-${game.id}-shooter`);
+    // Broadcast countdown to all shooters + wall
+    const channel = supabase.channel(`basketball-${game.id}`);
 
-    await baseChannel.send({
-      type: "broadcast",
-      event: "start_countdown",
-      payload: { gameId: game.id },
-    });
-
-    await shooterChannel.send({
+    await channel.send({
       type: "broadcast",
       event: "start_countdown",
       payload: { gameId: game.id },
@@ -116,92 +72,65 @@ export default function BasketballGameCard({
     await onRefresh();
   }
 
-  /* ------------------------------------------------------------
-     STOP GAME
-  ------------------------------------------------------------ */
   async function handleStopClick() {
     await onStop(game.id);
     setWallActivated(false);
+
+    await supabase
+      .from("bb_games")
+      .update({
+        wall_active: false,
+        game_running: false,
+        game_timer_start: null,
+      })
+      .eq("id", game.id);
+
     await onRefresh();
   }
 
-  /* ------------------------------------------------------------
-     RENDER CARD UI
-  ------------------------------------------------------------ */
   return (
-    <div
-      className={cn(
-        "rounded-xl p-4 text-center shadow-lg bg-cover bg-center flex flex-col justify-between transition-all duration-300",
-        game.status === "running"
-          ? "ring-4 ring-lime-400 shadow-lime-500/40"
-          : game.status === "ended"
-          ? "ring-4 ring-gray-400 shadow-gray-400/40"
-          : "ring-0"
-      )}
-      style={{ backgroundImage: "url('/BBgamebackground.png')" }}
-    >
+    <div className={cn("rounded-xl p-4 text-center shadow-lg bg-cover bg-center flex flex-col justify-between transition-all duration-300")} style={{ backgroundImage: "url('/BBgamebackground.png')" }}>
       {/* HEADER */}
       <div>
-        <h3 className={cn("font-bold text-lg mb-1")}>
-          {game.title || "Untitled Game"}
-        </h3>
+        <h3 className={cn('font-bold', 'text-lg', 'mb-1')}>{game.title || "Untitled Game"}</h3>
 
-        <p className={cn("text-sm mb-3 flex justify-center items-center gap-2")}>
+        <p className={cn('text-sm', 'mb-3', 'flex', 'justify-center', 'items-center', 'gap-2')}>
           <strong>Status:</strong>
-          <span
-            className={cn(
-              "font-bold tracking-wide px-2 py-1 rounded-lg text-xs",
-              game.status === "running"
-                ? "bg-green-600 text-white"
-                : game.status === "ended"
-                ? "bg-gray-600 text-white"
-                : "bg-blue-600 text-white"
-            )}
-          >
+          <span className={cn('font-bold', 'tracking-wide', 'px-2', 'py-1', 'rounded-lg', 'text-xs', 'bg-blue-600', 'text-white')}>
             {game.status.toUpperCase()}
           </span>
         </p>
       </div>
 
-      {/* BUTTONS */}
-      <div
-        className={cn(
-          "flex flex-col gap-3 mt-auto pt-3 border-t border-white/10"
-        )}
-      >
-        {/* Moderate */}
+      <div className={cn('flex', 'flex-col', 'gap-3', 'mt-auto', 'pt-3', 'border-t', 'border-white/10')}>
+        
+        {/* MODERATE */}
         <button
           onClick={() => onOpenModeration(game.id)}
-          className={cn(
-            "w-full py-2 rounded text-sm font-semibold bg-yellow-500 hover:bg-yellow-600 text-black"
-          )}
+          className={cn('w-full', 'py-2', 'rounded', 'text-sm', 'font-semibold', 'bg-yellow-500', 'hover:bg-yellow-600', 'text-black')}
         >
           👥 Moderate Players
         </button>
 
         {/* Launch + Activate */}
-        <div className={cn("grid grid-cols-2 gap-2")}>
+        <div className={cn('grid', 'grid-cols-2', 'gap-2')}>
           <button
             onClick={openWallWindow}
-            className={cn(
-              "w-full py-2 rounded text-sm font-semibold bg-purple-600 hover:bg-purple-700 text-white"
-            )}
+            className={cn('w-full', 'py-2', 'rounded', 'text-sm', 'font-semibold', 'bg-purple-600', 'hover:bg-purple-700', 'text-white')}
           >
             🚀 Launch Wall
           </button>
 
           <button
             onClick={handleActivateWall}
-            className={cn(
-              "w-full py-2 rounded text-sm font-semibold bg-blue-600 hover:bg-blue-700 text-white"
-            )}
+            className={cn('w-full', 'py-2', 'rounded', 'text-sm', 'font-semibold', 'bg-blue-600', 'hover:bg-blue-700', 'text-white')}
           >
             🟦 Activate Wall
           </button>
         </div>
 
         {/* Start + Stop */}
-        <div className={cn("grid grid-cols-2 gap-2")}>
+        <div className={cn('grid', 'grid-cols-2', 'gap-2')}>
           <button
             onClick={handleStartGame}
             disabled={!wallActivated}
@@ -217,10 +146,10 @@ export default function BasketballGameCard({
 
           <button
             onClick={handleStopClick}
-            disabled={game.status !== "running"}
+            disabled={!game.game_running}
             className={cn(
               "w-full py-2 rounded text-sm font-semibold",
-              game.status === "running"
+              game.game_running
                 ? "bg-red-600 hover:bg-red-700 text-white"
                 : "bg-gray-500 text-gray-300 cursor-not-allowed"
             )}
@@ -232,9 +161,7 @@ export default function BasketballGameCard({
         {/* Options */}
         <button
           onClick={() => onOpenOptions(game)}
-          className={cn(
-            "w-full py-2 mt-2 rounded text-sm font-semibold bg-indigo-500 hover:bg-indigo-600 text-white"
-          )}
+          className={cn('w-full', 'py-2', 'mt-2', 'rounded', 'text-sm', 'font-semibold', 'bg-indigo-500', 'hover:bg-indigo-600', 'text-white')}
         >
           ⚙ Game Options
         </button>
@@ -242,9 +169,7 @@ export default function BasketballGameCard({
         {/* Delete */}
         <button
           onClick={() => onDelete(game.id)}
-          className={cn(
-            "w-full py-2 rounded text-sm font-semibold bg-red-700 hover:bg-red-800 text-white"
-          )}
+          className={cn('w-full', 'py-2', 'rounded', 'text-sm', 'font-semibold', 'bg-red-700', 'hover:bg-red-800', 'text-white')}
         >
           ❌ Delete
         </button>

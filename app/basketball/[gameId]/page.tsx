@@ -5,13 +5,8 @@ import { supabase } from "@/lib/supabaseClient";
 import ActiveBasketball from "@/app/basketball/components/Active";
 import InactiveBasketball from "@/app/basketball/components/Inactive";
 
-export default function Page({
-  params,
-}: {
-  params: Promise<{ gameId: string }>;
-}) {
+export default function Page({ params }: { params: Promise<{ gameId: string }> }) {
   const { gameId } = use(params);
-
   const [game, setGame] = useState<any>(null);
 
   useEffect(() => {
@@ -36,10 +31,10 @@ export default function Page({
       </div>
     );
 
-  return game.game_running ? (
-    <ActiveBasketball gameId={gameId} />
-  ) : (
-    <InactiveBasketball game={game} />
-  );
-}
+  // NEW LOGIC:
+  if (!game.wall_active) {
+    return <InactiveBasketball game={game} />;
+  }
 
+  return <ActiveBasketball gameId={gameId} />;
+}

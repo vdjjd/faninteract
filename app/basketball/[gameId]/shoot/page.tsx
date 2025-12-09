@@ -2,8 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import { cn } from "@/lib/utils";
 import { useCountdown } from "@/app/basketball/hooks/useCountdown";
-import { Countdown } from "@/app/basketball/components/Countdown";
 
 const CELL_COLORS = [
   "#FF3B30", "#FF9500", "#FFCC00", "#34C759", "#5AC8FA",
@@ -12,18 +12,21 @@ const CELL_COLORS = [
 
 export default function ShooterPage({ params }: { params: { gameId: string } }) {
   const { gameId } = params;
+
   const countdownValue = useCountdown(gameId);
 
   const [playerId, setPlayerId] = useState<string | null>(null);
   const [laneIndex, setLaneIndex] = useState<number | null>(null);
-  const [score, setScore] = useState(0);
   const [laneColor, setLaneColor] = useState("#222");
+  const [score, setScore] = useState(0);
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
 
-  const startY = useRef(0);
   const streakRef = useRef(0);
+  const startY = useRef(0);
 
-  // Load player
+  /* ------------------------------------------------------------
+     LOAD PLAYER → This updates laneIndex, selfie, score, etc.
+  ------------------------------------------------------------ */
   useEffect(() => {
     const stored = localStorage.getItem("bb_player_id");
     if (stored) setPlayerId(stored);
@@ -40,18 +43,19 @@ export default function ShooterPage({ params }: { params: { gameId: string } }) 
         .single();
 
       if (!data) return;
-
       setLaneIndex(data.lane_index);
       setLaneColor(CELL_COLORS[data.lane_index]);
       setScore(data.score ?? 0);
     }
 
     loadPlayer();
-    const int = setInterval(loadPlayer, 1100);
-    return () => clearInterval(int);
+    const t = setInterval(loadPlayer, 1100);
+    return () => clearInterval(t);
   }, [playerId]);
 
-  // Sync timer
+  /* ------------------------------------------------------------
+     GAME TIMER SYNC — uses REAL start_time from DB
+  ------------------------------------------------------------ */
   async function syncGameStart() {
     const { data } = await supabase
       .from("bb_games")
@@ -61,23 +65,28 @@ export default function ShooterPage({ params }: { params: { gameId: string } }) 
 
     if (!data?.game_running || !data.game_timer_start) return;
 
-    const start = new Date(data.game_timer_start).getTime();
-    const elapsed = Math.floor((Date.now() - start) / 1000);
+    const startMS = new Date(data.game_timer_start).getTime();
+    const elapsed = Math.floor((Date.now() - startMS) / 1000);
+    const remaining = Math.max(data.duration_seconds - elapsed, 0);
 
-    setTimeLeft(Math.max(data.duration_seconds - elapsed, 0));
+    setTimeLeft(remaining);
   }
 
-  // Listen for start_game
+  /* ------------------------------------------------------------
+     LISTEN FOR start_game BROADCAST → ensures perfect sync
+  ------------------------------------------------------------ */
   useEffect(() => {
     const channel = supabase
       .channel(`basketball-${gameId}`)
       .on("broadcast", { event: "start_game" }, syncGameStart)
       .subscribe();
 
-    return () => { try { supabase.removeChannel(channel); } catch {} };
+    return () => {
+      try { supabase.removeChannel(channel); } catch {}
+    };
   }, [gameId]);
 
-  // Poll timer
+  // POLL DB EVERY 1 SEC TO KEEP TIME IN SYNC
   useEffect(() => {
     async function poll() {
       const { data } = await supabase
@@ -88,20 +97,24 @@ export default function ShooterPage({ params }: { params: { gameId: string } }) 
 
       if (!data?.game_running || !data.game_timer_start) return;
 
-      const start = new Date(data.game_timer_start).getTime();
-      const elapsed = Math.floor((Date.now() - start) / 1000);
+      const startMS = new Date(data.game_timer_start).getTime();
+      const elapsed = Math.floor((Date.now() - startMS) / 1000);
       setTimeLeft(Math.max(data.duration_seconds - elapsed, 0));
     }
 
     poll();
-    const int = setInterval(poll, 1000);
-    return () => clearInterval(int);
+    const id = setInterval(poll, 1000);
+    return () => clearInterval(id);
   }, [gameId]);
 
-  // Shooting logic
+  /* ------------------------------------------------------------
+     SHOOT LOGIC → LOCKED while countdown is active
+  ------------------------------------------------------------ */
   async function handleShot(power: number) {
     if (!playerId || laneIndex === null) return;
-    if (countdownValue !== null) return; // BLOCK during countdown
+
+    // ❗ Do NOT shoot while countdown overlay is showing
+    if (countdownValue !== null) return;
 
     const streak = streakRef.current;
 
@@ -115,14 +128,15 @@ export default function ShooterPage({ params }: { params: { gameId: string } }) 
 
     if (made) {
       streakRef.current++;
-      await supabase.rpc("increment_player_score", {
-        p_player_id: playerId,
-      });
+      await supabase.rpc("increment_player_score", { p_player_id: playerId });
     } else {
       streakRef.current = 0;
     }
   }
 
+  /* ------------------------------------------------------------
+     RENDER UI
+  ------------------------------------------------------------ */
   return (
     <div
       id="lane-border"
@@ -131,35 +145,77 @@ export default function ShooterPage({ params }: { params: { gameId: string } }) 
         height: "100vh",
         background: "black",
         border: `8px solid ${laneColor}`,
-        overflow: "hidden",
         position: "relative",
+        overflow: "hidden",
         touchAction: "none",
       }}
       onTouchStart={(e) => { startY.current = e.touches[0].clientY; }}
       onTouchEnd={(e) => {
         const dist = startY.current - e.changedTouches[0].clientY;
-        if (dist > 25) handleShot(Math.min(1, Math.max(0, dist / 450)));
+        if (dist > 25) {
+          const power = Math.min(1, Math.max(0, dist / 450));
+          handleShot(power);
+        }
       }}
     >
-      <Countdown preCountdown={countdownValue} />
+      {/* COUNTDOWN OVERLAY */}
+      {countdownValue !== null && (
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            background: "rgba(0,0,0,0.85)",
+            display: "flex",
+            justifyContent: "center",
+            alignItems: "center",
+            color: "white",
+            fontSize: "clamp(4rem, 10vw, 12rem)",
+            fontWeight: 900,
+            zIndex: 9999,
+          }}
+        >
+          {countdownValue > 0 ? countdownValue : "START!"}
+        </div>
+      )}
 
-      <div style={{ position: "absolute", top: 20, left: 20, color: "white", fontSize: "2.5rem" }}>
+      {/* SCORE */}
+      <div
+        style={{
+          position: "absolute",
+          top: 20,
+          left: 20,
+          color: "white",
+          fontSize: "2.5rem",
+        }}
+      >
         {score}
       </div>
 
-      <div style={{ position: "absolute", top: 20, right: 20, color: "white", fontSize: "2.5rem" }}>
+      {/* TIMER */}
+      <div
+        style={{
+          position: "absolute",
+          top: 20,
+          right: 20,
+          color: "white",
+          fontSize: "2.5rem",
+        }}
+      >
         {timeLeft ?? "--"}
       </div>
 
-      <div style={{
-        position: "absolute",
-        bottom: "5%",
-        width: "100%",
-        textAlign: "center",
-        color: "#ddd",
-        fontSize: "2rem",
-        opacity: 0.7,
-      }}>
+      {/* SWIPE INFO */}
+      <div
+        style={{
+          position: "absolute",
+          bottom: "5%",
+          width: "100%",
+          textAlign: "center",
+          color: "#ccc",
+          fontSize: "2rem",
+          opacity: countdownValue !== null ? 0 : 1, // hide while countdown
+        }}
+      >
         SWIPE UP TO SHOOT
       </div>
     </div>
