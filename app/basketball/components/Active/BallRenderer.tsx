@@ -1,32 +1,34 @@
 "use client";
 
-import React from "react";
-import { BallState } from "@/app/basketball/hooks/usePhysicsEngine";
+import React, { useMemo } from "react";
 
-export default function BallRenderer({ ball }: { ball: BallState }) {
-  if (!ball.active) return null;
+export default function BallRenderer({ ball }) {
+  // --- PERSPECTIVE SCALE ---
+  // ball.y goes from ~94 (start) to ~16 (rim)
+  const scale = useMemo(() => {
+    const minScale = 0.55; // smallest size near rim
+    const maxScale = 1.0;  // biggest size near bottom
+    const t = Math.min(Math.max((ball.y - 16) / (94 - 16), 0), 1);
+    return minScale + (maxScale - minScale) * t;
+  }, [ball.y]);
 
-  // Optional effects
-  const flame = ball.fire
-    ? "drop-shadow(0 0 20px rgba(255,80,0,0.9)) drop-shadow(0 0 35px rgba(255,120,0,1))"
-    : "";
-
-  const rainbow = ball.rainbow ? "hue-rotate(180deg) saturate(2)" : "";
+  // --- SPIN (based on speed) ---
+  const speed = Math.sqrt(ball.vx * ball.vx + ball.vy * ball.vy);
+  const rotation = ball.id.length * 40 + speed * 120; // each ball unique spin
 
   return (
-    <div
+    <img
+      src="/ball.png"
+      alt="basketball"
       style={{
         position: "absolute",
         left: `${ball.x}%`,
         top: `${ball.y}%`,
-        width: `${ball.size}%`,
-        height: `${ball.size}%`,
-        borderRadius: "50%",
-        background: "radial-gradient(circle, #ff7b00, #ff4500)",
-        transform: "translate(-50%, -50%)",
+        width: `${ball.size * scale}px`,
+        height: `${ball.size * scale}px`,
+        transform: `translate(-50%, -50%) rotate(${rotation}deg)`,
         pointerEvents: "none",
-        boxShadow: "0 0 12px rgba(255,120,0,0.9)",
-        filter: `${flame} ${rainbow}`,
+        zIndex: 5,
       }}
     />
   );
