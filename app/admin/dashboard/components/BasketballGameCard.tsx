@@ -43,7 +43,7 @@ export default function BasketballGameCard({
   }
 
   /* ------------------------------------------------------------
-     ACTIVATE WALL — show active wall layout (lanes)
+     ACTIVATE WALL — show active layout (lanes, not timer)
   ------------------------------------------------------------ */
   async function handleActivateWall() {
     console.log("🔥 Activating Wall…");
@@ -51,10 +51,10 @@ export default function BasketballGameCard({
     const { error } = await supabase
       .from("bb_games")
       .update({
-        wall_active: true,         // ← IMPORTANT
+        wall_active: true,
         game_running: false,
         game_timer_start: null,
-        status: "running",         // ← VALID VALUE per DB constraint
+        status: "running",
       })
       .eq("id", game.id);
 
@@ -65,7 +65,7 @@ export default function BasketballGameCard({
 
     setWallActivated(true);
 
-    // Tell popup to refresh
+    // Tell popup to reload itself
     window._basketballPopup?.postMessage({ type: "refresh_wall" }, "*");
 
     await onRefresh();
@@ -81,8 +81,11 @@ export default function BasketballGameCard({
 
     const channel = supabase.channel(`basketball-${game.id}`);
 
-    // Popup visual countdown
-    window._basketballPopup?.postMessage({ type: "start_countdown" }, "*");
+    // Visual countdown on popup
+    window._basketballPopup?.postMessage(
+      { type: "start_countdown" },
+      "*"
+    );
 
     // Broadcast countdown to shooters + wall
     await channel.send({
@@ -95,7 +98,7 @@ export default function BasketballGameCard({
   }
 
   /* ------------------------------------------------------------
-     STOP GAME — stops the timer but leaves wall active
+     STOP GAME — Stops game timer but keeps wall active
   ------------------------------------------------------------ */
   async function handleStopClick() {
     await onStop(game.id);
@@ -112,35 +115,44 @@ export default function BasketballGameCard({
   }
 
   /* ------------------------------------------------------------
-     RESET GAME — READY FOR NEW ROUND (Soft Reset)
+     RESET GAME — CLEAR SCORES, RETURN TO QR WALL
   ------------------------------------------------------------ */
   async function handleResetGame() {
     console.log("🔄 RESETTING GAME…");
 
-    // Reset all player scores to 0 (DO NOT REMOVE PLAYERS)
-    await supabase.rpc("reset_player_scores", { p_game_id: game.id })
-      .catch(() => {}); // in case the RPC isn't created yet
+    /* Reset player scores */
+    try {
+      const { error } = await supabase.rpc("reset_player_scores", {
+        p_game_id: game.id,
+      });
+      if (error) {
+        console.warn("⚠️ reset_player_scores RPC failed:", error);
+      }
+    } catch (err) {
+      console.warn("⚠️ RPC execution error:", err);
+    }
 
+    /* Reset game state back to fresh lobby */
     await supabase
       .from("bb_games")
       .update({
-        wall_active: false,        // back to QR screen
+        wall_active: false,
         game_running: false,
         game_timer_start: null,
-        status: "lobby",           // ← reset game mode
+        status: "lobby",
       })
       .eq("id", game.id);
 
     setWallActivated(false);
 
-    // Tell popup to reload
+    // Reload popup UI
     window._basketballPopup?.postMessage({ type: "refresh_wall" }, "*");
 
     await onRefresh();
   }
 
   /* ------------------------------------------------------------
-     RENDER
+     RENDER UI
   ------------------------------------------------------------ */
   return (
     <div

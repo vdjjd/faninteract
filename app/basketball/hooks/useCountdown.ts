@@ -1,37 +1,42 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
 export function useCountdown(gameId: string) {
   const [countdown, setCountdown] = useState<number | null>(null);
-
-  // We keep the channel persistent for the life of the component
   const channelRef = useRef<any>(null);
+  const tickingRef = useRef(false); // prevents duplicate countdowns
 
+  /* ------------------------------------------------------------
+     SUBSCRIBE TO COUNTDOWN BROADCASTS
+  ------------------------------------------------------------ */
   useEffect(() => {
-    // Create ONE unified channel for both Wall + Shooter
     const channel = supabase.channel(`basketball-${gameId}`);
-
-    // Save ref
     channelRef.current = channel;
 
     channel
-      .on("broadcast", { event: "start_countdown" }, () => {
-        setCountdown(10);
+      .on("broadcast", { event: "start_countdown" }, (payload) => {
+        const incomingGame = payload?.payload?.gameId;
+        if (incomingGame !== gameId) return;
+
+        if (!tickingRef.current) {
+          tickingRef.current = true;
+          setCountdown(10);
+        }
       })
       .on("broadcast", { event: "start_game" }, (payload) => {
-        // If countdown somehow misses end logic, ensure we sync
         const startTime = payload.payload?.startTime;
-        if (startTime) {
-          supabase
-            .from("bb_games")
-            .update({
-              game_running: true,
-              game_timer_start: startTime,
-            })
-            .eq("id", gameId);
-        }
+        if (!startTime) return;
+
+        // Sync up in case local device missed exact countdown end
+        supabase
+          .from("bb_games")
+          .update({
+            game_running: true,
+            game_timer_start: startTime,
+          })
+          .eq("id", gameId);
       })
       .subscribe();
 
@@ -42,16 +47,19 @@ export function useCountdown(gameId: string) {
     };
   }, [gameId]);
 
-  // Pure countdown engine
+  /* ------------------------------------------------------------
+     COUNTDOWN ENGINE — only this device counts down
+  ------------------------------------------------------------ */
   useEffect(() => {
     if (countdown === null) return;
 
+    // Countdown finished → broadcast start_game
     if (countdown <= 0) {
       setCountdown(null);
+      tickingRef.current = false;
 
       const startTime = new Date().toISOString();
 
-      // Set DB game_running = true
       supabase
         .from("bb_games")
         .update({
@@ -60,7 +68,6 @@ export function useCountdown(gameId: string) {
         })
         .eq("id", gameId);
 
-      // Tell shooters & wall that game has begun
       channelRef.current?.send({
         type: "broadcast",
         event: "start_game",
@@ -70,6 +77,7 @@ export function useCountdown(gameId: string) {
       return;
     }
 
+    // Reduce countdown
     const t = setTimeout(() => {
       setCountdown((c) => (c === null ? null : c - 1));
     }, 1000);

@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
-import { cn } from "@/lib/utils";
 import { useCountdown } from "@/app/basketball/hooks/useCountdown";
 
 const CELL_COLORS = [
@@ -13,6 +12,7 @@ const CELL_COLORS = [
 export default function ShooterPage({ params }: { params: { gameId: string } }) {
   const { gameId } = params;
 
+  // Countdown from shared hook
   const countdownValue = useCountdown(gameId);
 
   const [playerId, setPlayerId] = useState<string | null>(null);
@@ -25,7 +25,7 @@ export default function ShooterPage({ params }: { params: { gameId: string } }) 
   const startY = useRef(0);
 
   /* ------------------------------------------------------------
-     LOAD PLAYER → This updates laneIndex, selfie, score, etc.
+     Load Player
   ------------------------------------------------------------ */
   useEffect(() => {
     const stored = localStorage.getItem("bb_player_id");
@@ -43,18 +43,19 @@ export default function ShooterPage({ params }: { params: { gameId: string } }) 
         .single();
 
       if (!data) return;
+
       setLaneIndex(data.lane_index);
       setLaneColor(CELL_COLORS[data.lane_index]);
       setScore(data.score ?? 0);
     }
 
     loadPlayer();
-    const t = setInterval(loadPlayer, 1100);
+    const t = setInterval(loadPlayer, 1000);
     return () => clearInterval(t);
   }, [playerId]);
 
   /* ------------------------------------------------------------
-     GAME TIMER SYNC — uses REAL start_time from DB
+     GAME TIMER SYNC
   ------------------------------------------------------------ */
   async function syncGameStart() {
     const { data } = await supabase
@@ -73,7 +74,7 @@ export default function ShooterPage({ params }: { params: { gameId: string } }) 
   }
 
   /* ------------------------------------------------------------
-     LISTEN FOR start_game BROADCAST → ensures perfect sync
+     LISTEN FOR start_game BROADCAST
   ------------------------------------------------------------ */
   useEffect(() => {
     const channel = supabase
@@ -86,7 +87,9 @@ export default function ShooterPage({ params }: { params: { gameId: string } }) 
     };
   }, [gameId]);
 
-  // POLL DB EVERY 1 SEC TO KEEP TIME IN SYNC
+  /* ------------------------------------------------------------
+     POLL TIMER
+  ------------------------------------------------------------ */
   useEffect(() => {
     async function poll() {
       const { data } = await supabase
@@ -103,27 +106,29 @@ export default function ShooterPage({ params }: { params: { gameId: string } }) 
     }
 
     poll();
-    const id = setInterval(poll, 1000);
-    return () => clearInterval(id);
+    const interval = setInterval(poll, 1000);
+    return () => clearInterval(interval);
   }, [gameId]);
 
   /* ------------------------------------------------------------
-     SHOOT LOGIC → LOCKED while countdown is active
+     SHOOT LOGIC (disabled during countdown)
   ------------------------------------------------------------ */
   async function handleShot(power: number) {
     if (!playerId || laneIndex === null) return;
 
-    // ❗ Do NOT shoot while countdown overlay is showing
+    // ❗ SHOOTING LOCKED WHILE COUNTDOWN IS ACTIVE
     if (countdownValue !== null) return;
 
     const streak = streakRef.current;
 
+    // Broadcast shot event
     supabase.channel(`basketball-${gameId}`).send({
       type: "broadcast",
       event: "shot_fired",
       payload: { lane_index: laneIndex, power, streak },
     });
 
+    // Determine if shot made
     const made = Math.random() < (0.45 + power * 0.35);
 
     if (made) {
@@ -139,7 +144,6 @@ export default function ShooterPage({ params }: { params: { gameId: string } }) 
   ------------------------------------------------------------ */
   return (
     <div
-      id="lane-border"
       style={{
         width: "100vw",
         height: "100vh",
@@ -204,7 +208,7 @@ export default function ShooterPage({ params }: { params: { gameId: string } }) 
         {timeLeft ?? "--"}
       </div>
 
-      {/* SWIPE INFO */}
+      {/* SWIPE UP MESSAGE */}
       <div
         style={{
           position: "absolute",
@@ -213,7 +217,7 @@ export default function ShooterPage({ params }: { params: { gameId: string } }) 
           textAlign: "center",
           color: "#ccc",
           fontSize: "2rem",
-          opacity: countdownValue !== null ? 0 : 1, // hide while countdown
+          opacity: countdownValue !== null ? 0 : 1,
         }}
       >
         SWIPE UP TO SHOOT

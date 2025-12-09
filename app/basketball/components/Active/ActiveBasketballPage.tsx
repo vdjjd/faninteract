@@ -16,29 +16,77 @@ const CELL_COLORS = [
   "#007AFF", "#5856D6", "#AF52DE", "#FF2D55", "#A2845E",
 ];
 
-export default function ActiveBasketballPage({
-  gameId,
-}: {
-  gameId: string;
-}) {
-  /* COUNTDOWN + GAME TIMER */
+export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
+  /* ------------------------------------------------------------
+     COUNTDOWN + GAME TIMER
+  ------------------------------------------------------------ */
   const countdownValue = useCountdown(gameId);
-  const { duration, timeLeft, timerExpired, gameRunning } = useGameTimer(gameId);
+  const { duration, timeLeft, timerExpired, gameRunning } =
+    useGameTimer(gameId);
 
-  /* BALL PHYSICS */
-  const { balls, spawnBall } = usePhysicsEngine(gameRunning);
+  /* ------------------------------------------------------------
+     BALL PHYSICS — DISABLED during countdown
+  ------------------------------------------------------------ */
+  const physicsEnabled = gameRunning && countdownValue === null;
+  const { balls, spawnBall } = usePhysicsEngine(physicsEnabled);
 
-  /* PLAYERS */
+  /* ------------------------------------------------------------
+     PLAYERS
+  ------------------------------------------------------------ */
   const players = usePlayers(gameId);
   const maxScore =
     players.length > 0 ? Math.max(...players.map((p) => p.score ?? 0)) : 0;
 
-  /* LISTEN FOR SHOTS */
+  /* ------------------------------------------------------------
+     HOST LOGO(S)
+  ------------------------------------------------------------ */
+  const [hostLogo, setHostLogo] = useState<string | null>(null);
+
+  useEffect(() => {
+    async function loadHost() {
+      const { data } = await supabase
+        .from("bb_games")
+        .select("host_id, hosts(logo_url, branding_logo_url)")
+        .eq("id", gameId)
+        .single();
+
+      // hosts returns an ARRAY
+      const host = data?.hosts?.[0];
+      if (!host) {
+        setHostLogo("/faninteractlogo.png");
+        return;
+      }
+
+      // choose branding > logo > fallback
+      setHostLogo(
+        host.branding_logo_url?.trim() ||
+          host.logo_url?.trim() ||
+          "/faninteractlogo.png"
+      );
+    }
+
+    loadHost();
+  }, [gameId]);
+
+  /* ------------------------------------------------------------
+     LISTEN FOR SHOT BROADCASTS  
+     (and ignore if countdown is active)
+  ------------------------------------------------------------ */
   useEffect(() => {
     const channel = supabase
       .channel(`basketball-${gameId}`)
       .on("broadcast", { event: "shot_fired" }, (payload) => {
-        const { lane_index, power, streak } = payload.payload;
+        const p = payload?.payload;
+        if (!p) return;
+
+        // Ignore if shot from another game (just in case)
+        if (p.gameId && p.gameId !== gameId) return;
+
+        // ❗ NO BALLS DURING COUNTDOWN
+        if (countdownValue !== null) return;
+
+        const { lane_index, power, streak } = p;
+
         spawnBall(lane_index, power, {
           rainbow: power > 0.82,
           fire: streak >= 2,
@@ -51,9 +99,11 @@ export default function ActiveBasketballPage({
         supabase.removeChannel(channel);
       } catch {}
     };
-  }, [gameId, spawnBall]);
+  }, [gameId, spawnBall, countdownValue]);
 
-  /* RENDER */
+  /* ------------------------------------------------------------
+     RENDER UI
+  ------------------------------------------------------------ */
   return (
     <div
       style={{
@@ -68,7 +118,7 @@ export default function ActiveBasketballPage({
         position: "relative",
       }}
     >
-      {/* COUNTDOWN OVERLAY */}
+      {/* COUNTDOWN ALWAYS ON TOP */}
       <Countdown preCountdown={countdownValue} />
 
       {/* PLAYER GRID */}
@@ -96,6 +146,7 @@ export default function ActiveBasketballPage({
               borderColor={CELL_COLORS[i]}
               timerExpired={timerExpired}
               maxScore={maxScore}
+              hostLogo={hostLogo}
             />
           );
         })}
