@@ -9,7 +9,7 @@ export function useCountdown(gameId: string) {
   const tickingRef = useRef(false); // prevents duplicate countdowns
 
   /* ------------------------------------------------------------
-     SUBSCRIBE TO COUNTDOWN BROADCASTS
+     SUBSCRIBE TO COUNTDOWN & START_GAME BROADCASTS
   ------------------------------------------------------------ */
   useEffect(() => {
     const channel = supabase.channel(`basketball-${gameId}`);
@@ -25,18 +25,19 @@ export function useCountdown(gameId: string) {
           setCountdown(10);
         }
       })
-      .on("broadcast", { event: "start_game" }, (payload) => {
+      .on("broadcast", { event: "start_game" }, async (payload) => {
         const startTime = payload.payload?.startTime;
         if (!startTime) return;
 
-        // Sync up in case local device missed exact countdown end
-        supabase
+        // Sync with the DB — ensure timer starts if missed event
+        await supabase
           .from("bb_games")
           .update({
             game_running: true,
             game_timer_start: startTime,
           })
-          .eq("id", gameId);
+          .eq("id", gameId)
+          .select(); // <-- Required for Supabase w/ Next.js 16
       })
       .subscribe();
 
@@ -48,36 +49,41 @@ export function useCountdown(gameId: string) {
   }, [gameId]);
 
   /* ------------------------------------------------------------
-     COUNTDOWN ENGINE — only this device counts down
+     COUNTDOWN ENGINE — device that received event handles counting
   ------------------------------------------------------------ */
   useEffect(() => {
     if (countdown === null) return;
 
-    // Countdown finished → broadcast start_game
+    // Countdown finished → start game
     if (countdown <= 0) {
       setCountdown(null);
       tickingRef.current = false;
 
       const startTime = new Date().toISOString();
 
-      supabase
-        .from("bb_games")
-        .update({
-          game_running: true,
-          game_timer_start: startTime,
-        })
-        .eq("id", gameId);
+      // 🚨 REQUIRED FIX: always await update + include .select()
+      (async () => {
+        await supabase
+          .from("bb_games")
+          .update({
+            game_running: true,
+            game_timer_start: startTime,
+          })
+          .eq("id", gameId)
+          .select(); // <-- ensures the update actually runs
 
-      channelRef.current?.send({
-        type: "broadcast",
-        event: "start_game",
-        payload: { startTime },
-      });
+        // Broadcast start_game to all clients
+        channelRef.current?.send({
+          type: "broadcast",
+          event: "start_game",
+          payload: { startTime },
+        });
+      })();
 
       return;
     }
 
-    // Reduce countdown
+    // Otherwise, keep counting down…
     const t = setTimeout(() => {
       setCountdown((c) => (c === null ? null : c - 1));
     }, 1000);

@@ -38,29 +38,34 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
     players.length > 0 ? Math.max(...players.map((p) => p.score ?? 0)) : 0;
 
   /* ------------------------------------------------------------
-     HOST LOGO(S)
+     HOST LOGO (patched to match InactiveWall logic)
   ------------------------------------------------------------ */
   const [hostLogo, setHostLogo] = useState<string | null>(null);
 
   useEffect(() => {
     async function loadHost() {
-      const { data } = await supabase
+      // First get host_id
+      const { data: gameRow } = await supabase
         .from("bb_games")
-        .select("host_id, hosts(logo_url, branding_logo_url)")
+        .select("host_id")
         .eq("id", gameId)
         .single();
 
-      // hosts returns an ARRAY
-      const host = data?.hosts?.[0];
-      if (!host) {
+      if (!gameRow?.host_id) {
         setHostLogo("/faninteractlogo.png");
         return;
       }
 
-      // choose branding > logo > fallback
+      // Then load host row (matching InactiveWall)
+      const { data: host } = await supabase
+        .from("hosts")
+        .select("logo_url, branding_logo_url")
+        .eq("id", gameRow.host_id)
+        .single();
+
       setHostLogo(
-        host.branding_logo_url?.trim() ||
-          host.logo_url?.trim() ||
+        host?.branding_logo_url?.trim() ||
+          host?.logo_url?.trim() ||
           "/faninteractlogo.png"
       );
     }
@@ -70,7 +75,6 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
 
   /* ------------------------------------------------------------
      LISTEN FOR SHOT BROADCASTS  
-     (and ignore if countdown is active)
   ------------------------------------------------------------ */
   useEffect(() => {
     const channel = supabase
@@ -78,18 +82,14 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
       .on("broadcast", { event: "shot_fired" }, (payload) => {
         const p = payload?.payload;
         if (!p) return;
-
-        // Ignore if shot from another game (just in case)
         if (p.gameId && p.gameId !== gameId) return;
 
-        // ❗ NO BALLS DURING COUNTDOWN
+        // block shots during countdown
         if (countdownValue !== null) return;
 
-        const { lane_index, power, streak } = p;
-
-        spawnBall(lane_index, power, {
-          rainbow: power > 0.82,
-          fire: streak >= 2,
+        spawnBall(p.lane_index, p.power, {
+          rainbow: p.power > 0.82,
+          fire: p.streak >= 2,
         });
       })
       .subscribe();
@@ -100,6 +100,14 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
       } catch {}
     };
   }, [gameId, spawnBall, countdownValue]);
+
+  /* ------------------------------------------------------------
+     FULLSCREEN BUTTON (added)
+  ------------------------------------------------------------ */
+  const toggleFullscreen = () =>
+    !document.fullscreenElement
+      ? document.documentElement.requestFullscreen()
+      : document.exitFullscreen();
 
   /* ------------------------------------------------------------
      RENDER UI
@@ -150,6 +158,29 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
             />
           );
         })}
+      </div>
+
+      {/* FULLSCREEN BUTTON (restored) */}
+      <div
+        onClick={toggleFullscreen}
+        style={{
+          position: "absolute",
+          bottom: "2vh",
+          right: "2vw",
+          width: 42,
+          height: 42,
+          borderRadius: 12,
+          background: "rgba(255,255,255,0.1)",
+          border: "1px solid rgba(255,255,255,0.25)",
+          cursor: "pointer",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          color: "#fff",
+          fontSize: 20,
+        }}
+      >
+        ⛶
       </div>
     </div>
   );
