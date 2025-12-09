@@ -25,7 +25,28 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
     useGameTimer(gameId);
 
   /* ------------------------------------------------------------
-     BALL PHYSICS — DISABLED during countdown
+     GAME START LISTENER (INSTANT START)
+     This fixes the bug where gameRunning doesn't flip until DB update.
+  ------------------------------------------------------------ */
+  useEffect(() => {
+    const channel = supabase
+      .channel(`basketball-${gameId}`)
+      .on("broadcast", { event: "start_game" }, (payload) => {
+        console.log("⏱ START GAME RECEIVED (Active Wall)", payload);
+        // We do NOT need additional logic here because useGameTimer
+        // now handles event-driven timer start instantly.
+      })
+      .subscribe();
+
+    return () => {
+      try {
+        supabase.removeChannel(channel);
+      } catch {}
+    };
+  }, [gameId]);
+
+  /* ------------------------------------------------------------
+     BALL PHYSICS ENABLED AFTER COUNTDOWN + GAME START
   ------------------------------------------------------------ */
   const physicsEnabled = gameRunning && countdownValue === null;
   const { balls, spawnBall } = usePhysicsEngine(physicsEnabled);
@@ -38,13 +59,12 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
     players.length > 0 ? Math.max(...players.map((p) => p.score ?? 0)) : 0;
 
   /* ------------------------------------------------------------
-     HOST LOGO (patched to match InactiveWall logic)
+     HOST LOGO (same logic as InactiveWall)
   ------------------------------------------------------------ */
   const [hostLogo, setHostLogo] = useState<string | null>(null);
 
   useEffect(() => {
     async function loadHost() {
-      // First get host_id
       const { data: gameRow } = await supabase
         .from("bb_games")
         .select("host_id")
@@ -56,7 +76,6 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
         return;
       }
 
-      // Then load host row (matching InactiveWall)
       const { data: host } = await supabase
         .from("hosts")
         .select("logo_url, branding_logo_url")
@@ -74,7 +93,7 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
   }, [gameId]);
 
   /* ------------------------------------------------------------
-     LISTEN FOR SHOT BROADCASTS  
+     LISTEN FOR SHOT EVENTS
   ------------------------------------------------------------ */
   useEffect(() => {
     const channel = supabase
@@ -84,7 +103,7 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
         if (!p) return;
         if (p.gameId && p.gameId !== gameId) return;
 
-        // block shots during countdown
+        // no balls during countdown
         if (countdownValue !== null) return;
 
         spawnBall(p.lane_index, p.power, {
@@ -102,7 +121,7 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
   }, [gameId, spawnBall, countdownValue]);
 
   /* ------------------------------------------------------------
-     FULLSCREEN BUTTON (added)
+     FULLSCREEN BUTTON
   ------------------------------------------------------------ */
   const toggleFullscreen = () =>
     !document.fullscreenElement
@@ -160,7 +179,7 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
         })}
       </div>
 
-      {/* FULLSCREEN BUTTON (restored) */}
+      {/* FULLSCREEN BUTTON */}
       <div
         onClick={toggleFullscreen}
         style={{

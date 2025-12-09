@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
 export function useGameTimer(gameId: string) {
@@ -10,7 +10,40 @@ export function useGameTimer(gameId: string) {
   const [timerExpired, setTimerExpired] = useState(false);
 
   /* -----------------------------------------------------------
-     DB POLLING
+     REAL-TIME LISTENER — start_game broadcast
+  ----------------------------------------------------------- */
+  useEffect(() => {
+    const channel = supabase
+      .channel(`basketball-${gameId}`)
+      .on("broadcast", { event: "start_game" }, (payload) => {
+        const startTime = payload?.payload?.startTime;
+        if (!startTime) return;
+
+        const start = new Date(startTime).getTime();
+        const now = Date.now();
+        const elapsed = Math.floor((now - start) / 1000);
+
+        setGameRunning(true);
+        setTimerExpired(false);
+
+        setTimeLeft((prev) => {
+          // If duration not loaded yet, fallback to 90 seconds
+          const fallback = duration || 90;
+          const r = Math.max(fallback - elapsed, 0);
+          return r;
+        });
+      })
+      .subscribe();
+
+    return () => {
+      try {
+        supabase.removeChannel(channel);
+      } catch {}
+    };
+  }, [gameId, duration]);
+
+  /* -----------------------------------------------------------
+     DB POLLING — fallback + initial load
   ----------------------------------------------------------- */
   useEffect(() => {
     async function load() {
@@ -24,6 +57,7 @@ export function useGameTimer(gameId: string) {
 
       setDuration(data.duration_seconds);
 
+      // Game is running from DB perspective
       if (data.game_running && data.game_timer_start) {
         const start = new Date(data.game_timer_start).getTime();
         const now = Date.now();
@@ -32,7 +66,10 @@ export function useGameTimer(gameId: string) {
 
         setGameRunning(true);
         setTimeLeft(remaining);
-        if (remaining <= 0) setTimerExpired(true);
+        setTimerExpired(remaining <= 0);
+      } else {
+        // Game not running
+        setGameRunning(false);
       }
     }
 
