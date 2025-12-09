@@ -14,14 +14,14 @@ export default function ShooterPage() {
   const { gameId } = useParams() as { gameId: string };
 
   /* ------------------------------------------------------------
-     COUNTDOWN
+     SHARED COUNTDOWN
   ------------------------------------------------------------ */
   const countdownValue = useCountdown(gameId);
   const [localCountdown, setLocalCountdown] = useState<number | null>(null);
   const displayCountdown = localCountdown ?? countdownValue;
 
   /* ------------------------------------------------------------
-     PLAYER STATE
+     LOCAL PLAYER STATE
   ------------------------------------------------------------ */
   const [playerId, setPlayerId] = useState<string | null>(null);
   const [laneIndex, setLaneIndex] = useState<number | null>(null);
@@ -33,13 +33,16 @@ export default function ShooterPage() {
   const startY = useRef(0);
 
   /* ------------------------------------------------------------
-     LOAD PLAYER
+     LOAD PLAYER FROM LOCAL STORAGE
   ------------------------------------------------------------ */
   useEffect(() => {
     const stored = localStorage.getItem("bb_player_id");
     if (stored) setPlayerId(stored);
   }, []);
 
+  /* ------------------------------------------------------------
+     LOAD PLAYER DETAILS FROM DB
+  ------------------------------------------------------------ */
   useEffect(() => {
     if (!playerId) return;
 
@@ -63,7 +66,7 @@ export default function ShooterPage() {
   }, [playerId]);
 
   /* ------------------------------------------------------------
-     GAME TIMER SYNC FUNCTION
+     GAME START SYNC (single-shot)
   ------------------------------------------------------------ */
   async function syncGameStart() {
     const { data } = await supabase
@@ -76,51 +79,34 @@ export default function ShooterPage() {
 
     const startMS = new Date(data.game_timer_start).getTime();
     const elapsed = Math.floor((Date.now() - startMS) / 1000);
-
     setTimeLeft(Math.max(data.duration_seconds - elapsed, 0));
   }
 
   /* ------------------------------------------------------------
-     SUBSCRIBE TO WALL COUNTDOWN
+     SUBSCRIBE TO WALL COUNTDOWN + START GAME
   ------------------------------------------------------------ */
   useEffect(() => {
-    const wallChannel = supabase
+    if (!gameId) return;
+
+    const channel = supabase
       .channel(`basketball-${gameId}`)
-      .on("broadcast", { event: "start_countdown" }, () =>
-        setLocalCountdown(10)
-      )
+      .on("broadcast", { event: "start_countdown" }, () => {
+        setLocalCountdown(10);
+      })
       .on("broadcast", { event: "start_game" }, syncGameStart)
-      .subscribe();
-
-    return () => {
-      try { supabase.removeChannel(wallChannel); } catch {}
-    };
-  }, [gameId]);
-
-  /* ------------------------------------------------------------
-     NEW: UNIVERSAL BROADCAST LISTENER
-     (Wall sends start_game here)
-  ------------------------------------------------------------ */
-  useEffect(() => {
-    const broadcastChannel = supabase
-      .channel("broadcast")
-      .on("broadcast", { event: "start_countdown" }, () =>
-        setLocalCountdown(10)
-      )
-      .on("broadcast", { event: "start_game" }, (payload) => {
-        const startTime = payload?.payload?.startTime;
-        if (!startTime) return;
-        syncGameStart();
+      .on("broadcast", { event: "reset_game" }, () => {
+        setTimeLeft(null);
+        setLocalCountdown(null);
       })
       .subscribe();
 
     return () => {
-      try { supabase.removeChannel(broadcastChannel); } catch {}
+      try { supabase.removeChannel(channel); } catch {}
     };
   }, [gameId]);
 
   /* ------------------------------------------------------------
-     COUNTDOWN ENGINE
+     COUNTDOWN TICKER
   ------------------------------------------------------------ */
   useEffect(() => {
     if (localCountdown === null) return;
@@ -139,11 +125,38 @@ export default function ShooterPage() {
   }, [localCountdown]);
 
   /* ------------------------------------------------------------
-     SHOOTING
+     1-SECOND TIMER HEARTBEAT (Shooter Game Timer)
+  ------------------------------------------------------------ */
+  useEffect(() => {
+    if (!gameId) return;
+
+    async function pollTimer() {
+      const { data } = await supabase
+        .from("bb_games")
+        .select("game_running, game_timer_start, duration_seconds")
+        .eq("id", gameId)
+        .single();
+
+      if (!data?.game_running || !data.game_timer_start) return;
+
+      const startMS = new Date(data.game_timer_start).getTime();
+      const elapsed = Math.floor((Date.now() - startMS) / 1000);
+
+      setTimeLeft(Math.max(data.duration_seconds - elapsed, 0));
+    }
+
+    pollTimer();
+    const id = setInterval(pollTimer, 1000);
+
+    return () => clearInterval(id);
+  }, [gameId]);
+
+  /* ------------------------------------------------------------
+     SHOOT LOGIC
   ------------------------------------------------------------ */
   async function handleShot(power: number) {
     if (!playerId || laneIndex === null) return;
-    if (displayCountdown !== null) return; // Block shooting during countdown
+    if (displayCountdown !== null) return; // BLOCK shooting during countdown
 
     const streak = streakRef.current;
 
@@ -164,7 +177,7 @@ export default function ShooterPage() {
   }
 
   /* ------------------------------------------------------------
-     RENDER
+     UI
   ------------------------------------------------------------ */
   return (
     <div
@@ -188,7 +201,7 @@ export default function ShooterPage() {
         }
       }}
     >
-      {/* FULLSCREEN COUNTDOWN — MATCHES ACTIVE WALL */}
+      {/* FULLSCREEN COUNTDOWN */}
       {displayCountdown !== null && (
         <div
           style={{
@@ -235,7 +248,7 @@ export default function ShooterPage() {
         {timeLeft ?? "--"}
       </div>
 
-      {/* SWIPE MESSAGE */}
+      {/* SHOOT MESSAGE */}
       <div
         style={{
           position: "absolute",
