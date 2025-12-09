@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import ActiveBasketball from "@/app/basketball/components/Active";
 import InactiveBasketball from "@/app/basketball/components/Inactive";
@@ -9,22 +9,53 @@ export default function Page({ params }: { params: { gameId: string } }) {
   const { gameId } = params;
   const [game, setGame] = useState<any>(null);
 
+  // Prevent double-refresh loops
+  const hasRefreshed = useRef(false);
+
   /* ------------------------------------------------------------
-     LISTEN FOR WALL REFRESH COMMAND FROM DASHBOARD
+     LISTEN FOR WALL REFRESH COMMAND (Dashboard → Wall)
   ------------------------------------------------------------ */
   useEffect(() => {
     function handleMsg(e: MessageEvent) {
-      if (e.data?.type === "refresh_wall") {
+      if (e.data?.type === "refresh_wall" && !hasRefreshed.current) {
+        hasRefreshed.current = true;
         console.log("🔄 Refreshing wall popup...");
         window.location.reload();
       }
     }
+
     window.addEventListener("message", handleMsg);
     return () => window.removeEventListener("message", handleMsg);
   }, []);
 
   /* ------------------------------------------------------------
-     POLL GAME STATE EVERY SECOND
+     REALTIME SUBSCRIPTION — AUTO UPDATE WALL WITHOUT FREEZING
+  ------------------------------------------------------------ */
+  useEffect(() => {
+    const channel = supabase
+      .channel(`wall-${gameId}`)
+      .on(
+        "postgres_changes",
+        {
+          schema: "public",
+          table: "bb_games",
+          event: "*",
+          filter: `id=eq.${gameId}`,
+        },
+        (payload) => {
+          console.log("📡 LIVE UPDATE → wall state changed", payload.new);
+          setGame(payload.new);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      try { supabase.removeChannel(channel); } catch {}
+    };
+  }, [gameId]);
+
+  /* ------------------------------------------------------------
+     INITIAL LOAD (fallback before realtime connects)
   ------------------------------------------------------------ */
   useEffect(() => {
     async function load() {
@@ -38,12 +69,10 @@ export default function Page({ params }: { params: { gameId: string } }) {
     }
 
     load();
-    const t = setInterval(load, 1000);
-    return () => clearInterval(t);
   }, [gameId]);
 
   /* ------------------------------------------------------------
-     LOADING STATE
+     LOADING DISPLAY
   ------------------------------------------------------------ */
   if (!game) {
     return (
@@ -54,13 +83,10 @@ export default function Page({ params }: { params: { gameId: string } }) {
   }
 
   /* ------------------------------------------------------------
-     PAGE SWITCH — THIS IS THE REAL LOGIC
-     QR Screen → InactiveBasketball
-     Active Wall → ActiveBasketball
+     MAIN LOGIC — Decide which screen to show
   ------------------------------------------------------------ */
 
-  // Treat null as false to avoid wall showing early
-  const wallActive = Boolean(game.wall_active);
+  const wallActive = game.wall_active === true;
 
   if (!wallActive) {
     return <InactiveBasketball game={game} />;
