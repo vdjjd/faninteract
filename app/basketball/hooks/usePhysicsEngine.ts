@@ -5,52 +5,40 @@ import { useEffect, useRef, useState, useCallback } from "react";
 export interface BallState {
   id: string;
   lane: number;
-
-  // Screen-space (0–100)
-  x: number; // horizontal
-  y: number; // vertical
-
-  // Depth into scene
-  z: number; // 0 = shooter, 1 = rim, >1 = backboard
-
-  // Velocities
+  x: number;
+  y: number;
+  z: number;
   vx: number;
   vy: number;
   vz: number;
-
-  size: number; // base size, scaled in renderer
+  size: number;
   active: boolean;
-
   rainbow?: boolean;
   fire?: boolean;
 }
 
 /* ---------------------------------------------------------
-   PHYSICS CONSTANTS — TUNED FOR 3D TUNNEL BACKGROUND
+   Physics constants tuned to your 3D lane & rim bar
 --------------------------------------------------------- */
 
-// Slightly lighter gravity for longer hang-time
 const GRAVITY = 0.00225;
-
-// Global drag
 const DRAG = 0.992;
-
-// Remove ball beyond this depth
 const FLOOR_Z = 1.2;
 
-/* --- Rim + Backboard geometry --- */
+// Rim/bar collision zone
+export const RIM_Z = 0.92;
+export const RIM_X = 50;
+export const RIM_Y = 18.2;
+export const RIM_RADIUS = 6.8;
 
-const RIM_Z = 0.9;
-const RIM_X = 50;
-const RIM_Y = 18;
-const RIM_RADIUS = 5.2;
-
-const BACKBOARD_Z = 1.02;
+// Backboard plane
+const BACKBOARD_Z = 1.05;
 const BACKBOARD_BOUNCE = -0.6;
 
 /* ---------------------------------------------------------
-   usePhysicsEngine
+   Hook
 --------------------------------------------------------- */
+
 export function usePhysicsEngine(gameRunning: boolean) {
   const [balls, setBalls] = useState<BallState[][]>(
     Array.from({ length: 10 }, () => [])
@@ -61,39 +49,28 @@ export function usePhysicsEngine(gameRunning: boolean) {
 
   /* ---------------------------------------------------------
      SPAWN BALL
-     (matches new BallRenderer perspective)
   --------------------------------------------------------- */
   const spawnBall = useCallback(
-    (
-      lane: number,
-      power: number,
-      fx: { rainbow?: boolean; fire?: boolean } = {},
-      vx: number,
-      vy: number
-    ) => {
+    (lane, power, fx = {}, vx, vy) => {
       const b: BallState = {
         id: crypto.randomUUID(),
         lane,
 
-        // Start near shooter
         x: 50,
         y: 94,
         z: 0,
 
-        // Tuned for realistic arc inside 3D tunnel
         vx: vx * 0.12,
         vy: vy * 0.62,
         vz: 0.06 + power * 0.045,
 
         size: 30,
         active: true,
-
-        rainbow: fx.rainbow,
-        fire: fx.fire,
+        ...fx,
       };
 
       setBalls((prev) => {
-        const copy = prev.map((laneBalls) => [...laneBalls]);
+        const copy = prev.map((x) => [...x]);
         copy[lane].push(b);
         return copy;
       });
@@ -102,13 +79,11 @@ export function usePhysicsEngine(gameRunning: boolean) {
   );
 
   /* ---------------------------------------------------------
-     STEP PHYSICS — runs every animation frame
---------------------------------------------------------- */
+     STEP PHYSICS
+  --------------------------------------------------------- */
   const step = useCallback(
     (t: number) => {
-      if (lastTime.current == null) {
-        lastTime.current = t;
-      }
+      if (lastTime.current == null) lastTime.current = t;
       const dt = (t - lastTime.current) * 0.06;
       lastTime.current = t;
 
@@ -119,18 +94,19 @@ export function usePhysicsEngine(gameRunning: boolean) {
               .map((ball) => {
                 if (!ball.active) return ball;
 
-                /* --- GRAVITY --- */
+                // Gravity
                 ball.vy += GRAVITY * dt;
 
-                /* --- INTEGRATE POSITION --- */
+                // Integrate
                 ball.x += ball.vx * dt;
                 ball.y += ball.vy * dt;
                 ball.z += ball.vz * dt;
 
-                /* -------------------------------------------
-                   RIM COLLISION (3D ring, matches background)
-                -------------------------------------------- */
-                if (Math.abs(ball.z - RIM_Z) < 0.05) {
+                /* -----------------------------
+                   RIM COLLISION (bar region)
+                ------------------------------ */
+                const dz = Math.abs(ball.z - RIM_Z);
+                if (dz < 0.05) {
                   const dx = ball.x - RIM_X;
                   const dy = ball.y - RIM_Y;
                   const dist = Math.sqrt(dx * dx + dy * dy);
@@ -138,20 +114,17 @@ export function usePhysicsEngine(gameRunning: boolean) {
                   if (dist < RIM_RADIUS) {
                     const nx = dx / (dist || 1);
                     const ny = dy / (dist || 1);
-
                     const dot = ball.vx * nx + ball.vy * ny;
 
-                    const BOUNCE = 0.6;
-                    ball.vx -= 2 * dot * nx * BOUNCE;
-                    ball.vy -= 2 * dot * ny * BOUNCE;
-
-                    ball.vz *= 0.85; // lose a little forward energy
+                    ball.vx -= 2 * dot * nx * 0.6;
+                    ball.vy -= 2 * dot * ny * 0.6;
+                    ball.vz *= 0.85;
                   }
                 }
 
-                /* -------------------------------------------
-                   BACKBOARD COLLISION (behind rim)
-                -------------------------------------------- */
+                /* -----------------------------
+                   BACKBOARD COLLISION
+                ------------------------------ */
                 if (ball.z >= BACKBOARD_Z) {
                   ball.z = BACKBOARD_Z;
                   ball.vz *= BACKBOARD_BOUNCE;
@@ -159,16 +132,16 @@ export function usePhysicsEngine(gameRunning: boolean) {
                   ball.vy *= 0.8;
                 }
 
-                /* --- DRAG --- */
+                // Drag
                 ball.vx *= DRAG;
                 ball.vy *= DRAG;
                 ball.vz *= DRAG;
 
-                /* --- SIZE SHRINKS WITH DEPTH (matches renderer) --- */
+                // Shrink with depth
                 const depth = Math.min(Math.max(ball.z, 0), 1.1);
-                ball.size = 30 * (1 - depth * 0.6); // 30 → ~12
+                ball.size = 30 * (1 - depth * 0.6);
 
-                /* --- REMOVE BALL WHEN OUT OF VIEW --- */
+                // Cleanup
                 if (ball.z > FLOOR_Z || ball.y > 120 || ball.y < -10) {
                   ball.active = false;
                 }
@@ -185,12 +158,8 @@ export function usePhysicsEngine(gameRunning: boolean) {
     [gameRunning]
   );
 
-  /* ---------------------------------------------------------
-     START / STOP LOOP
---------------------------------------------------------- */
   useEffect(() => {
     rafRef.current = requestAnimationFrame(step);
-
     return () => {
       if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
     };
