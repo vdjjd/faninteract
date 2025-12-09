@@ -19,15 +19,15 @@ export interface BallState {
 }
 
 /* ---------------------------------------------------------
-   Physics Constants (tuned)
+   Physics Constants (tuned for visibility)
 --------------------------------------------------------- */
-const GRAVITY = 0.45;
-const LAUNCH_POWER = 3.1;
-const FRICTION = 0.99;
+const GRAVITY = 0.42;              // slight pull
+const LAUNCH_POWER = 3.8;          // stronger arc
+const FRICTION = 0.985;            // smoother slowdown
 const FLOOR_Y = 108;
 
-const RIM_Y = 16.5;
-const RIM_WIDTH = 20;
+const RIM_Y = 18;                  // better alignment
+const RIM_WIDTH = 22;              // more forgiving
 
 /* ---------------------------------------------------------
    Main Hook
@@ -41,7 +41,7 @@ export function usePhysicsEngine(gameRunning: boolean) {
   const lastTimeRef = useRef<number | null>(null);
 
   /* ---------------------------------------------------------
-     Spawn a new ball
+     Spawn a new ball — THIS WAS THE MAIN FIX
   --------------------------------------------------------- */
   const spawnBall = useCallback(
     (
@@ -52,10 +52,10 @@ export function usePhysicsEngine(gameRunning: boolean) {
       const newBall: BallState = {
         id: crypto.randomUUID(),
         lane,
-        x: 50,
-        y: 94,
-        vx: (Math.random() - 0.5) * 1.2,
-        vy: -power * LAUNCH_POWER * (1 + Math.random() * 0.03),
+        x: 50,            // centered
+        y: 72,            // ⭐ MUCH HIGHER — now visible!
+        vx: (Math.random() - 0.5) * 1.4,
+        vy: -power * LAUNCH_POWER * (1 + Math.random() * 0.05),
         size: 12,
         active: true,
         rainbow: effects?.rainbow,
@@ -72,7 +72,7 @@ export function usePhysicsEngine(gameRunning: boolean) {
   );
 
   /* ---------------------------------------------------------
-     Step physics (delta time)
+     Physics Step
   --------------------------------------------------------- */
   const step = useCallback(
     (timestamp: number) => {
@@ -87,22 +87,29 @@ export function usePhysicsEngine(gameRunning: boolean) {
               .map((ball) => {
                 if (!ball.active) return ball;
 
+                // Gravity
                 ball.vy += GRAVITY * (delta / 16.67);
+
+                // Movement
                 ball.x += ball.vx;
                 ball.y += ball.vy;
 
-                const inRimBand = ball.y > RIM_Y - 2 && ball.y < RIM_Y + 2;
+                // Rim collision zone
+                const inRimBand = ball.y > RIM_Y - 3 && ball.y < RIM_Y + 3;
                 const inRimWidth =
                   ball.x > 50 - RIM_WIDTH / 2 &&
                   ball.x < 50 + RIM_WIDTH / 2;
 
-                if (inRimBand && inRimWidth) {
-                  ball.vy *= -0.42;
-                  ball.vx *= 0.58;
+                // Rim bounce
+                if (inRimBand && inRimWidth && ball.vy > 0) {
+                  ball.vy *= -0.48;  // pop upward
+                  ball.vx *= 0.55;
                 }
 
+                // Apply friction
                 ball.vx *= FRICTION;
 
+                // Floor kill
                 if (ball.y > FLOOR_Y) ball.active = false;
 
                 return { ...ball };
