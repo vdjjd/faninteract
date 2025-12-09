@@ -30,7 +30,9 @@ export default function ShooterPage() {
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
 
   const streakRef = useRef(0);
-  const startY = useRef(0);
+
+  /* --- NEW FOR SWIPE VELOCITY --- */
+  const swipeRef = useRef({ x: 0, y: 0, time: 0 });
 
   /* ------------------------------------------------------------
      LOAD PLAYER FROM LOCAL STORAGE
@@ -83,7 +85,7 @@ export default function ShooterPage() {
   }
 
   /* ------------------------------------------------------------
-     SUBSCRIBE TO WALL COUNTDOWN + START GAME
+     SUBSCRIBE TO WALL EVENTS
   ------------------------------------------------------------ */
   useEffect(() => {
     if (!gameId) return;
@@ -125,7 +127,7 @@ export default function ShooterPage() {
   }, [localCountdown]);
 
   /* ------------------------------------------------------------
-     1-SECOND TIMER HEARTBEAT (Shooter Game Timer)
+     1-SECOND TIMER HEARTBEAT
   ------------------------------------------------------------ */
   useEffect(() => {
     if (!gameId) return;
@@ -152,18 +154,18 @@ export default function ShooterPage() {
   }, [gameId]);
 
   /* ------------------------------------------------------------
-     SHOOT LOGIC
+     SHOOT LOGIC — NOW USES vx + vy
   ------------------------------------------------------------ */
-  async function handleShot(power: number) {
+  async function handleShot({ vx, vy, power }) {
     if (!playerId || laneIndex === null) return;
-    if (displayCountdown !== null) return; // BLOCK shooting during countdown
+    if (displayCountdown !== null) return; // BLOCK during countdown
 
     const streak = streakRef.current;
 
     supabase.channel(`basketball-${gameId}`).send({
       type: "broadcast",
       event: "shot_fired",
-      payload: { lane_index: laneIndex, power, streak },
+      payload: { lane_index: laneIndex, vx, vy, power, streak },
     });
 
     const made = Math.random() < (0.45 + power * 0.35);
@@ -177,7 +179,7 @@ export default function ShooterPage() {
   }
 
   /* ------------------------------------------------------------
-     UI
+     UI + TOUCH HANDLING
   ------------------------------------------------------------ */
   return (
     <div
@@ -190,15 +192,36 @@ export default function ShooterPage() {
         overflow: "hidden",
         touchAction: "none",
       }}
+
+      /* --- SWIPE START (record position + time) --- */
       onTouchStart={(e) => {
-        startY.current = e.touches[0].clientY;
+        const touch = e.touches[0];
+        swipeRef.current = {
+          x: touch.clientX,
+          y: touch.clientY,
+          time: Date.now(),
+        };
       }}
+
+      /* --- SWIPE END (compute velocity, send shot) --- */
       onTouchEnd={(e) => {
-        const dist = startY.current - e.changedTouches[0].clientY;
-        if (dist > 25) {
-          const power = Math.min(1, Math.max(0, dist / 450));
-          handleShot(power);
-        }
+        const touch = e.changedTouches[0];
+
+        const dx = touch.clientX - swipeRef.current.x;
+        const dy = swipeRef.current.y - touch.clientY; // upward = positive
+        const dt = Date.now() - swipeRef.current.time;
+
+        if (dy < 10) return; // small swipe = ignore
+
+        const speed = dy / dt; // px per ms
+
+        // Convert to physics velocities
+        const vy = -Math.min(9, speed * 12); // upward
+        const vx = dx * 0.02; // small sideways influence
+
+        const power = Math.min(1, speed * 1.2);
+
+        handleShot({ vx, vy, power });
       }}
     >
       {/* FULLSCREEN COUNTDOWN */}
