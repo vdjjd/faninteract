@@ -3,43 +3,34 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 
 /* ---------------------------------------------------------
-   BALL STATE TYPE
+   Ball Type
 --------------------------------------------------------- */
 export interface BallState {
   id: string;
   lane: number;
-  x: number;     
-  y: number;     
-  vx: number;    
-  vy: number;    
-  size: number;  
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  size: number;
   active: boolean;
   rainbow?: boolean;
   fire?: boolean;
 }
 
 /* ---------------------------------------------------------
-   🔧 TUNED CONSTANTS — FEEL LIKE REAL ARCADE SHOOTING
+   Physics Constants (tuned)
 --------------------------------------------------------- */
-
-// Ball arc speed
-const GRAVITY = 0.62;          // was 0.45 → weak arc → balls float
-const LAUNCH_POWER = 2.35;     // was 1.8 → shots were too low
-
-// Horizontal dampening
+const GRAVITY = 0.62;
+const LAUNCH_POWER = 2.35;
 const FRICTION = 0.987;
-
-// Cleanup
 const FLOOR_Y = 108;
 
-// Rim position (in % of PlayerCard height)
-const RIM_Y = 16.5;           // FIXED: matches your rendered rim location
-
-// Rim collision width
-const RIM_WIDTH = 20;         // was 18 — allows natural bounce forgiveness
+const RIM_Y = 16.5;
+const RIM_WIDTH = 20;
 
 /* ---------------------------------------------------------
-   PHYSICS ENGINE
+   Main Hook
 --------------------------------------------------------- */
 export function usePhysicsEngine(gameRunning: boolean) {
   const [balls, setBalls] = useState<BallState[][]>(
@@ -50,7 +41,7 @@ export function usePhysicsEngine(gameRunning: boolean) {
   const lastTimeRef = useRef<number | null>(null);
 
   /* ---------------------------------------------------------
-     SPAWN BALL
+     Spawn a new ball
   --------------------------------------------------------- */
   const spawnBall = useCallback(
     (
@@ -63,7 +54,7 @@ export function usePhysicsEngine(gameRunning: boolean) {
         lane,
         x: 50,
         y: 94,
-        vx: (Math.random() - 0.5) * 1.8,        // small angle variance
+        vx: (Math.random() - 0.5) * 1.8,
         vy: -power * LAUNCH_POWER * (1 + Math.random() * 0.08),
         size: 12,
         active: true,
@@ -81,7 +72,7 @@ export function usePhysicsEngine(gameRunning: boolean) {
   );
 
   /* ---------------------------------------------------------
-     PHYSICS STEP (smooth, delta-time)
+     Step physics (delta time)
   --------------------------------------------------------- */
   const step = useCallback(
     (timestamp: number) => {
@@ -96,30 +87,22 @@ export function usePhysicsEngine(gameRunning: boolean) {
               .map((ball) => {
                 if (!ball.active) return ball;
 
-                // Gravity
                 ball.vy += GRAVITY * (delta / 16.67);
-
-                // Movement
                 ball.x += ball.vx;
                 ball.y += ball.vy;
 
-                /* -------------------------------------------------
-                   RIM COLLISION (FIXED)
-                ------------------------------------------------- */
                 const inRimBand = ball.y > RIM_Y - 2 && ball.y < RIM_Y + 2;
                 const inRimWidth =
                   ball.x > 50 - RIM_WIDTH / 2 &&
                   ball.x < 50 + RIM_WIDTH / 2;
 
                 if (inRimBand && inRimWidth) {
-                  ball.vy *= -0.42;     // bounce softness
-                  ball.vx *= 0.58;      // slight angle change
+                  ball.vy *= -0.42;
+                  ball.vx *= 0.58;
                 }
 
-                // Horizontal friction
                 ball.vx *= FRICTION;
 
-                // Remove ball when off-screen
                 if (ball.y > FLOOR_Y) ball.active = false;
 
                 return { ...ball };
@@ -135,7 +118,7 @@ export function usePhysicsEngine(gameRunning: boolean) {
   );
 
   /* ---------------------------------------------------------
-      START LOOP
+     Start loop
   --------------------------------------------------------- */
   useEffect(() => {
     rafRef.current = requestAnimationFrame(step);

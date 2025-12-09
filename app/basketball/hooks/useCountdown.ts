@@ -5,64 +5,70 @@ import { supabase } from "@/lib/supabaseClient";
 
 export function useCountdown(gameId: string) {
   const [countdown, setCountdown] = useState<number | null>(null);
-  const channelRef = useRef<any>(null);
-  const tickingRef = useRef(false); // prevents duplicate countdowns
+  const tickingRef = useRef(false);
+
+  const wallChannelRef = useRef<any>(null);
+  const broadcastChannelRef = useRef<any>(null);
 
   /* ------------------------------------------------------------
-     SUBSCRIBE TO COUNTDOWN & START_GAME BROADCASTS
+     LISTEN FOR start_countdown FROM BOTH CHANNELS
   ------------------------------------------------------------ */
   useEffect(() => {
-    const channel = supabase.channel(`basketball-${gameId}`);
-    channelRef.current = channel;
+    if (!gameId) return;
 
-    channel
+    /* Wall-specific channel */
+    const wallChannel = supabase.channel(`basketball-${gameId}`);
+    wallChannelRef.current = wallChannel;
+
+    wallChannel
       .on("broadcast", { event: "start_countdown" }, (payload) => {
-        const incomingGame = payload?.payload?.gameId;
-        if (incomingGame !== gameId) return;
+        const incoming = payload?.payload?.gameId;
+        if (incoming !== gameId) return;
 
         if (!tickingRef.current) {
           tickingRef.current = true;
           setCountdown(10);
         }
       })
-      .on("broadcast", { event: "start_game" }, async (payload) => {
-        const startTime = payload.payload?.startTime;
-        if (!startTime) return;
+      .subscribe();
 
-        // Sync with the DB — ensure timer starts if missed event
-        await supabase
-          .from("bb_games")
-          .update({
-            game_running: true,
-            game_timer_start: startTime,
-          })
-          .eq("id", gameId)
-          .select(); // <-- Required for Supabase w/ Next.js 16
+    /* Universal broadcast channel — NO SUBSCRIBE NEEDED */
+    const broadcastChannel = supabase.channel("broadcast");
+    broadcastChannelRef.current = broadcastChannel;
+
+    broadcastChannel
+      .on("broadcast", { event: "start_countdown" }, (payload) => {
+        const incoming = payload?.payload?.gameId;
+        if (incoming !== gameId) return;
+
+        if (!tickingRef.current) {
+          tickingRef.current = true;
+          setCountdown(10);
+        }
       })
       .subscribe();
 
     return () => {
-      try {
-        supabase.removeChannel(channel);
-      } catch {}
+      try { supabase.removeChannel(wallChannel); } catch {}
+      try { supabase.removeChannel(broadcastChannel); } catch {}
     };
   }, [gameId]);
 
   /* ------------------------------------------------------------
-     COUNTDOWN ENGINE — device that received event handles counting
+     LOCAL COUNTDOWN ENGINE
   ------------------------------------------------------------ */
   useEffect(() => {
     if (countdown === null) return;
 
-    // Countdown finished → start game
+    // COUNTDOWN FINISHED → start game
     if (countdown <= 0) {
       setCountdown(null);
       tickingRef.current = false;
 
       const startTime = new Date().toISOString();
 
-      // 🚨 REQUIRED FIX: always await update + include .select()
       (async () => {
+        // Update DB
         await supabase
           .from("bb_games")
           .update({
@@ -70,10 +76,10 @@ export function useCountdown(gameId: string) {
             game_timer_start: startTime,
           })
           .eq("id", gameId)
-          .select(); // <-- ensures the update actually runs
+          .select();
 
-        // Broadcast start_game to all clients
-        channelRef.current?.send({
+        // Notify all clients
+        broadcastChannelRef.current?.send({
           type: "broadcast",
           event: "start_game",
           payload: { startTime },
@@ -83,12 +89,12 @@ export function useCountdown(gameId: string) {
       return;
     }
 
-    // Otherwise, keep counting down…
-    const t = setTimeout(() => {
-      setCountdown((c) => (c === null ? null : c - 1));
+    // Continue countdown
+    const timer = setTimeout(() => {
+      setCountdown((c) => (c !== null ? c - 1 : null));
     }, 1000);
 
-    return () => clearTimeout(t);
+    return () => clearTimeout(timer);
   }, [countdown, gameId]);
 
   return countdown;

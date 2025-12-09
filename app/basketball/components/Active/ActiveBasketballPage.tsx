@@ -17,6 +17,11 @@ const CELL_COLORS = [
 ];
 
 export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
+  if (!gameId) {
+    console.error("⛔ Active wall mounted with NO gameId.");
+    return null;
+  }
+
   /* ------------------------------------------------------------
      COUNTDOWN + GAME TIMER
   ------------------------------------------------------------ */
@@ -25,28 +30,7 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
     useGameTimer(gameId);
 
   /* ------------------------------------------------------------
-     GAME START LISTENER (INSTANT START)
-     This fixes the bug where gameRunning doesn't flip until DB update.
-  ------------------------------------------------------------ */
-  useEffect(() => {
-    const channel = supabase
-      .channel(`basketball-${gameId}`)
-      .on("broadcast", { event: "start_game" }, (payload) => {
-        console.log("⏱ START GAME RECEIVED (Active Wall)", payload);
-        // We do NOT need additional logic here because useGameTimer
-        // now handles event-driven timer start instantly.
-      })
-      .subscribe();
-
-    return () => {
-      try {
-        supabase.removeChannel(channel);
-      } catch {}
-    };
-  }, [gameId]);
-
-  /* ------------------------------------------------------------
-     BALL PHYSICS ENABLED AFTER COUNTDOWN + GAME START
+     PHYSICS ONLY AFTER COUNTDOWN ENDS + GAME RUNNING
   ------------------------------------------------------------ */
   const physicsEnabled = gameRunning && countdownValue === null;
   const { balls, spawnBall } = usePhysicsEngine(physicsEnabled);
@@ -56,10 +40,10 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
   ------------------------------------------------------------ */
   const players = usePlayers(gameId);
   const maxScore =
-    players.length > 0 ? Math.max(...players.map((p) => p.score ?? 0)) : 0;
+    players.length ? Math.max(...players.map((p) => p.score ?? 0)) : 0;
 
   /* ------------------------------------------------------------
-     HOST LOGO (same logic as InactiveWall)
+     HOST LOGO
   ------------------------------------------------------------ */
   const [hostLogo, setHostLogo] = useState<string | null>(null);
 
@@ -84,8 +68,8 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
 
       setHostLogo(
         host?.branding_logo_url?.trim() ||
-          host?.logo_url?.trim() ||
-          "/faninteractlogo.png"
+        host?.logo_url?.trim() ||
+        "/faninteractlogo.png"
       );
     }
 
@@ -93,17 +77,16 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
   }, [gameId]);
 
   /* ------------------------------------------------------------
-     LISTEN FOR SHOT EVENTS
+     SHOT EVENTS
   ------------------------------------------------------------ */
   useEffect(() => {
-    const channel = supabase
+    const ch = supabase
       .channel(`basketball-${gameId}`)
       .on("broadcast", { event: "shot_fired" }, (payload) => {
         const p = payload?.payload;
         if (!p) return;
-        if (p.gameId && p.gameId !== gameId) return;
 
-        // no balls during countdown
+        // No balls during countdown
         if (countdownValue !== null) return;
 
         spawnBall(p.lane_index, p.power, {
@@ -114,9 +97,7 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
       .subscribe();
 
     return () => {
-      try {
-        supabase.removeChannel(channel);
-      } catch {}
+      try { supabase.removeChannel(ch); } catch {}
     };
   }, [gameId, spawnBall, countdownValue]);
 
@@ -129,7 +110,7 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
       : document.exitFullscreen();
 
   /* ------------------------------------------------------------
-     RENDER UI
+     UI
   ------------------------------------------------------------ */
   return (
     <div
@@ -138,14 +119,14 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
         height: "100vh",
         background: "#050A18",
         padding: 20,
+        overflow: "hidden",
         display: "flex",
         justifyContent: "center",
         alignItems: "center",
-        overflow: "hidden",
         position: "relative",
       }}
     >
-      {/* COUNTDOWN ALWAYS ON TOP */}
+      {/* COUNTDOWN OVERLAY */}
       <Countdown preCountdown={countdownValue} />
 
       {/* PLAYER GRID */}
@@ -179,7 +160,7 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
         })}
       </div>
 
-      {/* FULLSCREEN BUTTON */}
+      {/* FULLSCREEN */}
       <div
         onClick={toggleFullscreen}
         style={{
@@ -192,11 +173,11 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
           background: "rgba(255,255,255,0.1)",
           border: "1px solid rgba(255,255,255,0.25)",
           cursor: "pointer",
+          color: "#fff",
           display: "flex",
+          fontSize: 20,
           alignItems: "center",
           justifyContent: "center",
-          color: "#fff",
-          fontSize: 20,
         }}
       >
         ⛶

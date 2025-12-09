@@ -24,14 +24,12 @@ interface DBPlayerRow {
 }
 
 /* --------------------------------------------
-   HOOK: Load + Realtime Players
+   HOOK: Load + realtime players
 -------------------------------------------- */
 export function usePlayers(gameId: string) {
   const [players, setPlayers] = useState<Player[]>([]);
 
-  /* ------------------------------
-     HELPER: Map DB → Player object
-  ------------------------------ */
+  /* Map DB row → Player */
   function mapRow(r: DBPlayerRow): Player {
     return {
       id: r.id,
@@ -42,15 +40,17 @@ export function usePlayers(gameId: string) {
     };
   }
 
-  /* ------------------------------
-     INITIAL LOAD
-  ------------------------------ */
+  /* Initial load */
   useEffect(() => {
+    if (!gameId) return;
+
     async function load() {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("bb_game_players")
         .select("*")
         .eq("game_id", gameId);
+
+      if (error || !data) return;
 
       const active = (data as DBPlayerRow[]).filter((p) => !p.disconnected_at);
       setPlayers(active.map(mapRow));
@@ -59,12 +59,12 @@ export function usePlayers(gameId: string) {
     load();
   }, [gameId]);
 
-  /* ------------------------------
-     REALTIME UPDATES
-  ------------------------------ */
+  /* Realtime updates */
   useEffect(() => {
+    if (!gameId) return;
+
     const channel = supabase
-      .channel(`bb_game_players_${gameId}`)
+      .channel(`players-${gameId}`)
       .on(
         "postgres_changes",
         {
@@ -75,29 +75,32 @@ export function usePlayers(gameId: string) {
         },
         (payload) => {
           const row = payload.new as DBPlayerRow;
+          if (!row) return;
 
-          // Player left the game
+          // if player disconnects → remove them
           if (row.disconnected_at) {
             setPlayers((prev) => prev.filter((p) => p.id !== row.id));
             return;
           }
 
-          // Update or insert
           const mapped = mapRow(row);
+
           setPlayers((prev) => {
             const idx = prev.findIndex((p) => p.id === mapped.id);
             if (idx === -1) return [...prev, mapped];
 
-            const next = [...prev];
-            next[idx] = mapped;
-            return next;
+            const arr = [...prev];
+            arr[idx] = mapped;
+            return arr;
           });
         }
       )
       .subscribe();
 
     return () => {
-      supabase.removeChannel(channel).catch(() => {});
+      try {
+        supabase.removeChannel(channel);
+      } catch {}
     };
   }, [gameId]);
 

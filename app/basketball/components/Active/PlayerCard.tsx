@@ -7,16 +7,13 @@ import Fire from "@/app/basketball/components/Effects/Fire";
 import Rainbow from "@/app/basketball/components/Effects/Rainbow";
 import { Player } from "@/app/basketball/hooks/usePlayers";
 
-// --- NEW NET COMPONENT ---
+/* NET GRAPHIC */
 function Net({ state }: { state: "idle" | "swish" | "hit" }) {
   const frame = useMemo(() => {
     switch (state) {
-      case "swish":
-        return "/net_swish.png";
-      case "hit":
-        return "/net_hit.png";
-      default:
-        return "/net_idle.png";
+      case "swish": return "/net_swish.png";
+      case "hit": return "/net_hit.png";
+      default: return "/net_idle.png";
     }
   }, [state]);
 
@@ -26,25 +23,22 @@ function Net({ state }: { state: "idle" | "swish" | "hit" }) {
       alt="net"
       style={{
         position: "absolute",
-        top: "calc(4% + 7vh + 0.4vh)", // net positioned directly beneath rim
+        top: "calc(4% + 7vh + 0.4vh)",
         left: "50%",
         transform: "translateX(-50%)",
-        width: "14%", // EXACT MATCH to rim width
-        height: "auto",
-        pointerEvents: "none",
+        width: "14%",
         zIndex: 3,
-        imageRendering: "auto", // ✔ FIXED: removed invalid "high-quality"
+        pointerEvents: "none",
       }}
     />
   );
 }
 
-/* Geometry */
 const BACKBOARD_SCALE = 1;
 const RIM_WIDTH = 14;
-const RIM_SCALE = 1;
 const SELFIE_SIZE = 42;
 
+/* 🔥 OFFICIAL DEFAULT EXPORT */
 export default function PlayerCard({
   index,
   player,
@@ -69,29 +63,22 @@ export default function PlayerCard({
   const isWinner =
     timerExpired && player && player.score === maxScore && maxScore > 0;
 
-  // --- UPGRADED NET PHYSICS SYSTEM ---
   let netState: "idle" | "swish" | "hit" = "idle";
 
   for (const b of balls) {
     const { x, y, vy, vx } = b;
 
-    // --- SWISH DETECTION ---
-    const isSwish =
-      vy > 0 && x > 47 && x < 53 && y > 12 && y < 22;
-
-    if (isSwish) {
+    if (vy > 0 && x > 47 && x < 53 && y > 12 && y < 22) {
       netState = "swish";
       break;
     }
 
-    // --- HARD RIM HIT ---
-    const isHardHit =
+    if (
       y > 10 &&
       y < 15 &&
       (x < 45 || x > 55) &&
-      Math.abs(vx) + Math.abs(vy) > 0.6;
-
-    if (isHardHit) {
+      Math.abs(vx) + Math.abs(vy) > 0.6
+    ) {
       netState = "hit";
       break;
     }
@@ -107,10 +94,10 @@ export default function PlayerCard({
         backgroundImage: "url('/BBgamebackground.png')",
         backgroundSize: "cover",
         backgroundPosition: "center",
-        animation: isWinner ? "winnerBlink 0.18s infinite alternate" : "none",
+        animation: isWinner ? "winnerBlink 0.18s infinite alternate" : undefined,
       }}
     >
-      {/* TIMER */}
+      {/* Timer */}
       <div
         style={{
           position: "absolute",
@@ -130,7 +117,7 @@ export default function PlayerCard({
           : "--:--"}
       </div>
 
-      {/* PLAYER LABEL */}
+      {/* Player Label */}
       <div
         style={{
           position: "absolute",
@@ -146,7 +133,7 @@ export default function PlayerCard({
         P{index + 1}
       </div>
 
-      {/* BACKBOARD */}
+      {/* Backboard */}
       <div
         style={{
           position: "absolute",
@@ -161,7 +148,6 @@ export default function PlayerCard({
           display: "flex",
           justifyContent: "center",
           alignItems: "center",
-          overflow: "hidden",
         }}
       >
         {hostLogo && (
@@ -177,14 +163,14 @@ export default function PlayerCard({
         )}
       </div>
 
-      {/* RIM */}
+      {/* Rim */}
       <div
         style={{
           position: "absolute",
           top: `calc(4% + ${7 * BACKBOARD_SCALE}vh - 0.2vh)`,
           left: "50%",
           transform: "translateX(-50%)",
-          width: `${RIM_WIDTH * RIM_SCALE}%`,
+          width: `${RIM_WIDTH}%`,
           height: "0.7vh",
           background: "#ff6a00",
           borderRadius: 6,
@@ -193,10 +179,10 @@ export default function PlayerCard({
         }}
       />
 
-      {/* NET */}
+      {/* Net */}
       <Net state={netState} />
 
-      {/* BALL + FX */}
+      {/* Balls & FX */}
       {balls.map((ball) => (
         <React.Fragment key={ball.id}>
           {ball.fire && <Fire x={ball.x} y={ball.y} />}
@@ -205,7 +191,7 @@ export default function PlayerCard({
         </React.Fragment>
       ))}
 
-      {/* SELFIE */}
+      {/* Selfie */}
       <div
         style={{
           position: "absolute",
@@ -235,7 +221,7 @@ export default function PlayerCard({
         )}
       </div>
 
-      {/* SCORE */}
+      {/* Score */}
       <div
         style={{
           position: "absolute",

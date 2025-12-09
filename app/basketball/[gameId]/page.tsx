@@ -2,6 +2,7 @@
 
 import { use, useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
+
 import ActiveBasketball from "@/app/basketball/components/Active";
 import InactiveBasketball from "@/app/basketball/components/Inactive";
 
@@ -10,13 +11,31 @@ export default function Page({
 }: {
   params: Promise<{ gameId: string }>;
 }) {
-  // ✅ FIX: unwrap dynamic route params (Next.js 16 requirement)
+  // ✅ REQUIRED for Next.js 16 — unwrap params with React.use()
   const { gameId } = use(params);
 
   const [game, setGame] = useState<any>(null);
 
   /* ------------------------------------------------------------
-     LISTEN FOR "refresh_wall" MESSAGE FROM DASHBOARD
+     SAFETY CHECK — invalid or undefined gameId
+  ------------------------------------------------------------ */
+  if (!gameId) {
+    return (
+      <div
+        style={{
+          color: "white",
+          padding: 40,
+          fontSize: 32,
+          textAlign: "center",
+        }}
+      >
+        ❌ ERROR: Invalid or Missing Game ID
+      </div>
+    );
+  }
+
+  /* ------------------------------------------------------------
+     LISTEN FOR DASHBOARD → WALL RELOAD MESSAGE
   ------------------------------------------------------------ */
   useEffect(() => {
     function handleMsg(e: MessageEvent) {
@@ -32,8 +51,6 @@ export default function Page({
      LOAD GAME FROM SUPABASE
   ------------------------------------------------------------ */
   useEffect(() => {
-    if (!gameId) return;
-
     async function load() {
       const { data, error } = await supabase
         .from("bb_games")
@@ -42,43 +59,38 @@ export default function Page({
         .maybeSingle();
 
       if (error) {
-        console.error("❌ Load error:", error);
+        console.error("❌ Failed to load bb_game:", error);
         return;
       }
 
-      if (data) setGame(data);
+      setGame(data || null);
     }
 
     load();
-
-    const t = setInterval(load, 1000);
-    return () => clearInterval(t);
+    const interval = setInterval(load, 1000); // stay synced
+    return () => clearInterval(interval);
   }, [gameId]);
 
   /* ------------------------------------------------------------
-     INVALID GAME ID
-  ------------------------------------------------------------ */
-  if (!gameId) {
-    return (
-      <div style={{ color: "white", padding: 40, fontSize: 32 }}>
-        ❌ ERROR: Invalid Game ID
-      </div>
-    );
-  }
-
-  /* ------------------------------------------------------------
-     STILL LOADING FROM SUPABASE
+     LOADING STATE
   ------------------------------------------------------------ */
   if (!game) {
     return (
-      <div style={{ color: "white", padding: 40, fontSize: 32 }}>
+      <div
+        style={{
+          color: "white",
+          padding: 40,
+          fontSize: 32,
+          textAlign: "center",
+        }}
+      >
         Loading game…
       </div>
     );
   }
 
   /* ------------------------------------------------------------
-     RENDER WALL
+     RENDER — Switch Between Inactive / Active Wall
   ------------------------------------------------------------ */
   return game.wall_active ? (
     <ActiveBasketball gameId={gameId} />

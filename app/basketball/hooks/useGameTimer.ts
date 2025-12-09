@@ -10,42 +10,40 @@ export function useGameTimer(gameId: string) {
   const [timerExpired, setTimerExpired] = useState(false);
 
   /* -----------------------------------------------------------
-     REAL-TIME LISTENER — start_game broadcast
+     REAL-TIME START — instant response to start_game event
   ----------------------------------------------------------- */
   useEffect(() => {
+    if (!gameId) return;
+
     const channel = supabase
       .channel(`basketball-${gameId}`)
       .on("broadcast", { event: "start_game" }, (payload) => {
         const startTime = payload?.payload?.startTime;
         if (!startTime) return;
 
-        const start = new Date(startTime).getTime();
-        const now = Date.now();
-        const elapsed = Math.floor((now - start) / 1000);
+        const startMs = new Date(startTime).getTime();
+        const elapsed = Math.floor((Date.now() - startMs) / 1000);
 
         setGameRunning(true);
         setTimerExpired(false);
 
-        setTimeLeft((prev) => {
-          // If duration not loaded yet, fallback to 90 seconds
-          const fallback = duration || 90;
-          const r = Math.max(fallback - elapsed, 0);
-          return r;
-        });
+        setTimeLeft((prev) =>
+          Math.max((duration || 90) - elapsed, 0)
+        );
       })
       .subscribe();
 
     return () => {
-      try {
-        supabase.removeChannel(channel);
-      } catch {}
+      try { supabase.removeChannel(channel); } catch {}
     };
   }, [gameId, duration]);
 
   /* -----------------------------------------------------------
-     DB POLLING — fallback + initial load
+     DB POLLING — keeps timer aligned even if event missed
   ----------------------------------------------------------- */
   useEffect(() => {
+    if (!gameId) return;
+
     async function load() {
       const { data } = await supabase
         .from("bb_games")
@@ -57,25 +55,23 @@ export function useGameTimer(gameId: string) {
 
       setDuration(data.duration_seconds);
 
-      // Game is running from DB perspective
       if (data.game_running && data.game_timer_start) {
-        const start = new Date(data.game_timer_start).getTime();
-        const now = Date.now();
-        const elapsed = Math.floor((now - start) / 1000);
+        const startMs = new Date(data.game_timer_start).getTime();
+        const elapsed = Math.floor((Date.now() - startMs) / 1000);
+
         const remaining = Math.max(data.duration_seconds - elapsed, 0);
 
         setGameRunning(true);
         setTimeLeft(remaining);
         setTimerExpired(remaining <= 0);
       } else {
-        // Game not running
         setGameRunning(false);
       }
     }
 
     load();
-    const int = setInterval(load, 1000);
-    return () => clearInterval(int);
+    const id = setInterval(load, 1000);
+    return () => clearInterval(id);
   }, [gameId]);
 
   return {
