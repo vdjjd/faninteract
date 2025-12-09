@@ -1,22 +1,19 @@
 "use client";
 
-import React, { useMemo } from "react";
+import React from "react";
 import BallRenderer from "@/app/basketball/components/Active/BallRenderer";
 import Fire from "@/app/basketball/components/Effects/Fire";
 import Rainbow from "@/app/basketball/components/Effects/Rainbow";
+import RimSparks from "@/app/basketball/components/Effects/RimSparks";
 
 /* ---------------- NET GRAPHIC ---------------- */
 function Net({ state }: { state: "idle" | "swish" | "hit" }) {
-  const frame = useMemo(() => {
-    switch (state) {
-      case "swish":
-        return "/net_swish.png";
-      case "hit":
-        return "/net_hit.png";
-      default:
-        return "/net_idle.png";
-    }
-  }, [state]);
+  const frame =
+    state === "swish"
+      ? "/net_swish.png"
+      : state === "hit"
+      ? "/net_hit.png"
+      : "/net_idle.png";
 
   return (
     <img
@@ -28,7 +25,7 @@ function Net({ state }: { state: "idle" | "swish" | "hit" }) {
         left: "50%",
         transform: "translateX(-50%)",
         width: "14%",
-        zIndex: 150, // Net ABOVE balls and rim
+        zIndex: 150,
         pointerEvents: "none",
       }}
     />
@@ -57,27 +54,22 @@ export default function PlayerCard({
   const isWinner =
     timerExpired && player && player.score === maxScore && maxScore > 0;
 
-  /* ---------------- NET COLLISION LOGIC ---------------- */
+  /* ---------------- NET LOGIC (PHYSICS-BASED) ---------------- */
   let netState: "idle" | "swish" | "hit" = "idle";
 
   for (const b of balls) {
-    const { x, y, vy, vx } = b;
-
-    // SWEET SPOT SWISH REGION
-    if (vy > 0 && x > 47 && x < 53 && y > 12 && y < 22) {
-      netState = "swish";
+    if (b.scored) {
+      netState = b.swish ? "swish" : "hit";
       break;
     }
 
-    // SIDE HIT
-    if (
-      y > 10 &&
-      y < 15 &&
-      (x < 45 || x > 55) &&
-      Math.abs(vx) + Math.abs(vy) > 0.6
-    ) {
+    // Rim hit detection
+    const dx = b.x - 50;
+    const dy = b.y - 18;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+
+    if (Math.abs(b.z - 0.88) < 0.03 && dist < 9) {
       netState = "hit";
-      break;
     }
   }
 
@@ -91,7 +83,7 @@ export default function PlayerCard({
         backgroundImage: "url('/BBgamebackground.png')",
         backgroundSize: "cover",
         backgroundPosition: "center",
-        zIndex: 0, // card background
+        zIndex: 0,
       }}
     >
       {/* ---------------- WINNER ANIMATION ---------------- */}
@@ -138,7 +130,7 @@ export default function PlayerCard({
           : "--:--"}
       </div>
 
-      {/* ---------------- PLAYER LABEL P1/P2 ---------------- */}
+      {/* ---------------- PLAYER LABEL ---------------- */}
       <div
         style={{
           position: "absolute",
@@ -186,7 +178,7 @@ export default function PlayerCard({
         )}
       </div>
 
-      {/* ---------------- RIM (ORANGE BAR) ---------------- */}
+      {/* ---------------- RIM ---------------- */}
       <div
         style={{
           position: "absolute",
@@ -204,6 +196,14 @@ export default function PlayerCard({
 
       {/* ---------------- NET ---------------- */}
       <Net state={netState} />
+
+      {/* ---------------- RIM SPARKS (NEW FX) ---------------- */}
+      <RimSparks
+        x={50}
+        y={18.2}
+        active={netState === "hit"}
+        zIndex={180}
+      />
 
       {/* ---------------- BALLS + FX ---------------- */}
       {balls.map((ball) => (
@@ -232,7 +232,7 @@ export default function PlayerCard({
         />
       )}
 
-      {/* ---------------- PLAYER SELFIE ---------------- */}
+      {/* ---------------- SELFIE ---------------- */}
       <div
         style={{
           position: "absolute",
@@ -324,8 +324,6 @@ export default function PlayerCard({
             letterSpacing: "4px",
             textTransform: "uppercase",
             zIndex: 200,
-            pointerEvents: "none",
-            userSelect: "none",
           }}
         >
           WINNER

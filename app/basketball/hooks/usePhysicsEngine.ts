@@ -6,49 +6,48 @@ export interface BallState {
   id: string;
   lane: number;
 
-  x: number; // screen %
-  y: number; // screen %
-  z: number; // depth (0 = near player, 1 = rim)
+  x: number;   // %
+  y: number;   // %
+  z: number;   // depth (0 near player → 1 rim)
 
-  vx: number; // sideways
-  vy: number; // up/down
-  vz: number; // forward depth
+  vx: number;
+  vy: number;
+  vz: number;
 
   size: number;
   active: boolean;
 
   rainbow?: boolean;
   fire?: boolean;
+
+  // accuracy + scoring
+  zoneHit?: boolean;       // ⭐ guaranteed make
+  madeExpected?: boolean;  // used for animations
+  scored?: boolean;        // ball already scored
+  swish?: boolean;         // pure-net animation
 }
 
-/* ---------------------------------------------------------
-   POP-A-SHOT ARCADE PHYSICS CONSTANTS
---------------------------------------------------------- */
-
-// Gravity → strong, arcade feel
+/* ----------------------------------------------
+   CONSTANTS (Pop-A-Shot tuned)
+---------------------------------------------- */
 const GRAVITY = 0.0075;
-
-// Drag → minimal slowdown
 const DRAG = 0.985;
 
-// Rim bucket depth
 const RIM_Z = 0.88;
-
-// Backboard plane depth
 const BACKBOARD_Z = 1.02;
-
-// Remove ball when too far
 const MAX_Z = 1.25;
 
-/* Rim geometry (from your PlayerCard) */
 const RIM_X = 50;
 const RIM_Y = 18;
 const RIM_RADIUS = 7;
 
-/* ---------------------------------------------------------
-   usePhysicsEngine
---------------------------------------------------------- */
-export function usePhysicsEngine(gameRunning: boolean) {
+/* ----------------------------------------------
+   MAIN HOOK
+---------------------------------------------- */
+export function usePhysicsEngine(
+  gameRunning: boolean,
+  registerScore?: (laneIndex: number, points: number, swish: boolean) => void
+) {
   const [balls, setBalls] = useState<BallState[][]>(
     Array.from({ length: 10 }, () => [])
   );
@@ -56,17 +55,33 @@ export function usePhysicsEngine(gameRunning: boolean) {
   const rafRef = useRef<number | null>(null);
   const lastTime = useRef<number | null>(null);
 
-  /* ---------------------------------------------------------
-     SPAWN BALL (Pop-A-Shot tuned)
-  --------------------------------------------------------- */
+  /* ----------------------------------------------
+     SPAWN BALL (with bias from zoneHit)
+  ---------------------------------------------- */
   const spawnBall = useCallback(
     (
       lane: number,
       power: number,
-      fx: { rainbow?: boolean; fire?: boolean } = {},
+      fx: { zoneHit?: boolean; madeExpected?: boolean; rainbow?: boolean; fire?: boolean } = {},
       vx: number,
       vy: number
     ) => {
+      let biasVX = vx;
+      let biasVY = vy;
+      let biasVZ = 0.030 + power * 0.030;
+
+      if (fx.zoneHit) {
+        // ⭐ HIT ZONE → strengthened arc
+        biasVY *= 1.08;
+        biasVZ *= 1.10;
+        biasVX *= 0.92;
+      } else {
+        // Normal physics slight randomness
+        biasVY *= 0.96;
+        biasVZ *= 0.95;
+        biasVX *= 1.06;
+      }
+
       const b: BallState = {
         id: crypto.randomUUID(),
         lane,
@@ -75,16 +90,21 @@ export function usePhysicsEngine(gameRunning: boolean) {
         y: 94,
         z: 0,
 
-        // Arcade tuning → big arc, forgiving control
-        vx: vx * 0.09,           // slight side movement
-        vy: vy * 0.45,           // upward boost
-        vz: 0.030 + power * 0.030, // forward depth
+        vx: biasVX * 0.09,
+        vy: biasVY * 0.45,
+        vz: biasVZ,
 
-        size: 50, // matches your visual scale
+        size: 50,
         active: true,
 
         rainbow: fx.rainbow,
         fire: fx.fire,
+
+        // NEW: unified fields
+        zoneHit: fx.zoneHit ?? false,
+        madeExpected: fx.madeExpected ?? false,
+        scored: false,
+        swish: false,
       };
 
       setBalls((prev) => {
@@ -96,9 +116,9 @@ export function usePhysicsEngine(gameRunning: boolean) {
     []
   );
 
-  /* ---------------------------------------------------------
+  /* ----------------------------------------------
      PHYSICS LOOP
---------------------------------------------------------- */
+---------------------------------------------- */
   const step = useCallback(
     (t: number) => {
       if (lastTime.current == null) lastTime.current = t;
@@ -120,37 +140,64 @@ export function usePhysicsEngine(gameRunning: boolean) {
                 ball.y += ball.vy * dt;
                 ball.z += ball.vz * dt;
 
-                /* -------------------------------
-                   RIM COLLISION (Circle in 3D)
-                --------------------------------*/
+                /* ----------------------------------------------
+                   ⭐ RIM SCORING (HIT ZONE → FORCE MAKE)
+                ---------------------------------------------- */
+                const nearRim = Math.abs(ball.z - RIM_Z) < 0.03;
+
+                if (nearRim && !ball.scored) {
+                  const dx = ball.x - RIM_X;
+                  const dy = ball.y - RIM_Y;
+                  const dist = Math.sqrt(dx * dx + dy * dy);
+
+                  const insideHoop = dist < RIM_RADIUS * 0.65;
+
+                  if (ball.zoneHit) {
+                    // ⭐ ALWAYS MAKE
+                    ball.scored = true;
+                    ball.swish = true;
+                    if (registerScore) registerScore(ball.lane, 2, true);
+                  } else if (insideHoop) {
+                    // normal physics make
+                    ball.scored = true;
+
+                    const isSwish =
+                      Math.abs(dx) < 2 && Math.abs(dy) < 2 && ball.vy > 0;
+
+                    ball.swish = isSwish;
+
+                    if (registerScore)
+                      registerScore(ball.lane, 2, isSwish);
+                  }
+                }
+
+                /* ----------------------------------------------
+                   RIM COLLISION (BOUNCE)
+                ---------------------------------------------- */
                 if (Math.abs(ball.z - RIM_Z) < 0.05) {
                   const dx = ball.x - RIM_X;
                   const dy = ball.y - RIM_Y;
                   const dist = Math.sqrt(dx * dx + dy * dy);
 
                   if (dist < RIM_RADIUS) {
-                    // Normalize
                     const nx = dx / (dist || 1);
                     const ny = dy / (dist || 1);
 
-                    // Bounce outward
                     const dot = ball.vx * nx + ball.vy * ny;
                     const BOUNCE = 0.55;
 
                     ball.vx -= 2 * dot * nx * BOUNCE;
                     ball.vy -= 2 * dot * ny * BOUNCE;
-
-                    // Slow depth slightly
                     ball.vz *= 0.8;
                   }
                 }
 
-                /* -------------------------------
-                   BACKBOARD COLLISION (vertical plane)
-                --------------------------------*/
+                /* ----------------------------------------------
+                   BACKBOARD COLLISION
+                ---------------------------------------------- */
                 if (ball.z >= BACKBOARD_Z) {
                   ball.z = BACKBOARD_Z;
-                  ball.vz *= -0.55; // bounce toward player
+                  ball.vz *= -0.55;
                   ball.vx *= 0.75;
                   ball.vy *= 0.75;
                 }
@@ -160,11 +207,11 @@ export function usePhysicsEngine(gameRunning: boolean) {
                 ball.vy *= DRAG;
                 ball.vz *= DRAG;
 
-                /* SIZE → shrinks with depth (fake 3D) */
+                /* DEPTH-BASED SIZE */
                 const depth = Math.min(ball.z, 1.15);
                 ball.size = 50 * (1 - depth * 0.55);
 
-                /* DELETE ball past play area */
+                /* REMOVE OUT-OF-BOUNDS BALLS */
                 if (ball.z > MAX_Z || ball.y > 130 || ball.y < -20) {
                   ball.active = false;
                 }
@@ -178,12 +225,14 @@ export function usePhysicsEngine(gameRunning: boolean) {
 
       rafRef.current = requestAnimationFrame(step);
     },
-    [gameRunning]
+    [gameRunning, registerScore]
   );
 
   useEffect(() => {
     rafRef.current = requestAnimationFrame(step);
-    return () => rafRef.current && cancelAnimationFrame(rafRef.current);
+    return () => {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    };
   }, [step]);
 
   return { balls, spawnBall };

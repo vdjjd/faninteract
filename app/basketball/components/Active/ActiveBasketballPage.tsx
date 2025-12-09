@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
 import { usePlayers } from "@/app/basketball/hooks/usePlayers";
@@ -12,8 +12,8 @@ import PlayerCard from "./PlayerCard";
 import { Countdown } from "../Countdown";
 
 const CELL_COLORS = [
-  "#FF3B30", "#FF9500", "#FFCC00", "#34C759", "#5AC8FA",
-  "#007AFF", "#5856D6", "#AF52DE", "#FF2D55", "#A2845E",
+  "#FF3B30","#FF9500","#FFCC00","#34C759","#5AC8FA",
+  "#007AFF","#5856D6","#AF52DE","#FF2D55","#A2845E",
 ];
 
 export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
@@ -23,24 +23,49 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
   }
 
   /* ----------------------------------------------
-     COUNTDOWN + GAME TIMER
+     TIMER + COUNTDOWN
   ---------------------------------------------- */
   const countdownValue = useCountdown(gameId);
   const { duration, timeLeft, timerExpired, gameRunning } =
     useGameTimer(gameId);
 
   /* ----------------------------------------------
-     PHYSICS — ENABLE ONLY AFTER COUNTDOWN
-  ---------------------------------------------- */
-  const physicsEnabled = gameRunning && countdownValue === null;
-  const { balls, spawnBall } = usePhysicsEngine(physicsEnabled);
-
-  /* ----------------------------------------------
-     PLAYERS
+     LOAD PLAYERS
   ---------------------------------------------- */
   const players = usePlayers(gameId);
+
   const maxScore =
     players.length ? Math.max(...players.map((p) => p.score ?? 0)) : 0;
+
+  /* ----------------------------------------------
+     SCORE CALLBACK → physics calls this
+  ---------------------------------------------- */
+  const registerScore = useCallback(
+    async (laneIndex: number, points: number, swish: boolean) => {
+      const player = players.find((p) => p.cell === laneIndex);
+      if (!player) return;
+
+      try {
+        await supabase
+          .from("bb_game_players")
+          .update({ score: player.score + points })
+          .eq("id", player.id);
+      } catch (err) {
+        console.error("❌ Failed to update score:", err);
+      }
+    },
+    [players]
+  );
+
+  /* ----------------------------------------------
+     PHYSICS ENGINE
+  ---------------------------------------------- */
+  const physicsEnabled = gameRunning && countdownValue === null;
+
+  const { balls, spawnBall } = usePhysicsEngine(
+    physicsEnabled,
+    registerScore
+  );
 
   /* ----------------------------------------------
      HOST LOGO
@@ -68,8 +93,8 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
 
       setHostLogo(
         host?.branding_logo_url?.trim() ||
-        host?.logo_url?.trim() ||
-        "/faninteractlogo.png"
+          host?.logo_url?.trim() ||
+          "/faninteractlogo.png"
       );
     }
 
@@ -77,8 +102,7 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
   }, [gameId]);
 
   /* ----------------------------------------------
-     RECEIVE SHOT EVENTS
-     (new physics: vx + vy + power)
+     RECEIVE SHOT EVENTS (hitZone only)
   ---------------------------------------------- */
   useEffect(() => {
     const ch = supabase
@@ -90,22 +114,26 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
         if (countdownValue !== null) return;
 
         spawnBall(
-          p.lane_index,      // lane
-          p.power,           // power
+          p.lane_index,
+          p.power,
           {
+            zoneHit: p.madeExpected,
+            madeExpected: p.madeExpected,
             rainbow: p.power > 0.82,
             fire: p.streak >= 2,
           },
-          p.vx ?? 0,         // horizontal
-          p.vy ?? -0.05      // vertical
+          p.vx ?? 0,
+          p.vy ?? -0.05
         );
       })
       .subscribe();
 
     return () => {
-      try { supabase.removeChannel(ch); } catch {}
+      try {
+        supabase.removeChannel(ch);
+      } catch {}
     };
-  }, [gameId, spawnBall, countdownValue]);
+  }, [spawnBall, countdownValue, gameId]);
 
   /* ----------------------------------------------
      FULLSCREEN BUTTON
@@ -116,7 +144,7 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
       : document.exitFullscreen();
 
   /* ----------------------------------------------
-     RENDER
+     RENDER UI
   ---------------------------------------------- */
   return (
     <div
@@ -135,7 +163,7 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
       {/* COUNTDOWN OVERLAY */}
       <Countdown preCountdown={countdownValue} />
 
-      {/* GRID OF 10 LANES */}
+      {/* PLAYER GRID */}
       <div
         style={{
           width: "94vw",
@@ -166,7 +194,7 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
         })}
       </div>
 
-      {/* FULLSCREEN BUTTON */}
+      {/* FULLSCREEN */}
       <div
         onClick={toggleFullscreen}
         style={{

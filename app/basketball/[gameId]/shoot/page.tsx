@@ -10,15 +10,15 @@ const CELL_COLORS = [
   "#007AFF", "#5856D6", "#AF52DE", "#FF2D55", "#A2845E",
 ];
 
+const SHOW_ZONE_BORDERS = true;
+
 export default function ShooterPage() {
   const { gameId } = useParams() as { gameId: string };
 
-  /* ---------------- COUNTDOWN ---------------- */
   const countdownValue = useCountdown(gameId);
   const [localCountdown, setLocalCountdown] = useState<number | null>(null);
   const displayCountdown = localCountdown ?? countdownValue;
 
-  /* ---------------- PLAYER STATE ---------------- */
   const [playerId, setPlayerId] = useState<string | null>(null);
   const [laneIndex, setLaneIndex] = useState<number | null>(null);
   const [laneColor, setLaneColor] = useState("#222");
@@ -28,13 +28,44 @@ export default function ShooterPage() {
   const streakRef = useRef(0);
   const swipeRef = useRef({ x: 0, y: 0, time: 0 });
 
-  /* ---------------- LOAD PLAYER FROM LOCAL STORAGE ---------------- */
+  const [zones, setZones] = useState<any>(null);
+
+  /* LOAD STORED PLAYER */
   useEffect(() => {
     const stored = localStorage.getItem("bb_player_id");
     if (stored) setPlayerId(stored);
   }, []);
 
-  /* ---------------- LOAD PLAYER DETAILS ---------------- */
+  /* LOAD GAME SETTINGS */
+  useEffect(() => {
+    if (!gameId) return;
+
+    async function loadGame() {
+      const { data } = await supabase
+        .from("bb_games")
+        .select("zone1_x, zone1_y, zone2_x, zone2_y, hitzone_size")
+        .eq("id", gameId)
+        .single();
+
+      if (!data) return;
+
+      let zoneSize = 120;
+      if (data.hitzone_size === "small") zoneSize = 80;
+      if (data.hitzone_size === "large") zoneSize = 180;
+
+      setZones({
+        size: zoneSize,
+        zone1: { x: data.zone1_x, y: data.zone1_y },
+        zone2: { x: data.zone2_x, y: data.zone2_y }
+      });
+    }
+
+    loadGame();
+    const id = setInterval(loadGame, 2000);
+    return () => clearInterval(id);
+  }, [gameId]);
+
+  /* LOAD PLAYER */
   useEffect(() => {
     if (!playerId) return;
 
@@ -48,7 +79,7 @@ export default function ShooterPage() {
       if (!data) return;
 
       setLaneIndex(data.lane_index);
-      setLaneColor(CELL_COLORS[data.lane_index]); // RESTORED BORDER COLOR
+      setLaneColor(CELL_COLORS[data.lane_index]);
       setScore(data.score ?? 0);
     }
 
@@ -57,7 +88,7 @@ export default function ShooterPage() {
     return () => clearInterval(interval);
   }, [playerId]);
 
-  /* ---------------- GAME TIMER SYNC ---------------- */
+  /* GAME TIMER */
   async function syncGameStart() {
     const { data } = await supabase
       .from("bb_games")
@@ -72,7 +103,7 @@ export default function ShooterPage() {
     setTimeLeft(Math.max(data.duration_seconds - elapsed, 0));
   }
 
-  /* ---------------- SUBSCRIPTIONS ---------------- */
+  /* BROADCAST SUBSCRIPTIONS */
   useEffect(() => {
     if (!gameId) return;
 
@@ -81,9 +112,7 @@ export default function ShooterPage() {
       .on("broadcast", { event: "start_countdown" }, () => {
         setLocalCountdown(10);
       })
-      .on("broadcast", { event: "start_game" }, () => {
-        syncGameStart();
-      })
+      .on("broadcast", { event: "start_game" }, syncGameStart)
       .on("broadcast", { event: "reset_game" }, () => {
         setLocalCountdown(null);
         setTimeLeft(null);
@@ -92,54 +121,40 @@ export default function ShooterPage() {
       .subscribe();
 
     return () => {
-      supabase.removeChannel(channel);
+      try {
+        supabase.removeChannel(channel);
+      } catch {}
     };
   }, [gameId]);
 
-  /* ---------------- COUNTDOWN TICK ---------------- */
-  useEffect(() => {
-    if (localCountdown === null) return;
+  /* HIT ZONE CHECK */
+  function isInsideZone(x: number, y: number) {
+    if (!zones) return false;
 
-    if (localCountdown <= 0) {
-      setLocalCountdown(null);
-      syncGameStart();
-      return;
-    }
+    const { size, zone1, zone2 } = zones;
+    const half = size / 2;
 
-    const timer = setTimeout(() => {
-      setLocalCountdown((c) => (c !== null ? c - 1 : null));
-    }, 1000);
+    const inZone1 =
+      x > zone1.x - half &&
+      x < zone1.x + half &&
+      y > zone1.y - half &&
+      y < zone1.y + half;
 
-    return () => clearTimeout(timer);
-  }, [localCountdown]);
+    const inZone2 =
+      x > zone2.x - half &&
+      x < zone2.x + half &&
+      y > zone2.y - half &&
+      y < zone2.y + half;
 
-  /* ---------------- 1-SECOND HEARTBEAT ---------------- */
-  useEffect(() => {
-    if (!gameId) return;
+    return inZone1 || inZone2;
+  }
 
-    async function tick() {
-      const { data } = await supabase
-        .from("bb_games")
-        .select("game_running, game_timer_start, duration_seconds")
-        .eq("id", gameId)
-        .single();
-
-      if (!data?.game_running || !data.game_timer_start) return;
-
-      const startMS = new Date(data.game_timer_start).getTime();
-      const elapsed = Math.floor((Date.now() - startMS) / 1000);
-      setTimeLeft(Math.max(data.duration_seconds - elapsed, 0));
-    }
-
-    tick();
-    const id = setInterval(tick, 1000);
-    return () => clearInterval(id);
-  }, [gameId]);
-
-  /* ---------------- SEND SHOT ---------------- */
-  async function handleShot({ vx, vy, power }) {
+  /* SEND SHOT */
+  async function handleShot({ vx, vy, power, touchX, touchY }) {
     if (!playerId || laneIndex === null) return;
-    if (displayCountdown !== null) return; // block during countdown
+    if (displayCountdown !== null) return;
+
+    const zoneHit = isInsideZone(touchX, touchY); // ⭐ unified scoring flag
 
     supabase.channel(`basketball-${gameId}`).send({
       type: "broadcast",
@@ -149,31 +164,30 @@ export default function ShooterPage() {
         vx,
         vy,
         power,
-        streak: streakRef.current,
+        zoneHit,       // ⭐ correct scoring + physics flag
+        madeExpected: zoneHit // ⭐ keeps compatibility with old code
       },
     });
   }
 
-  /* ---------------- UI ---------------- */
+  /* UI */
   return (
     <div
       style={{
         width: "100vw",
         height: "100vh",
         background: "black",
-        border: `8px solid ${laneColor}`, // RESTORED BORDER COLOR
+        border: `8px solid ${laneColor}`,
         position: "relative",
         overflow: "hidden",
         touchAction: "none",
       }}
+
       onTouchStart={(e) => {
         const t = e.touches[0];
-        swipeRef.current = {
-          x: t.clientX,
-          y: t.clientY,
-          time: Date.now(),
-        };
+        swipeRef.current = { x: t.clientX, y: t.clientY, time: Date.now() };
       }}
+
       onTouchEnd={(e) => {
         const t = e.changedTouches[0];
 
@@ -184,16 +198,47 @@ export default function ShooterPage() {
         if (dy < 10) return;
 
         const speed = dy / dt;
-
-        // Pop-A-Shot tuned physics input
-        const vy = -Math.min(8, speed * 10);
         const vx = dx * 0.018;
+        const vy = -Math.min(8, speed * 10);
         const power = Math.min(1, speed * 1.25);
 
-        handleShot({ vx, vy, power });
+        handleShot({ vx, vy, power, touchX: t.clientX, touchY: t.clientY });
       }}
     >
-      {/* COUNTDOWN OVERLAY */}
+
+      {/* DEBUG ZONES */}
+      {zones && SHOW_ZONE_BORDERS && (
+        <>
+          <div
+            style={{
+              position: "absolute",
+              width: zones.size,
+              height: zones.size,
+              left: zones.zone1.x - zones.size / 2,
+              top: zones.zone1.y - zones.size / 2,
+              border: "4px solid red",
+              borderRadius: 8,
+              pointerEvents: "none",
+              zIndex: 50,
+            }}
+          />
+          <div
+            style={{
+              position: "absolute",
+              width: zones.size,
+              height: zones.size,
+              left: zones.zone2.x - zones.size / 2,
+              top: zones.zone2.y - zones.size / 2,
+              border: "4px solid red",
+              borderRadius: 8,
+              pointerEvents: "none",
+              zIndex: 50,
+            }}
+          />
+        </>
+      )}
+
+      {/* COUNTDOWN */}
       {displayCountdown !== null && (
         <div
           style={{
@@ -214,31 +259,9 @@ export default function ShooterPage() {
         </div>
       )}
 
-      {/* SCORE */}
-      <div
-        style={{
-          position: "absolute",
-          top: 20,
-          left: 20,
-          color: "white",
-          fontSize: "2.5rem",
-        }}
-      >
-        {score}
-      </div>
-
-      {/* TIMER */}
-      <div
-        style={{
-          position: "absolute",
-          top: 20,
-          right: 20,
-          color: "white",
-          fontSize: "2.5rem",
-        }}
-      >
-        {timeLeft ?? "--"}
-      </div>
+      {/* SCORE/TIMER */}
+      <div style={{ position: "absolute", top: 20, left: 20, color: "white", fontSize: "2.5rem" }}>{score}</div>
+      <div style={{ position: "absolute", top: 20, right: 20, color: "white", fontSize: "2.5rem" }}>{timeLeft ?? "--"}</div>
 
       {/* SHOOT MESSAGE */}
       <div
