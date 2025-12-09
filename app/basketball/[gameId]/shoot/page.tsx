@@ -4,7 +4,6 @@ import { useParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { useCountdown } from "@/app/basketball/hooks/useCountdown";
-import { Countdown } from "@/app/basketball/components/Countdown";
 
 const CELL_COLORS = [
   "#FF3B30", "#FF9500", "#FFCC00", "#34C759", "#5AC8FA",
@@ -12,12 +11,37 @@ const CELL_COLORS = [
 ];
 
 export default function ShooterPage() {
-  const { gameId } = useParams() as { gameId: string };
+  const params = useParams();
 
-  const hookCountdown = useCountdown(gameId);
+  /** --------------------------------------------
+   *  SAFELY READ gameId (fixes eq.undefined bug)
+   * -------------------------------------------- */
+  const gameId =
+    typeof params.gameId === "string"
+      ? params.gameId
+      : Array.isArray(params.gameId)
+      ? params.gameId[0]
+      : null;
+
+  /** If gameId is not ready, render nothing (prevents 400 errors) */
+  if (!gameId) {
+    return (
+      <div style={{ color: "white", padding: 40 }}>
+        Loading game…
+      </div>
+    );
+  }
+
+  /** --------------------------------------------
+   *  COUNTDOWN
+   * -------------------------------------------- */
+  const countdownValue = useCountdown(gameId);
   const [localCountdown, setLocalCountdown] = useState<number | null>(null);
-  const displayCountdown = localCountdown ?? hookCountdown;
+  const displayCountdown = localCountdown ?? countdownValue;
 
+  /** --------------------------------------------
+   *  PLAYER STATE
+   * -------------------------------------------- */
   const [playerId, setPlayerId] = useState<string | null>(null);
   const [laneIndex, setLaneIndex] = useState<number | null>(null);
   const [laneColor, setLaneColor] = useState("#222");
@@ -27,22 +51,26 @@ export default function ShooterPage() {
   const streakRef = useRef(0);
   const startY = useRef(0);
 
-  /* -----------------------------------------------
-     LOAD PLAYER
-  ------------------------------------------------- */
+  /** --------------------------------------------
+   *  LOAD PLAYER FROM LOCAL STORAGE
+   * -------------------------------------------- */
   useEffect(() => {
     const stored = localStorage.getItem("bb_player_id");
     if (stored) setPlayerId(stored);
   }, []);
 
+  /** --------------------------------------------
+   *  LOAD PLAYER FROM DB (lane + score)
+   * -------------------------------------------- */
   useEffect(() => {
-    if (!playerId) return;
+    if (!playerId || !gameId) return;
 
     async function loadPlayer() {
       const { data } = await supabase
         .from("bb_game_players")
         .select("*")
         .eq("id", playerId)
+        .eq("game_id", gameId)
         .single();
 
       if (!data) return;
@@ -55,12 +83,14 @@ export default function ShooterPage() {
     loadPlayer();
     const t = setInterval(loadPlayer, 1000);
     return () => clearInterval(t);
-  }, [playerId]);
+  }, [playerId, gameId]);
 
-  /* -----------------------------------------------
-     SYNC GAME TIMER
-  ------------------------------------------------- */
+  /** --------------------------------------------
+   *  SYNC GAME TIMER SAFELY (only when gameId valid)
+   * -------------------------------------------- */
   async function syncGameStart() {
+    if (!gameId) return;
+
     const { data } = await supabase
       .from("bb_games")
       .select("*")
@@ -71,13 +101,17 @@ export default function ShooterPage() {
 
     const startMS = new Date(data.game_timer_start).getTime();
     const elapsed = Math.floor((Date.now() - startMS) / 1000);
-    setTimeLeft(Math.max(data.duration_seconds - elapsed, 0));
+    const remaining = Math.max(data.duration_seconds - elapsed, 0);
+
+    setTimeLeft(remaining);
   }
 
-  /* -----------------------------------------------
-     SUBSCRIBE TO WALL BROADCASTS
-  ------------------------------------------------- */
+  /** --------------------------------------------
+   *  WALL BROADCAST LISTENER (safe gameId)
+   * -------------------------------------------- */
   useEffect(() => {
+    if (!gameId) return;
+
     const channel = supabase
       .channel(`basketball-${gameId}`)
       .on("broadcast", { event: "start_countdown" }, () =>
@@ -87,13 +121,15 @@ export default function ShooterPage() {
       .subscribe();
 
     return () => {
-      try { supabase.removeChannel(channel); } catch {}
+      try {
+        supabase.removeChannel(channel);
+      } catch {}
     };
   }, [gameId]);
 
-  /* -----------------------------------------------
-     COUNTDOWN TICKER
-  ------------------------------------------------- */
+  /** --------------------------------------------
+   *  COUNTDOWN LOGIC
+   * -------------------------------------------- */
   useEffect(() => {
     if (localCountdown === null) return;
 
@@ -103,16 +139,17 @@ export default function ShooterPage() {
       return;
     }
 
-    const t = setTimeout(() => {
-      setLocalCountdown((c) => (c !== null ? c - 1 : null));
-    }, 1000);
+    const timer = setTimeout(
+      () => setLocalCountdown((c) => (c !== null ? c - 1 : null)),
+      1000
+    );
 
-    return () => clearTimeout(t);
+    return () => clearTimeout(timer);
   }, [localCountdown]);
 
-  /* -----------------------------------------------
-     SHOOT LOGIC
-  ------------------------------------------------- */
+  /** --------------------------------------------
+   *  SHOOT LOGIC
+   * -------------------------------------------- */
   async function handleShot(power: number) {
     if (!playerId || laneIndex === null) return;
     if (displayCountdown !== null) return;
@@ -128,15 +165,17 @@ export default function ShooterPage() {
     const made = Math.random() < (0.45 + power * 0.35);
     if (made) {
       streakRef.current++;
-      await supabase.rpc("increment_player_score", { p_player_id: playerId });
+      await supabase.rpc("increment_player_score", {
+        p_player_id: playerId,
+      });
     } else {
       streakRef.current = 0;
     }
   }
 
-  /* -----------------------------------------------
-     UI
-  ------------------------------------------------- */
+  /** --------------------------------------------
+   *  UI
+   * -------------------------------------------- */
   return (
     <div
       style={{
@@ -159,8 +198,26 @@ export default function ShooterPage() {
         }
       }}
     >
-      {/* 🔥 MATCHES WALL EXACTLY */}
-      <Countdown preCountdown={displayCountdown} />
+      {/* COUNTDOWN OVERLAY */}
+      {displayCountdown !== null && (
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            background: "rgba(0,0,0,0.88)",
+            display: "flex",
+            justifyContent: "center",
+            alignItems: "center",
+            color: "white",
+            fontSize: "clamp(4rem, 10vw, 12rem)",
+            fontWeight: 900,
+            textShadow: "0 0 60px rgba(255,0,0,0.9)",
+            zIndex: 9999,
+          }}
+        >
+          {displayCountdown > 0 ? displayCountdown : "START!"}
+        </div>
+      )}
 
       {/* SCORE */}
       <div
@@ -188,7 +245,7 @@ export default function ShooterPage() {
         {timeLeft ?? "--"}
       </div>
 
-      {/* SWIPE MSG */}
+      {/* SWIPE MESSAGE */}
       <div
         style={{
           position: "absolute",
