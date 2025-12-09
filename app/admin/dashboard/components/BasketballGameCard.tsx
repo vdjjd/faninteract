@@ -22,9 +22,15 @@ export default function BasketballGameCard({
   const [wallActivated, setWallActivated] = useState(false);
 
   /* ------------------------------------------------------------
-     LAUNCH WALL POPUP
+     LAUNCH WALL POPUP — VALIDATE game.id FIRST
   ------------------------------------------------------------ */
   function openWallWindow() {
+    if (!game || !game.id) {
+      console.error("❌ ERROR: INVALID GAME ID:", game);
+      alert("Game ID is not ready yet. Try again in 1 second.");
+      return;
+    }
+
     const url = `${window.location.origin}/basketball/${game.id}`;
 
     let popup = window._basketballPopup;
@@ -35,17 +41,28 @@ export default function BasketballGameCard({
         "_blank",
         "width=1280,height=800,resizable=yes,scrollbars=yes"
       );
+
+      if (!popup) {
+        alert("Popup blocked! Enable popups for this site.");
+        return;
+      }
+
       window._basketballPopup = popup;
     }
 
-    popup?.focus();
+    popup.focus();
     return popup;
   }
 
   /* ------------------------------------------------------------
-     ACTIVATE WALL — show active layout (lanes, not timer)
+     ACTIVATE WALL — switch to active layout (NO TIMER)
   ------------------------------------------------------------ */
   async function handleActivateWall() {
+    if (!game?.id) {
+      alert("Game is not ready. Try again.");
+      return;
+    }
+
     console.log("🔥 Activating Wall…");
 
     const { error } = await supabase
@@ -59,35 +76,40 @@ export default function BasketballGameCard({
       .eq("id", game.id);
 
     if (error) {
-      console.error("❌ Activate wall failed:", error);
+      console.error("❌ Failed to activate wall:", error);
       return;
     }
 
     setWallActivated(true);
 
-    // Tell popup to reload itself
+    // Tell popup to reload
     window._basketballPopup?.postMessage({ type: "refresh_wall" }, "*");
 
     await onRefresh();
   }
 
   /* ------------------------------------------------------------
-     START GAME — begins countdown for all devices
+     START GAME — broadcasts countdown to all clients
   ------------------------------------------------------------ */
   async function handleStartGame() {
-    if (!wallActivated) return;
+    if (!wallActivated) {
+      console.warn("Start blocked: wall not activated yet.");
+      return;
+    }
+
+    if (!game?.id) {
+      alert("Game ID not ready.");
+      return;
+    }
 
     console.log("▶ Starting Countdown…");
 
     const channel = supabase.channel(`basketball-${game.id}`);
 
-    // Visual countdown on popup
-    window._basketballPopup?.postMessage(
-      { type: "start_countdown" },
-      "*"
-    );
+    // Tell popup to show countdown
+    window._basketballPopup?.postMessage({ type: "start_countdown" }, "*");
 
-    // Broadcast countdown to shooters + wall
+    // Tell shooters + wall via realtime
     await channel.send({
       type: "broadcast",
       event: "start_countdown",
@@ -98,9 +120,11 @@ export default function BasketballGameCard({
   }
 
   /* ------------------------------------------------------------
-     STOP GAME — Stops game timer but keeps wall active
+     STOP GAME (doesn't reset wall)
   ------------------------------------------------------------ */
   async function handleStopClick() {
+    if (!game?.id) return;
+
     await onStop(game.id);
 
     await supabase
@@ -115,24 +139,22 @@ export default function BasketballGameCard({
   }
 
   /* ------------------------------------------------------------
-     RESET GAME — CLEAR SCORES, RETURN TO QR WALL
+     RESET — RETURN TO QR SCREEN + CLEAR SCORES
   ------------------------------------------------------------ */
   async function handleResetGame() {
+    if (!game?.id) return;
+
     console.log("🔄 RESETTING GAME…");
 
-    /* Reset player scores */
     try {
       const { error } = await supabase.rpc("reset_player_scores", {
         p_game_id: game.id,
       });
-      if (error) {
-        console.warn("⚠️ reset_player_scores RPC failed:", error);
-      }
+      if (error) console.warn("⚠️ reset_player_scores RPC failed:", error);
     } catch (err) {
       console.warn("⚠️ RPC execution error:", err);
     }
 
-    /* Reset game state back to fresh lobby */
     await supabase
       .from("bb_games")
       .update({
@@ -145,14 +167,13 @@ export default function BasketballGameCard({
 
     setWallActivated(false);
 
-    // Reload popup UI
     window._basketballPopup?.postMessage({ type: "refresh_wall" }, "*");
 
     await onRefresh();
   }
 
   /* ------------------------------------------------------------
-     RENDER UI
+     RENDER
   ------------------------------------------------------------ */
   return (
     <div
@@ -168,11 +189,15 @@ export default function BasketballGameCard({
     >
       {/* HEADER */}
       <div>
-        <h3 className={cn('font-bold', 'text-lg', 'mb-1')}>
+        <h3 className={cn("font-bold text-lg mb-1")}>
           {game.title || "Untitled Game"}
         </h3>
 
-        <p className={cn('text-sm', 'mb-3', 'flex', 'justify-center', 'items-center', 'gap-2')}>
+        <p
+          className={cn(
+            "text-sm mb-3 flex justify-center items-center gap-2"
+          )}
+        >
           <strong>Status:</strong>
           <span
             className={cn(
@@ -190,12 +215,17 @@ export default function BasketballGameCard({
       </div>
 
       {/* BUTTONS */}
-      <div className={cn('flex', 'flex-col', 'gap-3', 'mt-auto', 'pt-3', 'border-t', 'border-white/10')}>
-
+      <div
+        className={cn(
+          "flex flex-col gap-3 mt-auto pt-3 border-t border-white/10"
+        )}
+      >
         {/* Moderate */}
         <button
           onClick={() => onOpenModeration(game.id)}
-          className={cn('w-full', 'py-2', 'rounded', 'text-sm', 'font-semibold', 'bg-yellow-500', 'hover:bg-yellow-600', 'text-black')}
+          className={cn(
+            "w-full py-2 rounded text-sm font-semibold bg-yellow-500 hover:bg-yellow-600 text-black"
+          )}
         >
           👥 Moderate Players
         </button>
@@ -240,7 +270,7 @@ export default function BasketballGameCard({
           </button>
         </div>
 
-        {/* RESET GAME */}
+        {/* Reset Game */}
         <button
           onClick={handleResetGame}
           className={cn('w-full', 'py-2', 'rounded', 'text-sm', 'font-semibold', 'bg-orange-500', 'hover:bg-orange-600', 'text-white')}

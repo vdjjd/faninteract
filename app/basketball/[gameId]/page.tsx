@@ -5,12 +5,15 @@ import { supabase } from "@/lib/supabaseClient";
 import ActiveBasketball from "@/app/basketball/components/Active";
 import InactiveBasketball from "@/app/basketball/components/Inactive";
 
-export default function Page({ params }: { params: { gameId: string } }) {
-  const { gameId } = params;            // ✅ FIX — no more use(params)
+export default function Page({ params }: { params?: { gameId?: string } } = {}) {
+  // SAFEST POSSIBLE EXTRACTION
+  const gameId = params?.gameId || null;
+
   const [game, setGame] = useState<any>(null);
+  const [valid, setValid] = useState<boolean>(!!gameId);
 
   /* ------------------------------------------------------------
-     LISTEN FOR WALL REFRESH FROM DASHBOARD
+     LISTEN FOR DASHBOARD → REFRESH WALL
   ------------------------------------------------------------ */
   useEffect(() => {
     function handleMsg(e: MessageEvent) {
@@ -26,30 +29,48 @@ export default function Page({ params }: { params: { gameId: string } }) {
      POLL GAME STATE
   ------------------------------------------------------------ */
   useEffect(() => {
+    if (!gameId) return; // >> prevents undefined-API call
+
     async function load() {
-      if (!gameId) return;               // 🚨 prevents undefined
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("bb_games")
         .select("*")
         .eq("id", gameId)
-        .single();
+        .maybeSingle();
+
+      if (error) {
+        console.error("❌ Failed to load game:", error);
+        return;
+      }
+
+      if (!data) return;
 
       setGame(data);
+      setValid(true);
     }
 
     load();
+
     const t = setInterval(load, 1000);
     return () => clearInterval(t);
   }, [gameId]);
 
-  if (!gameId) {
+  /* ------------------------------------------------------------
+     INVALID GAME ID HANDLER
+  ------------------------------------------------------------ */
+  if (!valid || !gameId) {
     return (
-      <div style={{ color: "white", padding: 40, fontSize: 28 }}>
+      <div style={{ color: "white", padding: 40, fontSize: 32 }}>
         ❌ ERROR: Invalid game ID  
+        <br />
+        (Popup may have loaded too early — just close and relaunch)
       </div>
     );
   }
 
+  /* ------------------------------------------------------------
+     STILL LOADING
+  ------------------------------------------------------------ */
   if (!game) {
     return (
       <div style={{ color: "white", padding: 40, fontSize: 32 }}>
@@ -58,9 +79,12 @@ export default function Page({ params }: { params: { gameId: string } }) {
     );
   }
 
-  const active = Boolean(game.wall_active);
+  /* ------------------------------------------------------------
+     SWITCH BETWEEN QR WALL + ACTIVE GAME WALL
+  ------------------------------------------------------------ */
+  const isActive = Boolean(game.wall_active);
 
-  return active ? (
+  return isActive ? (
     <ActiveBasketball gameId={gameId} />
   ) : (
     <InactiveBasketball game={game} />
