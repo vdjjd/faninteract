@@ -8,7 +8,7 @@ import { supabase } from "@/lib/supabaseClient";
 -------------------------------------------- */
 export interface Player {
   id: string;
-  nickname: string;
+  nickname: string;   // Already formatted (John D.)
   selfie_url: string | null;
   score: number;
   cell: number;
@@ -17,10 +17,25 @@ export interface Player {
 interface DBPlayerRow {
   id: string;
   lane_index: number | null;
-  display_name: string | null;
+  display_name: string | null;  // raw name from DB
   selfie_url: string | null;
   score: number | null;
   disconnected_at: string | null;
+}
+
+/* --------------------------------------------
+   FORMAT NAME → "John D."
+-------------------------------------------- */
+function formatName(raw: string | null): string {
+  if (!raw) return "Player";
+
+  const parts = raw.trim().split(" ");
+  if (parts.length === 1) return parts[0];
+
+  const first = parts[0];
+  const last = parts[1].charAt(0).toUpperCase();
+
+  return `${first} ${last}.`;
 }
 
 /* --------------------------------------------
@@ -29,11 +44,11 @@ interface DBPlayerRow {
 export function usePlayers(gameId: string) {
   const [players, setPlayers] = useState<Player[]>([]);
 
-  /* Map DB row → Player */
+  /* Map DB Row → Player */
   function mapRow(r: DBPlayerRow): Player {
     return {
       id: r.id,
-      nickname: r.display_name || "Player",
+      nickname: formatName(r.display_name),
       selfie_url: r.selfie_url,
       score: r.score ?? 0,
       cell: r.lane_index ?? 0,
@@ -77,7 +92,7 @@ export function usePlayers(gameId: string) {
           const row = payload.new as DBPlayerRow;
           if (!row) return;
 
-          // if player disconnects → remove them
+          // Disconnection → remove
           if (row.disconnected_at) {
             setPlayers((prev) => prev.filter((p) => p.id !== row.id));
             return;
@@ -89,18 +104,16 @@ export function usePlayers(gameId: string) {
             const idx = prev.findIndex((p) => p.id === mapped.id);
             if (idx === -1) return [...prev, mapped];
 
-            const arr = [...prev];
-            arr[idx] = mapped;
-            return arr;
+            const copy = [...prev];
+            copy[idx] = mapped;
+            return copy;
           });
         }
       )
       .subscribe();
 
     return () => {
-      try {
-        supabase.removeChannel(channel);
-      } catch {}
+      try { supabase.removeChannel(channel); } catch {}
     };
   }, [gameId]);
 

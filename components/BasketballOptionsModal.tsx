@@ -24,11 +24,10 @@ export default function BasketballOptionsModal({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   /* ------------------------------------------------------------
-     Load game settings ONLY when not saving
-     (prevents dropdown flicker after Save)
+     Load game settings when modal opens
   ------------------------------------------------------------ */
   useEffect(() => {
-    if (!game || saving) return; // ← BLOCK reloading while saving
+    if (!game || saving) return;
 
     setTitle(game.title ?? "");
     setDuration(game.duration_seconds ?? 90);
@@ -60,8 +59,7 @@ export default function BasketballOptionsModal({
       }
 
       await refreshBasketballGames();
-
-      onClose(); // ← close immediately so user never sees snap-back
+      onClose();
     } catch (err) {
       console.error("❌ Error saving:", err);
       setErrorMsg("Unexpected error.");
@@ -119,6 +117,9 @@ export default function BasketballOptionsModal({
         <option value={30}>30 seconds</option>
         <option value={60}>60 seconds</option>
         <option value={90}>90 seconds</option>
+
+        {/* ⭐ NEW LONG TIMER OPTION */}
+        <option value={99999}>Long Test (99999 sec)</option>
       </select>
 
       {/* ERROR MESSAGE */}

@@ -11,9 +11,12 @@ import { Player } from "@/app/basketball/hooks/usePlayers";
 function Net({ state }: { state: "idle" | "swish" | "hit" }) {
   const frame = useMemo(() => {
     switch (state) {
-      case "swish": return "/net_swish.png";
-      case "hit": return "/net_hit.png";
-      default: return "/net_idle.png";
+      case "swish":
+        return "/net_swish.png";
+      case "hit":
+        return "/net_hit.png";
+      default:
+        return "/net_idle.png";
     }
   }, [state]);
 
@@ -36,9 +39,8 @@ function Net({ state }: { state: "idle" | "swish" | "hit" }) {
 
 const BACKBOARD_SCALE = 1;
 const RIM_WIDTH = 14;
-const SELFIE_SIZE = 42;
+const SELFIE_SIZE = 54;
 
-/* 🔥 OFFICIAL DEFAULT EXPORT */
 export default function PlayerCard({
   index,
   player,
@@ -49,20 +51,11 @@ export default function PlayerCard({
   timerExpired,
   hostLogo,
   maxScore,
-}: {
-  index: number;
-  player: Player | undefined;
-  balls: BallState[];
-  timeLeft: number | null;
-  score: number;
-  borderColor: string;
-  timerExpired: boolean;
-  hostLogo: string | null;
-  maxScore: number;
 }) {
   const isWinner =
     timerExpired && player && player.score === maxScore && maxScore > 0;
 
+  /* ⭐ FIXED TYPE ERROR */
   let netState: "idle" | "swish" | "hit" = "idle";
 
   for (const b of balls) {
@@ -94,9 +87,33 @@ export default function PlayerCard({
         backgroundImage: "url('/BBgamebackground.png')",
         backgroundSize: "cover",
         backgroundPosition: "center",
-        animation: isWinner ? "winnerBlink 0.18s infinite alternate" : undefined,
+
+        /* ⭐ WINNER PULSE */
+        animation: isWinner ? "winnerPulse 1s infinite ease-in-out" : undefined,
+        boxShadow: isWinner
+          ? `0 0 25px ${borderColor}, 0 0 55px ${borderColor}AA`
+          : "none",
       }}
     >
+      <style>
+        {`
+          @keyframes winnerPulse {
+            0% {
+              box-shadow: 0 0 12px ${borderColor}, 0 0 25px ${borderColor}55;
+              transform: scale(1);
+            }
+            50% {
+              box-shadow: 0 0 30px ${borderColor}, 0 0 65px ${borderColor}AA;
+              transform: scale(1.015);
+            }
+            100% {
+              box-shadow: 0 0 12px ${borderColor}, 0 0 25px ${borderColor}55;
+              transform: scale(1);
+            }
+          }
+        `}
+      </style>
+
       {/* Timer */}
       <div
         style={{
@@ -113,7 +130,10 @@ export default function PlayerCard({
         }}
       >
         {timeLeft !== null
-          ? `${Math.floor(timeLeft / 60)}:${String(timeLeft % 60).padStart(2, "0")}`
+          ? `${Math.floor(timeLeft / 60)}:${String(timeLeft % 60).padStart(
+              2,
+              "0"
+            )}`
           : "--:--"}
       </div>
 
@@ -179,10 +199,8 @@ export default function PlayerCard({
         }}
       />
 
-      {/* Net */}
       <Net state={netState} />
 
-      {/* Balls & FX */}
       {balls.map((ball) => (
         <React.Fragment key={ball.id}>
           {ball.fire && <Fire x={ball.x} y={ball.y} />}
@@ -191,34 +209,78 @@ export default function PlayerCard({
         </React.Fragment>
       ))}
 
+      {/* Crown */}
+      {isWinner && (
+        <img
+          src="/crown.png"
+          alt="winner crown"
+          style={{
+            position: "absolute",
+            bottom: SELFIE_SIZE * 0.65,
+            left: "-1%",
+            width: SELFIE_SIZE * 0.8,
+            filter: `drop-shadow(0 0 8px ${borderColor})`,
+            transform: "rotate(-6deg)",
+            zIndex: 9999,
+            pointerEvents: "none",
+          }}
+        />
+      )}
+
       {/* Selfie */}
       <div
         style={{
           position: "absolute",
-          bottom: "8%",
-          left: "2%",
+          bottom: "-2%",
+          left: "-3.5%",
           width: SELFIE_SIZE,
           height: SELFIE_SIZE,
-          borderRadius: "50%",
-          overflow: "hidden",
-          border: `3px solid ${borderColor}`,
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+          overflow: "visible",
         }}
       >
-        {player?.selfie_url ? (
-          <img src={player.selfie_url} style={{ width: "100%", height: "100%" }} />
-        ) : (
-          <div
-            style={{
-              background: "#444",
-              display: "flex",
-              justifyContent: "center",
-              alignItems: "center",
-              color: "#bbb",
-            }}
-          >
-            ?
-          </div>
-        )}
+        <div
+          style={{
+            width: SELFIE_SIZE * 0.75,
+            height: SELFIE_SIZE * 0.75,
+            borderRadius: "50%",
+            overflow: "hidden",
+            border: `3px solid ${borderColor}`,
+            background: "#222",
+            display: "flex",
+            justifyContent: "center",
+            alignItems: "center",
+          }}
+        >
+          {player?.selfie_url ? (
+            <img
+              src={player.selfie_url}
+              style={{
+                width: "100%",
+                height: "100%",
+                objectFit: "cover",
+              }}
+            />
+          ) : (
+            <div
+              style={{
+                width: "100%",
+                height: "100%",
+                background: "#444",
+                color: "#bbb",
+                display: "flex",
+                justifyContent: "center",
+                alignItems: "center",
+                fontSize: "1.6rem",
+                fontWeight: 700,
+              }}
+            >
+              ?
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Score */}
@@ -235,6 +297,34 @@ export default function PlayerCard({
       >
         {score}
       </div>
+
+      {/* WINNER LABEL */}
+      {isWinner && (
+        <div
+          style={{
+            position: "absolute",
+            top: "42%",
+            left: "50%",
+            transform: "translate(-50%, -50%)",
+            fontSize: "2.8rem",
+            fontWeight: 900,
+            color: "white",
+            WebkitTextStroke: `4px ${borderColor}`,
+            textShadow: `
+              0 0 25px ${borderColor},
+              0 0 45px ${borderColor},
+              0 0 60px ${borderColor}
+            `,
+            letterSpacing: "4px",
+            textTransform: "uppercase",
+            zIndex: 9999,
+            pointerEvents: "none",
+            userSelect: "none",
+          }}
+        >
+          WINNER
+        </div>
+      )}
     </div>
   );
 }
