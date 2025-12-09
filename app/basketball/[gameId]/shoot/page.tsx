@@ -11,29 +11,21 @@ const CELL_COLORS = [
 ];
 
 export default function ShooterPage() {
-  /* ------------------------------------------------------------
-     GET GAME ID FROM URL
-  ------------------------------------------------------------ */
   const { gameId } = useParams() as { gameId: string };
-  if (!gameId) {
-    console.error("❌ ShooterPage mounted with NO gameId");
-  }
 
   /* ------------------------------------------------------------
-     COUNTDOWN (shared with wall)
+     COUNTDOWN
   ------------------------------------------------------------ */
   const countdownValue = useCountdown(gameId);
   const [localCountdown, setLocalCountdown] = useState<number | null>(null);
-
   const displayCountdown = localCountdown ?? countdownValue;
 
   /* ------------------------------------------------------------
-     PLAYER & GAME STATE
+     PLAYER STATE
   ------------------------------------------------------------ */
   const [playerId, setPlayerId] = useState<string | null>(null);
   const [laneIndex, setLaneIndex] = useState<number | null>(null);
   const [laneColor, setLaneColor] = useState("#222");
-
   const [score, setScore] = useState(0);
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
 
@@ -41,16 +33,13 @@ export default function ShooterPage() {
   const startY = useRef(0);
 
   /* ------------------------------------------------------------
-     LOAD PLAYER FROM LOCAL STORAGE
+     LOAD PLAYER
   ------------------------------------------------------------ */
   useEffect(() => {
     const stored = localStorage.getItem("bb_player_id");
     if (stored) setPlayerId(stored);
   }, []);
 
-  /* ------------------------------------------------------------
-     LOAD PLAYER DATA
-  ------------------------------------------------------------ */
   useEffect(() => {
     if (!playerId) return;
 
@@ -74,7 +63,7 @@ export default function ShooterPage() {
   }, [playerId]);
 
   /* ------------------------------------------------------------
-     SYNC GAME START (start_game)
+     GAME TIMER SYNC FUNCTION
   ------------------------------------------------------------ */
   async function syncGameStart() {
     const { data } = await supabase
@@ -87,44 +76,51 @@ export default function ShooterPage() {
 
     const startMS = new Date(data.game_timer_start).getTime();
     const elapsed = Math.floor((Date.now() - startMS) / 1000);
-    const duration = data.duration_seconds;
 
-    setTimeLeft(Math.max(duration - elapsed, 0));
+    setTimeLeft(Math.max(data.duration_seconds - elapsed, 0));
   }
 
   /* ------------------------------------------------------------
-     SUBSCRIBE TO GAME EVENTS
+     SUBSCRIBE TO WALL COUNTDOWN
   ------------------------------------------------------------ */
   useEffect(() => {
-    if (!gameId) return;
-
-    const channel = supabase
+    const wallChannel = supabase
       .channel(`basketball-${gameId}`)
-      .on("broadcast", { event: "start_countdown" }, () => {
-        setLocalCountdown(10);
-      })
-      .on("broadcast", { event: "start_game" }, () => {
-        syncGameStart();
-      })
-      .on("broadcast", { event: "game_reset" }, () => {
-        // 🔥 Shooter reacts instantly when game resets
-        setLocalCountdown(null);
-        setTimeLeft(null);
-        setScore(0);
-        streakRef.current = 0;
-
-        // Reload local player
-        setPlayerId(localStorage.getItem("bb_player_id") || null);
-      })
+      .on("broadcast", { event: "start_countdown" }, () =>
+        setLocalCountdown(10)
+      )
+      .on("broadcast", { event: "start_game" }, syncGameStart)
       .subscribe();
 
     return () => {
-      try { supabase.removeChannel(channel); } catch {}
+      try { supabase.removeChannel(wallChannel); } catch {}
     };
   }, [gameId]);
 
   /* ------------------------------------------------------------
-     LOCAL COUNTDOWN TICKER
+     NEW: UNIVERSAL BROADCAST LISTENER
+     (Wall sends start_game here)
+  ------------------------------------------------------------ */
+  useEffect(() => {
+    const broadcastChannel = supabase
+      .channel("broadcast")
+      .on("broadcast", { event: "start_countdown" }, () =>
+        setLocalCountdown(10)
+      )
+      .on("broadcast", { event: "start_game" }, (payload) => {
+        const startTime = payload?.payload?.startTime;
+        if (!startTime) return;
+        syncGameStart();
+      })
+      .subscribe();
+
+    return () => {
+      try { supabase.removeChannel(broadcastChannel); } catch {}
+    };
+  }, [gameId]);
+
+  /* ------------------------------------------------------------
+     COUNTDOWN ENGINE
   ------------------------------------------------------------ */
   useEffect(() => {
     if (localCountdown === null) return;
@@ -143,11 +139,11 @@ export default function ShooterPage() {
   }, [localCountdown]);
 
   /* ------------------------------------------------------------
-     SHOOT LOGIC
+     SHOOTING
   ------------------------------------------------------------ */
   async function handleShot(power: number) {
     if (!playerId || laneIndex === null) return;
-    if (displayCountdown !== null) return;
+    if (displayCountdown !== null) return; // Block shooting during countdown
 
     const streak = streakRef.current;
 
@@ -158,6 +154,7 @@ export default function ShooterPage() {
     });
 
     const made = Math.random() < (0.45 + power * 0.35);
+
     if (made) {
       streakRef.current++;
       await supabase.rpc("increment_player_score", { p_player_id: playerId });
@@ -167,7 +164,7 @@ export default function ShooterPage() {
   }
 
   /* ------------------------------------------------------------
-     UI
+     RENDER
   ------------------------------------------------------------ */
   return (
     <div
@@ -191,13 +188,13 @@ export default function ShooterPage() {
         }
       }}
     >
-      {/* COUNTDOWN */}
+      {/* FULLSCREEN COUNTDOWN — MATCHES ACTIVE WALL */}
       {displayCountdown !== null && (
         <div
           style={{
             position: "absolute",
             inset: 0,
-            background: "rgba(0,0,0,0.85)",
+            background: "rgba(0,0,0,0.88)",
             display: "flex",
             justifyContent: "center",
             alignItems: "center",
