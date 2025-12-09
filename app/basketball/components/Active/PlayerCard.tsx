@@ -37,7 +37,7 @@ const RIM_WIDTH = 14;
 const SELFIE_SIZE = 54;
 
 /* --------------------------------------------------
-   MAIN PLAYERCARD COMPONENT
+   MAIN PLAYERCARD
 --------------------------------------------------- */
 export default function PlayerCard({
   index,
@@ -54,7 +54,7 @@ export default function PlayerCard({
   const isWinner =
     timerExpired && player && player.score === maxScore && maxScore > 0;
 
-  /* ---------------- NET LOGIC (PHYSICS-BASED) ---------------- */
+  /* ---------------- NET LOGIC ---------------- */
   let netState: "idle" | "swish" | "hit" = "idle";
 
   for (const b of balls) {
@@ -63,7 +63,6 @@ export default function PlayerCard({
       break;
     }
 
-    // Rim hit detection
     const dx = b.x - 50;
     const dy = b.y - 18;
     const dist = Math.sqrt(dx * dx + dy * dy);
@@ -72,6 +71,14 @@ export default function PlayerCard({
       netState = "hit";
     }
   }
+
+  /* ---------------- WINNER PULSE STYLE ---------------- */
+  const winnerPulseStyle = isWinner
+    ? {
+        animation: "winnerPulse 1.35s ease-in-out infinite",
+        boxShadow: `0 0 26px ${borderColor}, 0 0 70px ${borderColor}AA`,
+      }
+    : {};
 
   return (
     <div
@@ -84,23 +91,24 @@ export default function PlayerCard({
         backgroundSize: "cover",
         backgroundPosition: "center",
         zIndex: 0,
+        ...winnerPulseStyle, // ⭐ HERE WE APPLY THE WINNER ANIMATION
       }}
     >
-      {/* ---------------- WINNER ANIMATION ---------------- */}
+      {/* KEYFRAME STYLE */}
       <style>
         {`
           @keyframes winnerPulse {
             0% {
-              box-shadow: 0 0 12px ${borderColor}, 0 0 25px ${borderColor}55;
               transform: scale(1);
+              box-shadow: 0 0 18px ${borderColor}, 0 0 45px ${borderColor}55;
             }
             50% {
-              box-shadow: 0 0 30px ${borderColor}, 0 0 65px ${borderColor}AA;
-              transform: scale(1.015);
+              transform: scale(1.02);
+              box-shadow: 0 0 38px ${borderColor}, 0 0 90px ${borderColor}AA;
             }
             100% {
-              box-shadow: 0 0 12px ${borderColor}, 0 0 25px ${borderColor}55;
               transform: scale(1);
+              box-shadow: 0 0 18px ${borderColor}, 0 0 45px ${borderColor}55;
             }
           }
         `}
@@ -197,13 +205,8 @@ export default function PlayerCard({
       {/* ---------------- NET ---------------- */}
       <Net state={netState} />
 
-      {/* ---------------- RIM SPARKS (NEW FX) ---------------- */}
-      <RimSparks
-        x={50}
-        y={18.2}
-        active={netState === "hit"}
-        zIndex={180}
-      />
+      {/* ---------------- RIM SPARKS ---------------- */}
+      <RimSparks x={50} y={18} active={netState === "hit"} zIndex={180} />
 
       {/* ---------------- BALLS + FX ---------------- */}
       {balls.map((ball) => (
@@ -222,12 +225,11 @@ export default function PlayerCard({
           style={{
             position: "absolute",
             bottom: SELFIE_SIZE * 0.65,
-            left: "-1%",
+            left: "2%",
             width: SELFIE_SIZE * 0.8,
             filter: `drop-shadow(0 0 8px ${borderColor})`,
             transform: "rotate(-6deg)",
             zIndex: 200,
-            pointerEvents: "none",
           }}
         />
       )}
@@ -236,14 +238,11 @@ export default function PlayerCard({
       <div
         style={{
           position: "absolute",
-          bottom: "-2%",
-          left: "-3.5%",
+          bottom: "-3%",
+          left: "0.75%",
           width: SELFIE_SIZE,
           height: SELFIE_SIZE,
           zIndex: 130,
-          display: "flex",
-          justifyContent: "center",
-          alignItems: "center",
         }}
       >
         <div
@@ -262,11 +261,7 @@ export default function PlayerCard({
           {player?.selfie_url ? (
             <img
               src={player.selfie_url}
-              style={{
-                width: "100%",
-                height: "100%",
-                objectFit: "cover",
-              }}
+              style={{ width: "100%", height: "100%", objectFit: "cover" }}
             />
           ) : (
             <div
