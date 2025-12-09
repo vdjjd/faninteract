@@ -12,8 +12,6 @@ interface BasketballGridProps {
   games: any[] | undefined;
   host: any;
   refreshBasketballGames: () => Promise<void>;
-
-  // ⭐ REQUIRED FIX — ADDED PROP
   onOpenOptions?: (game: any) => void;
 }
 
@@ -26,25 +24,26 @@ export default function BasketballGrid({
   const [localGames, setLocalGames] = useState<any[]>([]);
   const [moderationGameId, setModerationGameId] = useState<string | null>(null);
 
-  // ⭐ Options modal logic
   const [selectedGame, setSelectedGame] = useState<any | null>(null);
   const [isOptionsOpen, setOptionsOpen] = useState(false);
 
   const refreshTimeout = useRef<NodeJS.Timeout | null>(null);
 
   /* ------------------------------------------------------------
-     Sync props → local state
+     SAFE SYNC OF PROPS → STATE  (fixes undefined game.id issues)
   ------------------------------------------------------------ */
   useEffect(() => {
     if (Array.isArray(games)) {
-      setLocalGames(games.filter((g) => g && g.id));
+      // Only reject null/undefined — allow all valid objects
+      const clean = games.filter((g) => g && g.id != null);
+      setLocalGames(clean);
     } else {
       setLocalGames([]);
     }
   }, [games]);
 
   /* ------------------------------------------------------------
-     Realtime listener for bb_game_entries → refresh games
+     REALTIME SYNC — listens for player join/leave
   ------------------------------------------------------------ */
   useEffect(() => {
     if (!host?.id) return;
@@ -79,7 +78,7 @@ export default function BasketballGrid({
   }, [host?.id]);
 
   /* ------------------------------------------------------------
-     Broadcast helper
+     BROADCAST HELPER
   ------------------------------------------------------------ */
   async function broadcast(event: string, payload: any) {
     try {
@@ -94,9 +93,8 @@ export default function BasketballGrid({
   }
 
   /* ------------------------------------------------------------
-     GAME ACTIONS
+     Game Actions
   ------------------------------------------------------------ */
-
   async function handleStart(gameId: string) {
     await supabase
       .from("bb_games")
@@ -136,7 +134,7 @@ export default function BasketballGrid({
   }
 
   /* ------------------------------------------------------------
-     Moderation Modal handlers
+     Moderation Handlers
   ------------------------------------------------------------ */
   function handleOpenModeration(gameId: string) {
     setModerationGameId(gameId);
@@ -147,13 +145,11 @@ export default function BasketballGrid({
   }
 
   /* ------------------------------------------------------------
-     Options Modal handlers
+     Options Handlers
   ------------------------------------------------------------ */
   function handleOpenOptionsInternal(game: any) {
     setSelectedGame(game);
     setOptionsOpen(true);
-
-    // Forward upward if dashboard needs it
     if (onOpenOptions) onOpenOptions(game);
   }
 
@@ -163,10 +159,11 @@ export default function BasketballGrid({
   }
 
   /* ------------------------------------------------------------
-     Debounced refresh
+     Debounced Refresh
   ------------------------------------------------------------ */
   function delayedRefresh() {
     if (refreshTimeout.current) clearTimeout(refreshTimeout.current);
+
     refreshTimeout.current = setTimeout(() => {
       refreshBasketballGames().catch(console.error);
     }, 400);
@@ -185,7 +182,9 @@ export default function BasketballGrid({
         )}
       >
         {localGames.length === 0 && (
-          <p className={cn("text-gray-400 italic")}>No Basketball Games created yet.</p>
+          <p className={cn("text-gray-400 italic")}>
+            No Basketball Games created yet.
+          </p>
         )}
 
         {localGames.map((game) => (
@@ -197,12 +196,12 @@ export default function BasketballGrid({
             onDelete={handleDelete}
             onStart={handleStart}
             onStop={handleStop}
-            onOpenOptions={handleOpenOptionsInternal} // ⭐ important
+            onOpenOptions={handleOpenOptionsInternal}
           />
         ))}
       </div>
 
-      {/* ⭐ MODERATION MODAL */}
+      {/* Moderation Modal */}
       {moderationGameId && (
         <BasketballModerationModal
           gameId={moderationGameId}
@@ -210,7 +209,7 @@ export default function BasketballGrid({
         />
       )}
 
-      {/* ⭐ OPTIONS MODAL */}
+      {/* Options Modal */}
       {selectedGame && (
         <BasketballOptionsModal
           game={selectedGame}
