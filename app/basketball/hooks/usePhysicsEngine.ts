@@ -21,9 +21,9 @@ export interface BallState {
 /* ---------------------------------------------------------
    Physics Constants (tuned)
 --------------------------------------------------------- */
-const GRAVITY = 0.62;
-const LAUNCH_POWER = 2.35;
-const FRICTION = 0.987;
+const GRAVITY = 0.45;
+const LAUNCH_POWER = 3.1;
+const FRICTION = 0.99;
 const FLOOR_Y = 108;
 
 const RIM_Y = 16.5;
@@ -55,7 +55,8 @@ export function usePhysicsEngine(gameRunning: boolean) {
         x: 50,
         y: 94,
         vx: (Math.random() - 0.5) * 1.8,
-        vy: -power * LAUNCH_POWER * (1 + Math.random() * 0.08),
+        vy: -power * LAUNCH_POWER * (1 + Math.random() * 0.03),
+        vx: (Math.random() - 0.5) * 1.2,
         size: 12,
         active: true,
         rainbow: effects?.rainbow,
