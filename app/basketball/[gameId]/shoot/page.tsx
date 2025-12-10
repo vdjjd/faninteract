@@ -109,8 +109,9 @@ export default function ShooterPage() {
     };
   }, [gameId]);
 
+
   // ------------------------------------------------------------
-  // MISS GRID SYSTEM — YOUR FINAL SETTINGS
+  // MISS GRID SYSTEM (FINALIZED WITH MEDIUM FIXED)
   // ------------------------------------------------------------
   function getMissGrid() {
     let rows = 5;
@@ -134,12 +135,22 @@ export default function ShooterPage() {
     const W = window.innerWidth;
     const H = window.innerHeight;
 
-    // ⭐ Perfect equal-sized cells
-    const cellSize = Math.min(W / cols, H / rows);
+    let cellSize;
+    let offsetX;
+    let offsetY;
 
-    // ⭐ Center the entire grid
-    const offsetX = (W - cols * cellSize) / 2;
-    const offsetY = (H - rows * cellSize) / 2;
+    // ⭐ SPECIAL FIX: MEDIUM — MUST FIT HEIGHT FIRST
+    if (difficulty === "medium") {
+      cellSize = H / rows; // ensures full grid fits vertically
+      const totalW = cellSize * cols;
+      offsetX = (W - totalW) / 2; // center horizontally
+      offsetY = 0;                // no top padding (can center if preferred)
+    } else {
+      // ⭐ EASY / HARD / EXPERT — normal centered square grid
+      cellSize = Math.min(W / cols, H / rows);
+      offsetX = (W - cols * cellSize) / 2;
+      offsetY = (H - rows * cellSize) / 2;
+    }
 
     const cells = [];
 
@@ -165,7 +176,8 @@ export default function ShooterPage() {
     return cells;
   }
 
-  // Send miss (until you choose hitboxes)
+
+  // Send miss (until hitboxes chosen)
   function sendShot(pathType) {
     if (!playerId || laneIndex === null) return;
 
@@ -180,7 +192,6 @@ export default function ShooterPage() {
     });
   }
 
-  // Touch handler → everything = MISS until we assign hitboxes
   function handleTouchEnd(e) {
     if (displayCountdown !== null) return;
 
@@ -189,6 +200,7 @@ export default function ShooterPage() {
     const y = t.clientY;
 
     const grid = getMissGrid();
+
     for (const cell of grid) {
       if (
         x >= cell.x &&
@@ -201,6 +213,7 @@ export default function ShooterPage() {
       }
     }
   }
+
 
   // ------------------------------------------------------------
   // RENDER PAGE
@@ -233,7 +246,7 @@ export default function ShooterPage() {
               background: "rgba(255,0,0,0.15)",
               border: "2px solid red",
               color: "white",
-              fontSize: 14,
+              fontSize: 12,
               pointerEvents: "none",
               display: "flex",
               justifyContent: "center",
