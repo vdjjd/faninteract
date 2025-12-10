@@ -25,47 +25,66 @@ export default function ShooterPage() {
   const [score, setScore] = useState(0);
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
 
-  const streakRef = useRef(0);
   const swipeRef = useRef({ x: 0, y: 0, time: 0 });
 
-  const [zones, setZones] = useState<any>(null);
+  const [zoneSize, setZoneSize] = useState(120);
 
-  /* LOAD STORED PLAYER */
   useEffect(() => {
     const stored = localStorage.getItem("bb_player_id");
     if (stored) setPlayerId(stored);
   }, []);
 
-  /* LOAD GAME SETTINGS */
   useEffect(() => {
-    if (!gameId) return;
-
     async function loadGame() {
       const { data } = await supabase
         .from("bb_games")
-        .select("zone1_x, zone1_y, zone2_x, zone2_y, hitzone_size")
+        .select("hitzone_size")
         .eq("id", gameId)
         .single();
 
       if (!data) return;
 
-      let zoneSize = 120;
-      if (data.hitzone_size === "small") zoneSize = 80;
-      if (data.hitzone_size === "large") zoneSize = 180;
+      let size = 120;
+      if (data.hitzone_size === "small") size = 80;
+      if (data.hitzone_size === "large") size = 180;
 
-      setZones({
-        size: zoneSize,
-        zone1: { x: data.zone1_x, y: data.zone1_y },
-        zone2: { x: data.zone2_x, y: data.zone2_y }
-      });
+      setZoneSize(size);
     }
-
     loadGame();
-    const id = setInterval(loadGame, 2000);
-    return () => clearInterval(id);
   }, [gameId]);
 
-  /* LOAD PLAYER */
+  function getZones() {
+    return {
+      zone1: {
+        x: window.innerWidth / 2,
+        y: window.innerHeight * 0.18,
+      },
+      zone2: {
+        x: window.innerWidth / 2,
+        y: window.innerHeight * 0.48,
+      },
+    };
+  }
+
+  function isInsideZone(x: number, y: number) {
+    const { zone1, zone2 } = getZones();
+    const half = zoneSize / 2;
+
+    const z1 =
+      x > zone1.x - half &&
+      x < zone1.x + half &&
+      y > zone1.y - half &&
+      y < zone1.y + half;
+
+    const z2 =
+      x > zone2.x - half &&
+      x < zone2.x + half &&
+      y > zone2.y - half &&
+      y < zone2.y + half;
+
+    return z1 || z2;
+  }
+
   useEffect(() => {
     if (!playerId) return;
 
@@ -88,7 +107,6 @@ export default function ShooterPage() {
     return () => clearInterval(interval);
   }, [playerId]);
 
-  /* GAME TIMER */
   async function syncGameStart() {
     const { data } = await supabase
       .from("bb_games")
@@ -103,20 +121,20 @@ export default function ShooterPage() {
     setTimeLeft(Math.max(data.duration_seconds - elapsed, 0));
   }
 
-  /* BROADCAST SUBSCRIPTIONS */
   useEffect(() => {
     if (!gameId) return;
 
     const channel = supabase
       .channel(`basketball-${gameId}`)
-      .on("broadcast", { event: "start_countdown" }, () => {
-        setLocalCountdown(10);
-      })
-      .on("broadcast", { event: "start_game" }, syncGameStart)
+      .on("broadcast", { event: "start_countdown" }, () =>
+        setLocalCountdown(10)
+      )
+      .on("broadcast", { event: "start_game" }, () =>
+        syncGameStart()
+      )
       .on("broadcast", { event: "reset_game" }, () => {
         setLocalCountdown(null);
         setTimeLeft(null);
-        streakRef.current = 0;
       })
       .subscribe();
 
@@ -127,34 +145,14 @@ export default function ShooterPage() {
     };
   }, [gameId]);
 
-  /* HIT ZONE CHECK */
-  function isInsideZone(x: number, y: number) {
-    if (!zones) return false;
-
-    const { size, zone1, zone2 } = zones;
-    const half = size / 2;
-
-    const inZone1 =
-      x > zone1.x - half &&
-      x < zone1.x + half &&
-      y > zone1.y - half &&
-      y < zone1.y + half;
-
-    const inZone2 =
-      x > zone2.x - half &&
-      x < zone2.x + half &&
-      y > zone2.y - half &&
-      y < zone2.y + half;
-
-    return inZone1 || inZone2;
-  }
-
-  /* SEND SHOT */
+  /* --------------------------------------------------------
+     FINAL FIX — PROPER ARC VALUES ARE SENT TO PHYSICS ENGINE
+  -------------------------------------------------------- */
   async function handleShot({ vx, vy, power, touchX, touchY }) {
     if (!playerId || laneIndex === null) return;
     if (displayCountdown !== null) return;
 
-    const zoneHit = isInsideZone(touchX, touchY); // ⭐ unified scoring flag
+    const zoneHit = isInsideZone(touchX, touchY);
 
     supabase.channel(`basketball-${gameId}`).send({
       type: "broadcast",
@@ -164,13 +162,12 @@ export default function ShooterPage() {
         vx,
         vy,
         power,
-        zoneHit,       // ⭐ correct scoring + physics flag
-        madeExpected: zoneHit // ⭐ keeps compatibility with old code
+        zoneHit,
+        madeExpected: zoneHit,
       },
     });
   }
 
-  /* UI */
   return (
     <div
       style={{
@@ -182,15 +179,12 @@ export default function ShooterPage() {
         overflow: "hidden",
         touchAction: "none",
       }}
-
       onTouchStart={(e) => {
         const t = e.touches[0];
         swipeRef.current = { x: t.clientX, y: t.clientY, time: Date.now() };
       }}
-
       onTouchEnd={(e) => {
         const t = e.changedTouches[0];
-
         const dx = t.clientX - swipeRef.current.x;
         const dy = swipeRef.current.y - t.clientY;
         const dt = Date.now() - swipeRef.current.time;
@@ -198,45 +192,54 @@ export default function ShooterPage() {
         if (dy < 10) return;
 
         const speed = dy / dt;
-        const vx = dx * 0.018;
-        const vy = -Math.min(8, speed * 10);
-        const power = Math.min(1, speed * 1.25);
 
-        handleShot({ vx, vy, power, touchX: t.clientX, touchY: t.clientY });
+        const vx = dx * 0.008;
+        const vy = speed * 2.4;     // ⭐ FIXED — upward arc ALWAYS positive
+        const power = Math.min(1, speed * 1.1);
+
+        handleShot({
+          vx,
+          vy,
+          power,
+          touchX: t.clientX,
+          touchY: t.clientY,
+        });
       }}
     >
-
       {/* DEBUG ZONES */}
-      {zones && SHOW_ZONE_BORDERS && (
-        <>
-          <div
-            style={{
-              position: "absolute",
-              width: zones.size,
-              height: zones.size,
-              left: zones.zone1.x - zones.size / 2,
-              top: zones.zone1.y - zones.size / 2,
-              border: "4px solid red",
-              borderRadius: 8,
-              pointerEvents: "none",
-              zIndex: 50,
-            }}
-          />
-          <div
-            style={{
-              position: "absolute",
-              width: zones.size,
-              height: zones.size,
-              left: zones.zone2.x - zones.size / 2,
-              top: zones.zone2.y - zones.size / 2,
-              border: "4px solid red",
-              borderRadius: 8,
-              pointerEvents: "none",
-              zIndex: 50,
-            }}
-          />
-        </>
-      )}
+      {SHOW_ZONE_BORDERS && (() => {
+        const { zone1, zone2 } = getZones();
+        return (
+          <>
+            <div
+              style={{
+                position: "absolute",
+                width: zoneSize,
+                height: zoneSize,
+                left: zone1.x - zoneSize / 2,
+                top: zone1.y - zoneSize / 2,
+                border: "4px solid red",
+                borderRadius: 8,
+                pointerEvents: "none",
+                zIndex: 50,
+              }}
+            />
+            <div
+              style={{
+                position: "absolute",
+                width: zoneSize,
+                height: zoneSize,
+                left: zone2.x - zoneSize / 2,
+                top: zone2.y - zoneSize / 2,
+                border: "4px solid red",
+                borderRadius: 8,
+                pointerEvents: "none",
+                zIndex: 50,
+              }}
+            />
+          </>
+        );
+      })()}
 
       {/* COUNTDOWN */}
       {displayCountdown !== null && (
@@ -259,9 +262,14 @@ export default function ShooterPage() {
         </div>
       )}
 
-      {/* SCORE/TIMER */}
-      <div style={{ position: "absolute", top: 20, left: 20, color: "white", fontSize: "2.5rem" }}>{score}</div>
-      <div style={{ position: "absolute", top: 20, right: 20, color: "white", fontSize: "2.5rem" }}>{timeLeft ?? "--"}</div>
+      {/* SCORE + TIMER */}
+      <div style={{ position: "absolute", top: 20, left: 20, color: "white", fontSize: "2.5rem" }}>
+        {score}
+      </div>
+
+      <div style={{ position: "absolute", top: 20, right: 20, color: "white", fontSize: "2.5rem" }}>
+        {timeLeft ?? "--"}
+      </div>
 
       {/* SHOOT MESSAGE */}
       <div

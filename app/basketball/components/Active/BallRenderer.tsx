@@ -3,61 +3,50 @@
 import React from "react";
 import { BallState } from "@/app/basketball/hooks/usePhysicsEngine";
 
-export default function BallRenderer({ ball }: { ball: BallState }) {
-  /* -----------------------------------------------------
-     DEPTH SCALING
-     ball.size comes from physics engine (~50px at spawn)
-     We reduce it slightly more here for smoothness.
-  ------------------------------------------------------*/
+/* -------------------------------------------------------
+   3D PROJECTION — turns x,y,z into screen position
+-------------------------------------------------------- */
+function project3D(ball: BallState) {
+  const { x, y, z } = ball;
 
-  const scale = 1 - ball.z * 0.45; // smoother arcade shrink
+  // How much the ball shrinks with depth
+  const scale = 1 - z * 0.55;
+
+  // Push ball visually upward as it travels "forward"
+  const projectedY = y - (z * 22); // ← Tune this number for arc height
+
+  return {
+    screenX: x,
+    screenY: projectedY,
+    scale,
+    zIndex: 200 - Math.floor(z * 100), // Depth layering
+  };
+}
+
+/* -------------------------------------------------------
+   BALL RENDERER
+-------------------------------------------------------- */
+export default function BallRenderer({ ball }: { ball: BallState }) {
+  const { screenX, screenY, scale, zIndex } = project3D(ball);
+
+  // size with depth
   const renderSize = ball.size * scale;
 
-  /* -----------------------------------------------------
-     OPTIONAL SHADOW (small and soft)
-     Appears only when ball is still "in play"
-  ------------------------------------------------------*/
-  const showShadow = ball.z < 1;
-
   return (
-    <>
-      {/* ------- Shadow (optional, below ball) ------- */}
-      {showShadow && (
-        <div
-          style={{
-            position: "absolute",
-            left: `${ball.x}%`,
-            top: `${ball.y + 3}%`, // slightly below ball
-            width: `${renderSize * 0.6}px`,
-            height: `${renderSize * 0.25}px`,
-            background: "rgba(0,0,0,0.35)",
-            filter: "blur(6px)",
-            transform: "translate(-50%, -50%)",
-            borderRadius: "50%",
-            zIndex: 8,
-            pointerEvents: "none",
-          }}
-        />
-      )}
-
-      {/* ------- BALL IMAGE ------- */}
-      <img
-        src="/ball.png"
-        alt="basketball"
-        style={{
-          position: "absolute",
-          left: `${ball.x}%`,
-          top: `${ball.y}%`,
-          width: `${renderSize}px`,
-          height: `${renderSize}px`,
-          transform: "translate(-50%, -50%)",
-          zIndex: 15, // above background, below net + labels
-          pointerEvents: "none",
-          imageRendering: "auto",
-          opacity: 1, // prevents ghosting
-          filter: "drop-shadow(0 2px 3px rgba(0,0,0,0.35))",
-        }}
-      />
-    </>
+    <img
+      src="/ball.png"
+      alt="basketball"
+      style={{
+        position: "absolute",
+        left: `${screenX}%`,
+        top: `${screenY}%`,
+        width: `${renderSize}px`,
+        height: `${renderSize}px`,
+        transform: "translate(-50%, -50%)", // FIXED — now a valid string
+        zIndex,
+        pointerEvents: "none",
+        filter: "drop-shadow(0 3px 5px rgba(0,0,0,0.45))",
+      }}
+    />
   );
 }

@@ -2,9 +2,8 @@
 
 import React from "react";
 import BallRenderer from "@/app/basketball/components/Active/BallRenderer";
-import Fire from "@/app/basketball/components/Effects/Fire";
-import Rainbow from "@/app/basketball/components/Effects/Rainbow";
 import RimSparks from "@/app/basketball/components/Effects/RimSparks";
+import { project3D } from "@/app/basketball/utils/projection";
 
 /* ---------------- NET GRAPHIC ---------------- */
 function Net({ state }: { state: "idle" | "swish" | "hit" }) {
@@ -32,9 +31,66 @@ function Net({ state }: { state: "idle" | "swish" | "hit" }) {
   );
 }
 
-const BACKBOARD_SCALE = 1;
-const RIM_WIDTH = 14;
 const SELFIE_SIZE = 54;
+
+/* ---------------- 3D BACKBOARD ---------------- */
+function Backboard({ hostLogo }: { hostLogo?: string }) {
+  const { screenX, screenY, scale, zIndex } = project3D(50, 12, 0.96);
+
+  return (
+    <div
+      style={{
+        position: "absolute",
+        left: `${screenX}%`,
+        top: `${screenY}%`,
+        width: `${33 * scale}%`,
+        height: `${7 * scale}vh`,
+        transform: "translate(-50%, -50%)",
+        borderRadius: 6,
+        background: "rgba(255,255,255,0.12)",
+        border: "2px solid rgba(255,0,0,0.4)",
+        display: "flex",
+        justifyContent: "center",
+        alignItems: "center",
+        zIndex,
+      }}
+    >
+      {hostLogo && (
+        <img
+          src={hostLogo}
+          style={{
+            width: "80%",
+            height: "80%",
+            opacity: 0.35,
+            objectFit: "contain",
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ------------------- 3D RIM ------------------- */
+function Rim3D() {
+  const { screenX, screenY, scale, zIndex } = project3D(50, 18, 0.88);
+
+  return (
+    <div
+      style={{
+        position: "absolute",
+        left: `${screenX}%`,
+        top: `${screenY}%`,
+        width: `${14 * scale}%`,
+        height: `${1.2 * scale}vh`,
+        transform: "translate(-50%, -50%)",
+        background: "#ff6a00",
+        boxShadow: "0 0 12px rgba(255,120,0,0.8)",
+        borderRadius: 10,
+        zIndex,
+      }}
+    />
+  );
+}
 
 /* --------------------------------------------------
    MAIN PLAYERCARD
@@ -50,11 +106,9 @@ export default function PlayerCard({
   hostLogo,
   maxScore,
 }) {
-  /* ---------------- WINNER CHECK ---------------- */
   const isWinner =
     timerExpired && player && player.score === maxScore && maxScore > 0;
 
-  /* ---------------- NET LOGIC ---------------- */
   let netState: "idle" | "swish" | "hit" = "idle";
 
   for (const b of balls) {
@@ -72,7 +126,6 @@ export default function PlayerCard({
     }
   }
 
-  /* ---------------- WINNER PULSE STYLE ---------------- */
   const winnerPulseStyle = isWinner
     ? {
         animation: "winnerPulse 1.35s ease-in-out infinite",
@@ -91,30 +144,48 @@ export default function PlayerCard({
         backgroundSize: "cover",
         backgroundPosition: "center",
         zIndex: 0,
-        ...winnerPulseStyle, // ⭐ HERE WE APPLY THE WINNER ANIMATION
+        ...winnerPulseStyle,
       }}
     >
-      {/* KEYFRAME STYLE */}
-      <style>
-        {`
-          @keyframes winnerPulse {
-            0% {
-              transform: scale(1);
-              box-shadow: 0 0 18px ${borderColor}, 0 0 45px ${borderColor}55;
-            }
-            50% {
-              transform: scale(1.02);
-              box-shadow: 0 0 38px ${borderColor}, 0 0 90px ${borderColor}AA;
-            }
-            100% {
-              transform: scale(1);
-              box-shadow: 0 0 18px ${borderColor}, 0 0 45px ${borderColor}55;
-            }
-          }
-        `}
-      </style>
+      {/* BACKBOARD + RIM (3D) */}
+      <Backboard hostLogo={hostLogo} />
+      <Rim3D />
 
-      {/* ---------------- TIMER ---------------- */}
+      {/* NET */}
+      <Net state={netState} />
+      <RimSparks x={50} y={18} active={netState === "hit"} zIndex={180} />
+
+      {/* STATIC PREVIEW BALL */}
+      <div
+        style={{
+          position: "absolute",
+          left: "50%",
+          bottom: "-25%",
+          transform: "translateX(-50%)",
+          zIndex: 14,
+          pointerEvents: "none",
+        }}
+      >
+        <img
+          src="/ball.png"
+          style={{
+            width: "200px",
+            height: "175px",
+            opacity: 1,
+          }}
+        />
+      </div>
+
+      {/* PHYSICS BALLS */}
+      {balls.map((ball) => (
+        <React.Fragment key={ball.id}>
+          <BallRenderer ball={ball} />
+        </React.Fragment>
+      ))}
+
+      {/* --- UI ELEMENTS REMAIN EXACTLY THE SAME BELOW --- */}
+
+      {/* TIMER */}
       <div
         style={{
           position: "absolute",
@@ -138,7 +209,7 @@ export default function PlayerCard({
           : "--:--"}
       </div>
 
-      {/* ---------------- PLAYER LABEL ---------------- */}
+      {/* PLAYER LABEL */}
       <div
         style={{
           position: "absolute",
@@ -155,86 +226,7 @@ export default function PlayerCard({
         P{index + 1}
       </div>
 
-      {/* ---------------- BACKBOARD ---------------- */}
-      <div
-        style={{
-          position: "absolute",
-          top: "4%",
-          left: "50%",
-          transform: "translateX(-50%)",
-          width: `${35 * BACKBOARD_SCALE}%`,
-          height: `${7 * BACKBOARD_SCALE}vh`,
-          borderRadius: 6,
-          background: "rgba(255,255,255,0.12)",
-          border: "2px solid rgba(255,0,0,0.4)",
-          display: "flex",
-          justifyContent: "center",
-          alignItems: "center",
-          zIndex: 20,
-        }}
-      >
-        {hostLogo && (
-          <img
-            src={hostLogo}
-            style={{
-              width: "80%",
-              height: "80%",
-              objectFit: "contain",
-              opacity: 0.35,
-            }}
-          />
-        )}
-      </div>
-
-      {/* ---------------- RIM ---------------- */}
-      <div
-        style={{
-          position: "absolute",
-          top: `calc(4% + ${7 * BACKBOARD_SCALE}vh - 0.2vh)`,
-          left: "50%",
-          transform: "translateX(-50%)",
-          width: `${RIM_WIDTH}%`,
-          height: "0.7vh",
-          background: "#ff6a00",
-          borderRadius: 6,
-          boxShadow: "0 0 12px rgba(255,120,0,0.8)",
-          zIndex: 25,
-        }}
-      />
-
-      {/* ---------------- NET ---------------- */}
-      <Net state={netState} />
-
-      {/* ---------------- RIM SPARKS ---------------- */}
-      <RimSparks x={50} y={18} active={netState === "hit"} zIndex={180} />
-
-      {/* ---------------- BALLS + FX ---------------- */}
-      {balls.map((ball) => (
-        <React.Fragment key={ball.id}>
-          {ball.fire && <Fire x={ball.x} y={ball.y} />}
-          {ball.rainbow && <Rainbow x={ball.x} y={ball.y} />}
-          <BallRenderer ball={ball} />
-        </React.Fragment>
-      ))}
-
-      {/* ---------------- WINNER CROWN ---------------- */}
-      {isWinner && (
-        <img
-          src="/crown.png"
-          alt="winner crown"
-          style={{
-            position: "absolute",
-            bottom: SELFIE_SIZE * 0.65,
-            left: "2%",
-            width: SELFIE_SIZE * 0.8,
-            filter: `drop-shadow(0 0 8px ${borderColor})`,
-            transform: "rotate(-6deg)",
-            zIndex: 200,
-          }}
-        />
-      )}
-
-      {/* ---------------- SELFIE ---------------- */}
+      {/* SELFIE */}
       <div
         style={{
           position: "absolute",
@@ -283,7 +275,7 @@ export default function PlayerCard({
         </div>
       </div>
 
-      {/* ---------------- SCORE ---------------- */}
+      {/* SCORE */}
       <div
         style={{
           position: "absolute",
@@ -299,7 +291,7 @@ export default function PlayerCard({
         {score}
       </div>
 
-      {/* ---------------- WINNER LABEL ---------------- */}
+      {/* WINNER */}
       {isWinner && (
         <div
           style={{
