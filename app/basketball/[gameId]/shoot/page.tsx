@@ -5,28 +5,12 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { useCountdown } from "@/app/basketball/hooks/useCountdown";
 
-const SHOW_DEBUG = true; // shows red MISS GRID. Hit boxes removed.
+const SHOW_DEBUG = true; // shows red MISS GRID
 
 const CELL_COLORS = [
   "#FF3B30", "#FF9500", "#FFCC00", "#34C759", "#5AC8FA",
   "#007AFF", "#5856D6", "#AF52DE", "#FF2D55", "#A2845E",
 ];
-
-// Hitbox sizes (still used for detection, but not displayed)
-const HITBOX_SIZES = {
-  zone1: {
-    easy: 220,
-    medium: 150,
-    hard: 90,
-    expert: 45,
-  },
-  zone2: {
-    easy: 260,
-    medium: 180,
-    hard: 120,
-    expert: 45,
-  }
-};
 
 export default function ShooterPage() {
   const { gameId } = useParams() as { gameId: string };
@@ -43,35 +27,13 @@ export default function ShooterPage() {
 
   const [difficulty, setDifficulty] = useState<
     "easy" | "medium" | "hard" | "expert"
-  >("medium");
-
-  // hit box positions (still used logically — not drawn)
-  const [zone1, setZone1] = useState({ x: 200, y: 200 });
-  const [zone2, setZone2] = useState({ x: 200, y: 500 });
+  >("easy");
 
   // Load player ID
   useEffect(() => {
     const stored = localStorage.getItem("bb_player_id");
     if (stored) setPlayerId(stored);
   }, []);
-
-  // Load game settings (difficulty + hit zone positions)
-  useEffect(() => {
-    async function loadGame() {
-      const { data } = await supabase
-        .from("bb_games")
-        .select("*")
-        .eq("id", gameId)
-        .single();
-
-      if (!data) return;
-
-      setDifficulty(data.difficulty ?? "medium");
-      setZone1({ x: data.zone1_x ?? 200, y: data.zone1_y ?? 200 });
-      setZone2({ x: data.zone2_x ?? 200, y: data.zone2_y ?? 500 });
-    }
-    loadGame();
-  }, [gameId]);
 
   // Load player info
   useEffect(() => {
@@ -96,6 +58,22 @@ export default function ShooterPage() {
     return () => clearInterval(interval);
   }, [playerId]);
 
+  // Load game settings
+  useEffect(() => {
+    async function loadGame() {
+      const { data } = await supabase
+        .from("bb_games")
+        .select("*")
+        .eq("id", gameId)
+        .single();
+
+      if (data) {
+        setDifficulty(data.difficulty ?? "easy");
+      }
+    }
+    loadGame();
+  }, [gameId]);
+
   // Timer sync
   async function syncGameStart() {
     const { data } = await supabase
@@ -112,8 +90,6 @@ export default function ShooterPage() {
   }
 
   useEffect(() => {
-    if (!gameId) return;
-
     const channel = supabase
       .channel(`basketball-${gameId}`)
       .on("broadcast", { event: "start_countdown" }, () =>
@@ -134,47 +110,53 @@ export default function ShooterPage() {
   }, [gameId]);
 
   // ------------------------------------------------------------
-  // MISS GRID SETUP (NOW UPDATED FOR HARD/EXPERT)
+  // MISS GRID SYSTEM — YOUR FINAL SETTINGS
   // ------------------------------------------------------------
   function getMissGrid() {
     let rows = 5;
     let cols = 1;
 
     if (difficulty === "medium") {
-      cols = 3;
-      rows = 5;
+      cols = 5;
+      rows = 10;
     }
 
     if (difficulty === "hard") {
-      cols = 6;
-      rows = 6; // squared
+      cols = 7;
+      rows = 14;
     }
 
     if (difficulty === "expert") {
-      cols = 8;
-      rows = 8; // squared
+      cols = 9;
+      rows = 18;
     }
 
-    const width = window.innerWidth;
-    const height = window.innerHeight;
+    const W = window.innerWidth;
+    const H = window.innerHeight;
 
-    const cellW = width / cols;
-    const cellH = height / rows;
+    // ⭐ Perfect equal-sized cells
+    const cellSize = Math.min(W / cols, H / rows);
+
+    // ⭐ Center the entire grid
+    const offsetX = (W - cols * cellSize) / 2;
+    const offsetY = (H - rows * cellSize) / 2;
 
     const cells = [];
 
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         cells.push({
-          x: c * cellW,
-          y: r * cellH,
-          w: cellW,
-          h: cellH,
+          row: r,
+          col: c,
+          x: offsetX + c * cellSize,
+          y: offsetY + r * cellSize,
+          w: cellSize,
+          h: cellSize,
           type:
+            r === 0 ? "miss_long" :
+            r === rows - 1 ? "miss_short" :
             c === 0 ? "miss_left" :
             c === cols - 1 ? "miss_right" :
-            r === rows - 1 ? "miss_short" :
-            r === 0 ? "miss_long" :
             "miss_far",
         });
       }
@@ -183,18 +165,8 @@ export default function ShooterPage() {
     return cells;
   }
 
-  // hit detection helper
-  function pointInBox(px, py, box) {
-    return (
-      px >= box.left &&
-      px <= box.left + box.size &&
-      py >= box.top &&
-      py <= box.top + box.size
-    );
-  }
-
-  // send shot
-  function sendShot(pathType, points) {
+  // Send miss (until you choose hitboxes)
+  function sendShot(pathType) {
     if (!playerId || laneIndex === null) return;
 
     supabase.channel(`basketball-${gameId}`).send({
@@ -203,12 +175,12 @@ export default function ShooterPage() {
       payload: {
         lane_index: laneIndex,
         pathType,
-        points,
+        points: 0,
       },
     });
   }
 
-  // touch handler
+  // Touch handler → everything = MISS until we assign hitboxes
   function handleTouchEnd(e) {
     if (displayCountdown !== null) return;
 
@@ -216,35 +188,6 @@ export default function ShooterPage() {
     const x = t.clientX;
     const y = t.clientY;
 
-    // Hitbox sizes still matter logically
-    const zone1Size = HITBOX_SIZES.zone1[difficulty];
-    const zone2Size = HITBOX_SIZES.zone2[difficulty];
-
-    const z1 = {
-      left: zone1.x - zone1Size / 2,
-      top: zone1.y - zone1Size / 2,
-      size: zone1Size,
-    };
-
-    const z2 = {
-      left: zone2.x - zone2Size / 2,
-      top: zone2.y - zone2Size / 2,
-      size: zone2Size,
-    };
-
-    // 3-pt
-    if (pointInBox(x, y, z1)) {
-      sendShot("three_point", 3);
-      return;
-    }
-
-    // 2-pt
-    if (pointInBox(x, y, z2)) {
-      sendShot("two_point", 2);
-      return;
-    }
-
-    // MISS GRID
     const grid = getMissGrid();
     for (const cell of grid) {
       if (
@@ -253,14 +196,14 @@ export default function ShooterPage() {
         y >= cell.y &&
         y <= cell.y + cell.h
       ) {
-        sendShot(cell.type, 0);
+        sendShot(cell.type);
         return;
       }
     }
   }
 
   // ------------------------------------------------------------
-  // RENDER
+  // RENDER PAGE
   // ------------------------------------------------------------
   return (
     <div
@@ -276,7 +219,7 @@ export default function ShooterPage() {
       onTouchEnd={handleTouchEnd}
     >
 
-      {/* MISS GRID ONLY */}
+      {/* MISS GRID */}
       {SHOW_DEBUG &&
         getMissGrid().map((cell, i) => (
           <div
@@ -290,14 +233,14 @@ export default function ShooterPage() {
               background: "rgba(255,0,0,0.15)",
               border: "2px solid red",
               color: "white",
-              fontSize: 16,
+              fontSize: 14,
               pointerEvents: "none",
               display: "flex",
               justifyContent: "center",
               alignItems: "center",
             }}
           >
-            {cell.type}
+            {cell.row},{cell.col}
           </div>
         ))}
 
@@ -307,7 +250,7 @@ export default function ShooterPage() {
         top: 20,
         left: 20,
         color: "white",
-        fontSize: "2.5rem"
+        fontSize: "2.5rem",
       }}>
         {score}
       </div>
@@ -318,12 +261,12 @@ export default function ShooterPage() {
         top: 20,
         right: 20,
         color: "white",
-        fontSize: "2.5rem"
+        fontSize: "2.5rem",
       }}>
         {timeLeft ?? "--"}
       </div>
 
-      {/* COUNTDOWN OVERLAY */}
+      {/* COUNTDOWN */}
       {displayCountdown !== null && (
         <div
           style={{
