@@ -1,16 +1,34 @@
 "use client";
 
 import { useParams } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { useCountdown } from "@/app/basketball/hooks/useCountdown";
+
+const SHOW_DEBUG = true; // turn off later
 
 const CELL_COLORS = [
   "#FF3B30", "#FF9500", "#FFCC00", "#34C759", "#5AC8FA",
   "#007AFF", "#5856D6", "#AF52DE", "#FF2D55", "#A2845E",
 ];
 
-const SHOW_ZONE_BORDERS = true;
+// --------------------------------------------------
+// HIT BOX SIZE TABLE
+// --------------------------------------------------
+const HITBOX_SIZES = {
+  zone1: { // 3-point
+    easy: 220,
+    medium: 150,
+    hard: 90,
+    expert: 45,
+  },
+  zone2: { // 2-point
+    easy: 260,
+    medium: 180,
+    hard: 120,
+    expert: 45,
+  }
+};
 
 export default function ShooterPage() {
   const { gameId } = useParams() as { gameId: string };
@@ -25,66 +43,42 @@ export default function ShooterPage() {
   const [score, setScore] = useState(0);
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
 
-  const swipeRef = useRef({ x: 0, y: 0, time: 0 });
+  // Game config from DB
+  const [difficulty, setDifficulty] = useState<"easy" | "medium" | "hard" | "expert">("medium");
+  const [zone1, setZone1] = useState({ x: 200, y: 200 });
+  const [zone2, setZone2] = useState({ x: 200, y: 500 });
 
-  const [zoneSize, setZoneSize] = useState(120);
-
+  // --------------------------------------------------
+  // Load player ID
+  // --------------------------------------------------
   useEffect(() => {
     const stored = localStorage.getItem("bb_player_id");
     if (stored) setPlayerId(stored);
   }, []);
 
+  // --------------------------------------------------
+  // Load difficulty + zone positions from DB
+  // --------------------------------------------------
   useEffect(() => {
     async function loadGame() {
       const { data } = await supabase
         .from("bb_games")
-        .select("hitzone_size")
+        .select("*")
         .eq("id", gameId)
         .single();
 
       if (!data) return;
 
-      let size = 120;
-      if (data.hitzone_size === "small") size = 80;
-      if (data.hitzone_size === "large") size = 180;
-
-      setZoneSize(size);
+      setDifficulty(data.difficulty ?? "medium");
+      setZone1({ x: data.zone1_x ?? 200, y: data.zone1_y ?? 200 });
+      setZone2({ x: data.zone2_x ?? 200, y: data.zone2_y ?? 500 });
     }
     loadGame();
   }, [gameId]);
 
-  function getZones() {
-    return {
-      zone1: {
-        x: window.innerWidth / 2,
-        y: window.innerHeight * 0.18,
-      },
-      zone2: {
-        x: window.innerWidth / 2,
-        y: window.innerHeight * 0.48,
-      },
-    };
-  }
-
-  function isInsideZone(x: number, y: number) {
-    const { zone1, zone2 } = getZones();
-    const half = zoneSize / 2;
-
-    const z1 =
-      x > zone1.x - half &&
-      x < zone1.x + half &&
-      y > zone1.y - half &&
-      y < zone1.y + half;
-
-    const z2 =
-      x > zone2.x - half &&
-      x < zone2.x + half &&
-      y > zone2.y - half &&
-      y < zone2.y + half;
-
-    return z1 || z2;
-  }
-
+  // --------------------------------------------------
+  // Load player data repeatedly
+  // --------------------------------------------------
   useEffect(() => {
     if (!playerId) return;
 
@@ -96,7 +90,6 @@ export default function ShooterPage() {
         .single();
 
       if (!data) return;
-
       setLaneIndex(data.lane_index);
       setLaneColor(CELL_COLORS[data.lane_index]);
       setScore(data.score ?? 0);
@@ -107,6 +100,9 @@ export default function ShooterPage() {
     return () => clearInterval(interval);
   }, [playerId]);
 
+  // --------------------------------------------------
+  // Load timer on game start
+  // --------------------------------------------------
   async function syncGameStart() {
     const { data } = await supabase
       .from("bb_games")
@@ -139,35 +135,132 @@ export default function ShooterPage() {
       .subscribe();
 
     return () => {
-      try {
-        supabase.removeChannel(channel);
-      } catch {}
+      try { supabase.removeChannel(channel); } catch {}
     };
   }, [gameId]);
 
-  /* --------------------------------------------------------
-     FINAL FIX — PROPER ARC VALUES ARE SENT TO PHYSICS ENGINE
-  -------------------------------------------------------- */
-  async function handleShot({ vx, vy, power, touchX, touchY }) {
-    if (!playerId || laneIndex === null) return;
-    if (displayCountdown !== null) return;
+  // --------------------------------------------------
+  // Build MISS GRID based on difficulty
+  // --------------------------------------------------
+  function getMissGrid() {
+    const rows = 5;
+    let cols = 1;
 
-    const zoneHit = isInsideZone(touchX, touchY);
+    if (difficulty === "medium") cols = 3;
+    if (difficulty === "hard" || difficulty === "expert") cols = 5;
+
+    const width = window.innerWidth;
+    const height = window.innerHeight;
+
+    const cellW = width / cols;
+    const cellH = height / rows;
+
+    const cells = [];
+
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        cells.push({
+          x: c * cellW,
+          y: r * cellH,
+          w: cellW,
+          h: cellH,
+          // assign miss type:
+          type:
+            c === 0 ? "miss_left" :
+            c === cols - 1 ? "miss_right" :
+            r === rows - 1 ? "miss_short" :
+            r === 0 ? "miss_long" :
+            "miss_far",
+        });
+      }
+    }
+    return cells;
+  }
+
+  // --------------------------------------------------
+  // HIT DETECTION
+  // --------------------------------------------------
+  function pointInBox(px, py, box) {
+    return (
+      px >= box.left &&
+      px <= box.left + box.size &&
+      py >= box.top &&
+      py <= box.top + box.size
+    );
+  }
+
+  // --------------------------------------------------
+  // Send shot to ActiveWall
+  // --------------------------------------------------
+  function sendShot(pathType, points) {
+    if (!playerId || laneIndex === null) return;
 
     supabase.channel(`basketball-${gameId}`).send({
       type: "broadcast",
       event: "shot_fired",
       payload: {
         lane_index: laneIndex,
-        vx,
-        vy,
-        power,
-        zoneHit,
-        madeExpected: zoneHit,
+        pathType,
+        points,
       },
     });
   }
 
+  // --------------------------------------------------
+  // Touch Handler
+  // --------------------------------------------------
+  function handleTouchEnd(e) {
+    if (displayCountdown !== null) return;
+
+    const t = e.changedTouches[0];
+    const x = t.clientX;
+    const y = t.clientY;
+
+    const zone1Size = HITBOX_SIZES.zone1[difficulty];
+    const zone2Size = HITBOX_SIZES.zone2[difficulty];
+
+    const z1 = {
+      left: zone1.x - zone1Size / 2,
+      top: zone1.y - zone1Size / 2,
+      size: zone1Size,
+    };
+
+    const z2 = {
+      left: zone2.x - zone2Size / 2,
+      top: zone2.y - zone2Size / 2,
+      size: zone2Size,
+    };
+
+    // check 3-pt hit
+    if (pointInBox(x, y, z1)) {
+      sendShot("three_point", 3);
+      return;
+    }
+
+    // check 2-pt hit
+    if (pointInBox(x, y, z2)) {
+      sendShot("two_point", 2);
+      return;
+    }
+
+    // else, detect MISS GRID
+    const grid = getMissGrid();
+    for (const cell of grid) {
+      if (
+        x >= cell.x &&
+        x <= cell.x + cell.w &&
+        y >= cell.y &&
+        y <= cell.y + cell.h
+      ) {
+        sendShot(cell.type, 0);
+        return;
+      }
+    }
+  }
+
+  // --------------------------------------------------
+  // RENDER
+  // --------------------------------------------------
   return (
     <div
       style={{
@@ -179,67 +272,77 @@ export default function ShooterPage() {
         overflow: "hidden",
         touchAction: "none",
       }}
-      onTouchStart={(e) => {
-        const t = e.touches[0];
-        swipeRef.current = { x: t.clientX, y: t.clientY, time: Date.now() };
-      }}
-      onTouchEnd={(e) => {
-        const t = e.changedTouches[0];
-        const dx = t.clientX - swipeRef.current.x;
-        const dy = swipeRef.current.y - t.clientY;
-        const dt = Date.now() - swipeRef.current.time;
-
-        if (dy < 10) return;
-
-        const speed = dy / dt;
-
-        const vx = dx * 0.008;
-        const vy = speed * 2.4;     // ⭐ FIXED — upward arc ALWAYS positive
-        const power = Math.min(1, speed * 1.1);
-
-        handleShot({
-          vx,
-          vy,
-          power,
-          touchX: t.clientX,
-          touchY: t.clientY,
-        });
-      }}
+      onTouchEnd={handleTouchEnd}
     >
-      {/* DEBUG ZONES */}
-      {SHOW_ZONE_BORDERS && (() => {
-        const { zone1, zone2 } = getZones();
-        return (
-          <>
-            <div
-              style={{
-                position: "absolute",
-                width: zoneSize,
-                height: zoneSize,
-                left: zone1.x - zoneSize / 2,
-                top: zone1.y - zoneSize / 2,
-                border: "4px solid red",
-                borderRadius: 8,
-                pointerEvents: "none",
-                zIndex: 50,
-              }}
-            />
-            <div
-              style={{
-                position: "absolute",
-                width: zoneSize,
-                height: zoneSize,
-                left: zone2.x - zoneSize / 2,
-                top: zone2.y - zoneSize / 2,
-                border: "4px solid red",
-                borderRadius: 8,
-                pointerEvents: "none",
-                zIndex: 50,
-              }}
-            />
-          </>
-        );
-      })()}
+
+      {/* HIT ZONES */}
+      {SHOW_DEBUG && (
+        <>
+          {/* ZONE 1 — THREE POINT */}
+          <div
+            style={{
+              position: "absolute",
+              left: zone1.x - HITBOX_SIZES.zone1[difficulty] / 2,
+              top: zone1.y - HITBOX_SIZES.zone1[difficulty] / 2,
+              width: HITBOX_SIZES.zone1[difficulty],
+              height: HITBOX_SIZES.zone1[difficulty],
+              background: "rgba(0,255,0,0.35)",
+              border: "3px solid #00FF00",
+              borderRadius: 6,
+              zIndex: 100,
+            }}
+          ></div>
+
+          {/* ZONE 2 — TWO POINT */}
+          <div
+            style={{
+              position: "absolute",
+              left: zone2.x - HITBOX_SIZES.zone2[difficulty] / 2,
+              top: zone2.y - HITBOX_SIZES.zone2[difficulty] / 2,
+              width: HITBOX_SIZES.zone2[difficulty],
+              height: HITBOX_SIZES.zone2[difficulty],
+              background: "rgba(0,255,0,0.35)",
+              border: "3px solid #00FF00",
+              borderRadius: 6,
+              zIndex: 100,
+            }}
+          ></div>
+        </>
+      )}
+
+      {/* MISS GRID */}
+      {SHOW_DEBUG &&
+        getMissGrid().map((cell, idx) => (
+          <div
+            key={idx}
+            style={{
+              position: "absolute",
+              left: cell.x,
+              top: cell.y,
+              width: cell.w,
+              height: cell.h,
+              background: "rgba(255,0,0,0.18)",
+              border: "2px solid red",
+              color: "white",
+              fontSize: 18,
+              display: "flex",
+              justifyContent: "center",
+              alignItems: "center",
+              pointerEvents: "none",
+            }}
+          >
+            {cell.type}
+          </div>
+        ))}
+
+      {/* UI: Score + Time */}
+      <div style={{ position: "absolute", top: 20, left: 20, color: "white", fontSize: "2.5rem" }}>
+        {score}
+      </div>
+
+      <div style={{ position: "absolute", top: 20, right: 20, color: "white", fontSize: "2.5rem" }}>
+        {timeLeft ?? "--"}
+      </div>
 
       {/* COUNTDOWN */}
       {displayCountdown !== null && (
@@ -255,36 +358,12 @@ export default function ShooterPage() {
             fontSize: "clamp(4rem, 10vw, 12rem)",
             fontWeight: 900,
             textShadow: "0 0 40px red",
-            zIndex: 1000,
+            zIndex: 500,
           }}
         >
           {displayCountdown > 0 ? displayCountdown : "START!"}
         </div>
       )}
-
-      {/* SCORE + TIMER */}
-      <div style={{ position: "absolute", top: 20, left: 20, color: "white", fontSize: "2.5rem" }}>
-        {score}
-      </div>
-
-      <div style={{ position: "absolute", top: 20, right: 20, color: "white", fontSize: "2.5rem" }}>
-        {timeLeft ?? "--"}
-      </div>
-
-      {/* SHOOT MESSAGE */}
-      <div
-        style={{
-          position: "absolute",
-          bottom: "5%",
-          width: "100%",
-          textAlign: "center",
-          color: "#ccc",
-          fontSize: "2rem",
-          opacity: displayCountdown !== null ? 0 : 1,
-        }}
-      >
-        SWIPE UP TO SHOOT
-      </div>
     </div>
   );
 }
