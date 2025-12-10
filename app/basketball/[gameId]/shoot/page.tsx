@@ -105,29 +105,33 @@ export default function ShooterPage() {
       .subscribe();
 
     return () => {
-      try { supabase.removeChannel(channel); } catch {}
+      try {
+        supabase.removeChannel(channel);
+      } catch {}
     };
   }, [gameId]);
 
-
   // ------------------------------------------------------------
-  // MISS GRID SYSTEM (FINALIZED WITH MEDIUM FIXED)
+  // MISS GRID SYSTEM — FINAL LAYOUT
   // ------------------------------------------------------------
   function getMissGrid() {
-    let rows = 5;
-    let cols = 1;
+    let rows: number;
+    let cols: number;
 
-    if (difficulty === "medium") {
+    if (difficulty === "easy") {
+      // 🤍 Easy: 3 columns x 5 rows (center column "active", sides still cells)
+      cols = 3;
+      rows = 5;
+    } else if (difficulty === "medium") {
+      // 🟡 Medium: 5 columns x 10 rows
       cols = 5;
       rows = 10;
-    }
-
-    if (difficulty === "hard") {
+    } else if (difficulty === "hard") {
+      // 🔴 Hard: 7 columns x 14 rows
       cols = 7;
       rows = 14;
-    }
-
-    if (difficulty === "expert") {
+    } else {
+      // 🖤 Expert: 9 columns x 18 rows
       cols = 9;
       rows = 18;
     }
@@ -135,24 +139,25 @@ export default function ShooterPage() {
     const W = window.innerWidth;
     const H = window.innerHeight;
 
-    let cellSize;
-    let offsetX;
-    let offsetY;
+    // All modes: same sizing rule → equal cells, centered grid
+    const cellSize = Math.min(W / cols, H / rows);
 
-    // ⭐ SPECIAL FIX: MEDIUM — MUST FIT HEIGHT FIRST
-    if (difficulty === "medium") {
-      cellSize = H / rows; // ensures full grid fits vertically
-      const totalW = cellSize * cols;
-      offsetX = (W - totalW) / 2; // center horizontally
-      offsetY = 0;                // no top padding (can center if preferred)
-    } else {
-      // ⭐ EASY / HARD / EXPERT — normal centered square grid
-      cellSize = Math.min(W / cols, H / rows);
-      offsetX = (W - cols * cellSize) / 2;
-      offsetY = (H - rows * cellSize) / 2;
-    }
+    const totalW = cols * cellSize;
+    const totalH = rows * cellSize;
 
-    const cells = [];
+    // Center the grid
+    const offsetX = (W - totalW) / 2;
+    const offsetY = (H - totalH) / 2;
+
+    const cells: {
+      row: number;
+      col: number;
+      x: number;
+      y: number;
+      w: number;
+      h: number;
+      type: string;
+    }[] = [];
 
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
@@ -176,9 +181,8 @@ export default function ShooterPage() {
     return cells;
   }
 
-
-  // Send miss (until hitboxes chosen)
-  function sendShot(pathType) {
+  // For now everything is a "miss" until we define hitboxes
+  function sendShot(pathType: string) {
     if (!playerId || laneIndex === null) return;
 
     supabase.channel(`basketball-${gameId}`).send({
@@ -192,7 +196,7 @@ export default function ShooterPage() {
     });
   }
 
-  function handleTouchEnd(e) {
+  function handleTouchEnd(e: React.TouchEvent<HTMLDivElement>) {
     if (displayCountdown !== null) return;
 
     const t = e.changedTouches[0];
@@ -214,7 +218,6 @@ export default function ShooterPage() {
     }
   }
 
-
   // ------------------------------------------------------------
   // RENDER PAGE
   // ------------------------------------------------------------
@@ -231,7 +234,6 @@ export default function ShooterPage() {
       }}
       onTouchEnd={handleTouchEnd}
     >
-
       {/* MISS GRID */}
       {SHOW_DEBUG &&
         getMissGrid().map((cell, i) => (
@@ -258,24 +260,28 @@ export default function ShooterPage() {
         ))}
 
       {/* SCORE */}
-      <div style={{
-        position: "absolute",
-        top: 20,
-        left: 20,
-        color: "white",
-        fontSize: "2.5rem",
-      }}>
+      <div
+        style={{
+          position: "absolute",
+          top: 20,
+          left: 20,
+          color: "white",
+          fontSize: "2.5rem",
+        }}
+      >
         {score}
       </div>
 
       {/* TIMER */}
-      <div style={{
-        position: "absolute",
-        top: 20,
-        right: 20,
-        color: "white",
-        fontSize: "2.5rem",
-      }}>
+      <div
+        style={{
+          position: "absolute",
+          top: 20,
+          right: 20,
+          color: "white",
+          fontSize: "2.5rem",
+        }}
+      >
         {timeLeft ?? "--"}
       </div>
 
@@ -299,7 +305,6 @@ export default function ShooterPage() {
           {displayCountdown > 0 ? displayCountdown : "START!"}
         </div>
       )}
-
     </div>
   );
 }
