@@ -5,22 +5,22 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { useCountdown } from "@/app/basketball/hooks/useCountdown";
 
-const SHOW_DEBUG = true; // shows red MISS GRID. Hit boxes removed.
+const SHOW_DEBUG = true; // Shows red miss grid. Hit boxes removed.
 
 const CELL_COLORS = [
   "#FF3B30", "#FF9500", "#FFCC00", "#34C759", "#5AC8FA",
   "#007AFF", "#5856D6", "#AF52DE", "#FF2D55", "#A2845E",
 ];
 
-// Hitbox sizes (still used for detection, but not displayed)
+// Sizes for the invisible hitboxes (used for logic)
 const HITBOX_SIZES = {
-  zone1: {
+  zone1: { // 3PT rainbow shot
     easy: 220,
     medium: 150,
     hard: 90,
     expert: 45,
   },
-  zone2: {
+  zone2: { // 2PT shot
     easy: 260,
     medium: 180,
     hard: 120,
@@ -45,7 +45,7 @@ export default function ShooterPage() {
     "easy" | "medium" | "hard" | "expert"
   >("medium");
 
-  // hit box positions (still used logically — not drawn)
+  // Hit zone positions (invisible)
   const [zone1, setZone1] = useState({ x: 200, y: 200 });
   const [zone2, setZone2] = useState({ x: 200, y: 500 });
 
@@ -55,7 +55,7 @@ export default function ShooterPage() {
     if (stored) setPlayerId(stored);
   }, []);
 
-  // Load game settings (difficulty + hit zone positions)
+  // Load game settings (difficulty + zone positions)
   useEffect(() => {
     async function loadGame() {
       const { data } = await supabase
@@ -112,8 +112,6 @@ export default function ShooterPage() {
   }
 
   useEffect(() => {
-    if (!gameId) return;
-
     const channel = supabase
       .channel(`basketball-${gameId}`)
       .on("broadcast", { event: "start_countdown" }, () =>
@@ -134,7 +132,7 @@ export default function ShooterPage() {
   }, [gameId]);
 
   // ------------------------------------------------------------
-  // MISS GRID SETUP (NOW UPDATED FOR HARD/EXPERT)
+  // MISS GRID — updated to 1×5, 3×5, 7×7, 9×9 and perfectly square
   // ------------------------------------------------------------
   function getMissGrid() {
     let rows = 5;
@@ -146,35 +144,39 @@ export default function ShooterPage() {
     }
 
     if (difficulty === "hard") {
-      cols = 6;
-      rows = 6; // squared
+      cols = 7;
+      rows = 7; // ⭐ Hard = 7×7
     }
 
     if (difficulty === "expert") {
-      cols = 8;
-      rows = 8; // squared
+      cols = 9;
+      rows = 9; // ⭐ Expert = 9×9
     }
 
+    // Create a perfectly square play area
     const width = window.innerWidth;
     const height = window.innerHeight;
-
-    const cellW = width / cols;
-    const cellH = height / rows;
+    const size = Math.min(width, height);
+    const offsetX = (width - size) / 2;
+    const offsetY = (height - size) / 2;
+    const cellSize = size / cols;
 
     const cells = [];
 
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         cells.push({
-          x: c * cellW,
-          y: r * cellH,
-          w: cellW,
-          h: cellH,
+          row: r,
+          col: c,
+          x: offsetX + c * cellSize,
+          y: offsetY + r * cellSize,
+          w: cellSize,
+          h: cellSize,
           type:
+            r === 0 ? "miss_long" :
+            r === rows - 1 ? "miss_short" :
             c === 0 ? "miss_left" :
             c === cols - 1 ? "miss_right" :
-            r === rows - 1 ? "miss_short" :
-            r === 0 ? "miss_long" :
             "miss_far",
         });
       }
@@ -183,7 +185,7 @@ export default function ShooterPage() {
     return cells;
   }
 
-  // hit detection helper
+  // Hitbox detection
   function pointInBox(px, py, box) {
     return (
       px >= box.left &&
@@ -193,7 +195,7 @@ export default function ShooterPage() {
     );
   }
 
-  // send shot
+  // Send shot
   function sendShot(pathType, points) {
     if (!playerId || laneIndex === null) return;
 
@@ -208,7 +210,7 @@ export default function ShooterPage() {
     });
   }
 
-  // touch handler
+  // Touch handler
   function handleTouchEnd(e) {
     if (displayCountdown !== null) return;
 
@@ -216,45 +218,34 @@ export default function ShooterPage() {
     const x = t.clientX;
     const y = t.clientY;
 
-    // Hitbox sizes still matter logically
-    const zone1Size = HITBOX_SIZES.zone1[difficulty];
-    const zone2Size = HITBOX_SIZES.zone2[difficulty];
+    const size1 = HITBOX_SIZES.zone1[difficulty];
+    const size2 = HITBOX_SIZES.zone2[difficulty];
 
     const z1 = {
-      left: zone1.x - zone1Size / 2,
-      top: zone1.y - zone1Size / 2,
-      size: zone1Size,
+      left: zone1.x - size1 / 2,
+      top: zone1.y - size1 / 2,
+      size: size1,
     };
 
     const z2 = {
-      left: zone2.x - zone2Size / 2,
-      top: zone2.y - zone2Size / 2,
-      size: zone2Size,
+      left: zone2.x - size2 / 2,
+      top: zone2.y - size2 / 2,
+      size: size2,
     };
 
-    // 3-pt
-    if (pointInBox(x, y, z1)) {
-      sendShot("three_point", 3);
-      return;
-    }
+    if (pointInBox(x, y, z1)) return sendShot("three_point", 3);
+    if (pointInBox(x, y, z2)) return sendShot("two_point", 2);
 
-    // 2-pt
-    if (pointInBox(x, y, z2)) {
-      sendShot("two_point", 2);
-      return;
-    }
-
-    // MISS GRID
-    const grid = getMissGrid();
-    for (const cell of grid) {
+    // MISS GRID fallback
+    const cells = getMissGrid();
+    for (const cell of cells) {
       if (
         x >= cell.x &&
         x <= cell.x + cell.w &&
         y >= cell.y &&
         y <= cell.y + cell.h
       ) {
-        sendShot(cell.type, 0);
-        return;
+        return sendShot(cell.type, 0);
       }
     }
   }
@@ -297,33 +288,32 @@ export default function ShooterPage() {
               alignItems: "center",
             }}
           >
-            {cell.type}
+            {cell.row},{cell.col}
           </div>
         ))}
 
-      {/* SCORE */}
+      {/* SCORE + TIMER */}
       <div style={{
         position: "absolute",
         top: 20,
         left: 20,
         color: "white",
-        fontSize: "2.5rem"
+        fontSize: "2.5rem",
       }}>
         {score}
       </div>
 
-      {/* TIMER */}
       <div style={{
         position: "absolute",
         top: 20,
         right: 20,
         color: "white",
-        fontSize: "2.5rem"
+        fontSize: "2.5rem",
       }}>
         {timeLeft ?? "--"}
       </div>
 
-      {/* COUNTDOWN OVERLAY */}
+      {/* COUNTDOWN */}
       {displayCountdown !== null && (
         <div
           style={{
