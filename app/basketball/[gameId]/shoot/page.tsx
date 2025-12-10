@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { useCountdown } from "@/app/basketball/hooks/useCountdown";
 
-const SHOW_DEBUG = true; // shows red MISS GRID
+const SHOW_DEBUG = true; // shows grid + hit boxes
 
 const CELL_COLORS = [
   "#FF3B30", "#FF9500", "#FFCC00", "#34C759", "#5AC8FA",
@@ -25,9 +25,8 @@ export default function ShooterPage() {
   const [score, setScore] = useState(0);
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
 
-  const [difficulty, setDifficulty] = useState<
-    "easy" | "medium" | "hard" | "expert"
-  >("easy");
+  const [difficulty, setDifficulty] =
+    useState<"easy" | "medium" | "hard" | "expert">("easy");
 
   // Load player ID
   useEffect(() => {
@@ -35,7 +34,7 @@ export default function ShooterPage() {
     if (stored) setPlayerId(stored);
   }, []);
 
-  // Load player info
+  // Load player row/column color + score
   useEffect(() => {
     if (!playerId) return;
 
@@ -45,7 +44,6 @@ export default function ShooterPage() {
         .select("*")
         .eq("id", playerId)
         .single();
-
       if (!data) return;
 
       setLaneIndex(data.lane_index);
@@ -58,7 +56,7 @@ export default function ShooterPage() {
     return () => clearInterval(interval);
   }, [playerId]);
 
-  // Load game settings
+  // Load difficulty from DB
   useEffect(() => {
     async function loadGame() {
       const { data } = await supabase
@@ -74,7 +72,7 @@ export default function ShooterPage() {
     loadGame();
   }, [gameId]);
 
-  // Timer sync
+  // Game timer sync
   async function syncGameStart() {
     const { data } = await supabase
       .from("bb_games")
@@ -84,13 +82,13 @@ export default function ShooterPage() {
 
     if (!data?.game_running || !data.game_timer_start) return;
 
-    const startMS = new Date(data.game_timer_start).getTime();
-    const elapsed = Math.floor((Date.now() - startMS) / 1000);
+    const start = new Date(data.game_timer_start).getTime();
+    const elapsed = Math.floor((Date.now() - start) / 1000);
     setTimeLeft(Math.max(data.duration_seconds - elapsed, 0));
   }
 
   useEffect(() => {
-    const channel = supabase
+    const ch = supabase
       .channel(`basketball-${gameId}`)
       .on("broadcast", { event: "start_countdown" }, () =>
         setLocalCountdown(10)
@@ -106,32 +104,25 @@ export default function ShooterPage() {
 
     return () => {
       try {
-        supabase.removeChannel(channel);
+        supabase.removeChannel(ch);
       } catch {}
     };
   }, [gameId]);
 
   // ------------------------------------------------------------
-  // MISS GRID SYSTEM — FINAL LAYOUT
+  // GRID LAYOUT
   // ------------------------------------------------------------
   function getMissGrid() {
-    let rows: number;
-    let cols: number;
+    let rows = 5;
+    let cols = 3; // EASY default
 
-    if (difficulty === "easy") {
-      // 🤍 Easy: 3 columns x 5 rows (center column "active", sides still cells)
-      cols = 3;
-      rows = 5;
-    } else if (difficulty === "medium") {
-      // 🟡 Medium: 5 columns x 10 rows
+    if (difficulty === "medium") {
       cols = 5;
       rows = 10;
     } else if (difficulty === "hard") {
-      // 🔴 Hard: 7 columns x 14 rows
       cols = 7;
       rows = 14;
-    } else {
-      // 🖤 Expert: 9 columns x 18 rows
+    } else if (difficulty === "expert") {
       cols = 9;
       rows = 18;
     }
@@ -139,26 +130,17 @@ export default function ShooterPage() {
     const W = window.innerWidth;
     const H = window.innerHeight;
 
-    // All modes: same sizing rule → equal cells, centered grid
+    // perfect squares
     const cellSize = Math.min(W / cols, H / rows);
 
+    // centered
     const totalW = cols * cellSize;
     const totalH = rows * cellSize;
 
-    // Center the grid
     const offsetX = (W - totalW) / 2;
     const offsetY = (H - totalH) / 2;
 
-    const cells: {
-      row: number;
-      col: number;
-      x: number;
-      y: number;
-      w: number;
-      h: number;
-      type: string;
-    }[] = [];
-
+    const cells = [];
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         cells.push({
@@ -168,21 +150,44 @@ export default function ShooterPage() {
           y: offsetY + r * cellSize,
           w: cellSize,
           h: cellSize,
-          type:
-            r === 0 ? "miss_long" :
-            r === rows - 1 ? "miss_short" :
-            c === 0 ? "miss_left" :
-            c === cols - 1 ? "miss_right" :
-            "miss_far",
         });
       }
     }
-
     return cells;
   }
 
-  // For now everything is a "miss" until we define hitboxes
-  function sendShot(pathType: string) {
+  // ------------------------------------------------------------
+  // HITBOX MAP (GREEN CELLS)
+  // ------------------------------------------------------------
+  function getHitboxMap() {
+    if (difficulty === "easy") {
+      return {
+        three: { r: 0, c: 1 },
+        two: { r: 2, c: 1 },
+      };
+    }
+    if (difficulty === "medium") {
+      return {
+        three: { r: 1, c: 2 },
+        two: { r: 4, c: 2 },
+      };
+    }
+    if (difficulty === "hard") {
+      return {
+        three: { r: 1, c: 3 },
+        two: { r: 6, c: 3 },
+      };
+    }
+    return {
+      three: { r: 1, c: 4 },
+      two: { r: 6, c: 4 },
+    };
+  }
+
+  // ------------------------------------------------------------
+  // SENDING SHOT (miss only for now)
+  // ------------------------------------------------------------
+  function sendShot(type: string) {
     if (!playerId || laneIndex === null) return;
 
     supabase.channel(`basketball-${gameId}`).send({
@@ -190,7 +195,7 @@ export default function ShooterPage() {
       event: "shot_fired",
       payload: {
         lane_index: laneIndex,
-        pathType,
+        pathType: type,
         points: 0,
       },
     });
@@ -206,13 +211,8 @@ export default function ShooterPage() {
     const grid = getMissGrid();
 
     for (const cell of grid) {
-      if (
-        x >= cell.x &&
-        x <= cell.x + cell.w &&
-        y >= cell.y &&
-        y <= cell.y + cell.h
-      ) {
-        sendShot(cell.type);
+      if (x >= cell.x && x <= cell.x + cell.w && y >= cell.y && y <= cell.y + cell.h) {
+        sendShot("miss");
         return;
       }
     }
@@ -221,6 +221,8 @@ export default function ShooterPage() {
   // ------------------------------------------------------------
   // RENDER PAGE
   // ------------------------------------------------------------
+  const hitboxes = getHitboxMap();
+
   return (
     <div
       style={{
@@ -234,54 +236,67 @@ export default function ShooterPage() {
       }}
       onTouchEnd={handleTouchEnd}
     >
-      {/* MISS GRID */}
+      {/* GRID VISUALS */}
       {SHOW_DEBUG &&
-        getMissGrid().map((cell, i) => (
-          <div
-            key={i}
-            style={{
-              position: "absolute",
-              left: cell.x,
-              top: cell.y,
-              width: cell.w,
-              height: cell.h,
-              background: "rgba(255,0,0,0.15)",
-              border: "2px solid red",
-              color: "white",
-              fontSize: 12,
-              pointerEvents: "none",
-              display: "flex",
-              justifyContent: "center",
-              alignItems: "center",
-            }}
-          >
-            {cell.row},{cell.col}
-          </div>
-        ))}
+        getMissGrid().map((cell, idx) => {
+          let bg = "rgba(255,0,0,0.15)";
+          let border = "2px solid red";
+
+          // Highlight 3-pointer
+          if (cell.row === hitboxes.three.r && cell.col === hitboxes.three.c) {
+            bg = "rgba(0,255,0,0.45)";
+            border = "3px solid #00ff00";
+          }
+
+          // Highlight 2-pointer
+          if (cell.row === hitboxes.two.r && cell.col === hitboxes.two.c) {
+            bg = "rgba(0,150,0,0.45)";
+            border = "3px solid #009900";
+          }
+
+          return (
+            <div
+              key={idx}
+              style={{
+                position: "absolute",
+                left: cell.x,
+                top: cell.y,
+                width: cell.w,
+                height: cell.h,
+                background: bg,
+                border,
+                color: "white",
+                fontSize: 12,
+                pointerEvents: "none",
+                display: "flex",
+                justifyContent: "center",
+                alignItems: "center",
+              }}
+            >
+              {cell.row},{cell.col}
+            </div>
+          );
+        })}
 
       {/* SCORE */}
-      <div
-        style={{
-          position: "absolute",
-          top: 20,
-          left: 20,
-          color: "white",
-          fontSize: "2.5rem",
-        }}
-      >
+      <div style={{
+        position: "absolute",
+        top: 20,
+        left: 20,
+        color: "white",
+        fontSize: "2.5rem",
+      }}>
         {score}
       </div>
 
       {/* TIMER */}
-      <div
-        style={{
-          position: "absolute",
-          top: 20,
-          right: 20,
-          color: "white",
-          fontSize: "2.5rem",
-        }}
-      >
+      <div style={{
+        position: "absolute",
+        top: 20,
+        right: 20,
+        color: "white",
+        fontSize: "2.5rem",
+      }}>
         {timeLeft ?? "--"}
       </div>
 
