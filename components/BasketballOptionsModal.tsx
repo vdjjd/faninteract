@@ -20,7 +20,11 @@ export default function BasketballOptionsModal({
 }: BasketballOptionsModalProps) {
   const [title, setTitle] = useState("");
   const [duration, setDuration] = useState(90);
-  const [difficulty, setDifficulty] = useState<"easy" | "medium" | "hard">("medium");
+
+  // ⭐ UPDATED: include "expert"
+  const [difficulty, setDifficulty] = useState<
+    "easy" | "medium" | "hard" | "expert"
+  >("medium");
 
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -33,7 +37,9 @@ export default function BasketballOptionsModal({
 
     setTitle(game.title ?? "");
     setDuration(game.duration_seconds ?? 90);
-    setDifficulty(game.difficulty ?? "medium");  // ⭐ New line
+
+    // ⭐ Load expert difficulty if saved
+    setDifficulty(game.difficulty ?? "medium");
   }, [game, saving]);
 
   if (!game) return null;
@@ -51,7 +57,7 @@ export default function BasketballOptionsModal({
         .update({
           title: title.trim(),
           duration_seconds: duration,
-          difficulty,   // ⭐ Save difficulty
+          difficulty, // ⭐ now saves expert mode
         })
         .eq("id", game.id);
 
@@ -111,7 +117,9 @@ export default function BasketballOptionsModal({
       <select
         value={duration}
         onChange={(e) => setDuration(Number(e.target.value))}
-        className={cn("w-full px-3 py-2 mb-4 rounded-lg text-black text-sm cursor-pointer")}
+        className={cn(
+          "w-full px-3 py-2 mb-4 rounded-lg text-black text-sm cursor-pointer"
+        )}
       >
         <option value={30}>30 seconds</option>
         <option value={60}>60 seconds</option>
@@ -120,7 +128,7 @@ export default function BasketballOptionsModal({
       </select>
 
       {/* ------------------------------------------------------------
-         ⭐ NEW: DIFFICULTY DROPDOWN
+         ⭐ UPDATED: DIFFICULTY DROPDOWN (now includes Expert)
       ------------------------------------------------------------ */}
       <label className={cn("block text-sm font-semibold mb-1 text-white")}>
         Shot Difficulty
@@ -129,11 +137,14 @@ export default function BasketballOptionsModal({
       <select
         value={difficulty}
         onChange={(e) => setDifficulty(e.target.value as any)}
-        className={cn("w-full px-3 py-2 mb-4 rounded-lg text-black text-sm cursor-pointer")}
+        className={cn(
+          "w-full px-3 py-2 mb-4 rounded-lg text-black text-sm cursor-pointer"
+        )}
       >
         <option value="easy">Easy (Large Zones)</option>
         <option value="medium">Medium (Normal Zones)</option>
         <option value="hard">Hard (Small Zones)</option>
+        <option value="expert">Expert (Tiny Zones — 6×8 Grid)</option>
       </select>
 
       {/* ERROR MESSAGE */}
