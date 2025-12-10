@@ -5,24 +5,22 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { useCountdown } from "@/app/basketball/hooks/useCountdown";
 
-const SHOW_DEBUG = true; // Turn off later to hide red/green boxes
+const SHOW_DEBUG = true; // shows red MISS GRID. Hit boxes removed.
 
 const CELL_COLORS = [
   "#FF3B30", "#FF9500", "#FFCC00", "#34C759", "#5AC8FA",
   "#007AFF", "#5856D6", "#AF52DE", "#FF2D55", "#A2845E",
 ];
 
-// ------------------------------------------------------------
-// HIT BOX SIZE TABLE
-// ------------------------------------------------------------
+// Hitbox sizes (still used for detection, but not displayed)
 const HITBOX_SIZES = {
-  zone1: { // 3PT rainbow
+  zone1: {
     easy: 220,
     medium: 150,
     hard: 90,
     expert: 45,
   },
-  zone2: { // 2PT normal shot
+  zone2: {
     easy: 260,
     medium: 180,
     hard: 120,
@@ -43,22 +41,21 @@ export default function ShooterPage() {
   const [score, setScore] = useState(0);
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
 
-  // Game config from DB
-  const [difficulty, setDifficulty] = useState<"easy" | "medium" | "hard" | "expert">("medium");
-  const [zone1, setZone1] = useState({ x: 200, y: 200 }); // 3PT
-  const [zone2, setZone2] = useState({ x: 200, y: 500 }); // 2PT
+  const [difficulty, setDifficulty] = useState<
+    "easy" | "medium" | "hard" | "expert"
+  >("medium");
 
-  // ------------------------------------------------------------
-  // LOAD PLAYER ID
-  // ------------------------------------------------------------
+  // hit box positions (still used logically — not drawn)
+  const [zone1, setZone1] = useState({ x: 200, y: 200 });
+  const [zone2, setZone2] = useState({ x: 200, y: 500 });
+
+  // Load player ID
   useEffect(() => {
     const stored = localStorage.getItem("bb_player_id");
     if (stored) setPlayerId(stored);
   }, []);
 
-  // ------------------------------------------------------------
-  // LOAD GAME SETTINGS FROM DB (difficulty + zone positions)
-  // ------------------------------------------------------------
+  // Load game settings (difficulty + hit zone positions)
   useEffect(() => {
     async function loadGame() {
       const { data } = await supabase
@@ -76,9 +73,7 @@ export default function ShooterPage() {
     loadGame();
   }, [gameId]);
 
-  // ------------------------------------------------------------
-  // LOAD PLAYER INFORMATION
-  // ------------------------------------------------------------
+  // Load player info
   useEffect(() => {
     if (!playerId) return;
 
@@ -101,9 +96,7 @@ export default function ShooterPage() {
     return () => clearInterval(interval);
   }, [playerId]);
 
-  // ------------------------------------------------------------
-  // TIMER SYNC
-  // ------------------------------------------------------------
+  // Timer sync
   async function syncGameStart() {
     const { data } = await supabase
       .from("bb_games")
@@ -140,9 +133,8 @@ export default function ShooterPage() {
     };
   }, [gameId]);
 
-
   // ------------------------------------------------------------
-  // MISS GRID GENERATION FOR EACH DIFFICULTY
+  // MISS GRID SETUP (NOW UPDATED FOR HARD/EXPERT)
   // ------------------------------------------------------------
   function getMissGrid() {
     let rows = 5;
@@ -154,13 +146,13 @@ export default function ShooterPage() {
     }
 
     if (difficulty === "hard") {
-      cols = 5;
-      rows = 6;
+      cols = 6;
+      rows = 6; // squared
     }
 
     if (difficulty === "expert") {
-      cols = 6;
-      rows = 8;
+      cols = 8;
+      rows = 8; // squared
     }
 
     const width = window.innerWidth;
@@ -191,10 +183,7 @@ export default function ShooterPage() {
     return cells;
   }
 
-
-  // ------------------------------------------------------------
-  // TOUCH HIT TESTING
-  // ------------------------------------------------------------
+  // hit detection helper
   function pointInBox(px, py, box) {
     return (
       px >= box.left &&
@@ -204,9 +193,7 @@ export default function ShooterPage() {
     );
   }
 
-  // ------------------------------------------------------------
-  // SEND SHOT EVENT
-  // ------------------------------------------------------------
+  // send shot
   function sendShot(pathType, points) {
     if (!playerId || laneIndex === null) return;
 
@@ -221,9 +208,7 @@ export default function ShooterPage() {
     });
   }
 
-  // ------------------------------------------------------------
-  // TOUCH END HANDLER
-  // ------------------------------------------------------------
+  // touch handler
   function handleTouchEnd(e) {
     if (displayCountdown !== null) return;
 
@@ -231,6 +216,7 @@ export default function ShooterPage() {
     const x = t.clientX;
     const y = t.clientY;
 
+    // Hitbox sizes still matter logically
     const zone1Size = HITBOX_SIZES.zone1[difficulty];
     const zone2Size = HITBOX_SIZES.zone2[difficulty];
 
@@ -246,13 +232,13 @@ export default function ShooterPage() {
       size: zone2Size,
     };
 
-    // 3-POINT SHOT
+    // 3-pt
     if (pointInBox(x, y, z1)) {
       sendShot("three_point", 3);
       return;
     }
 
-    // 2-POINT SHOT
+    // 2-pt
     if (pointInBox(x, y, z2)) {
       sendShot("two_point", 2);
       return;
@@ -274,7 +260,7 @@ export default function ShooterPage() {
   }
 
   // ------------------------------------------------------------
-  // RENDER PAGE
+  // RENDER
   // ------------------------------------------------------------
   return (
     <div
@@ -290,42 +276,7 @@ export default function ShooterPage() {
       onTouchEnd={handleTouchEnd}
     >
 
-      {/* HIT ZONES — GREEN */}
-      {SHOW_DEBUG && (
-        <>
-          {/* 3-POINT HIT ZONE */}
-          <div
-            style={{
-              position: "absolute",
-              left: zone1.x - HITBOX_SIZES.zone1[difficulty] / 2,
-              top: zone1.y - HITBOX_SIZES.zone1[difficulty] / 2,
-              width: HITBOX_SIZES.zone1[difficulty],
-              height: HITBOX_SIZES.zone1[difficulty],
-              background: "rgba(0,255,0,0.3)",
-              border: "3px solid #00FF00",
-              borderRadius: 8,
-              zIndex: 200,
-            }}
-          />
-
-          {/* 2-POINT HIT ZONE */}
-          <div
-            style={{
-              position: "absolute",
-              left: zone2.x - HITBOX_SIZES.zone2[difficulty] / 2,
-              top: zone2.y - HITBOX_SIZES.zone2[difficulty] / 2,
-              width: HITBOX_SIZES.zone2[difficulty],
-              height: HITBOX_SIZES.zone2[difficulty],
-              background: "rgba(0,255,0,0.3)",
-              border: "3px solid #00FF00",
-              borderRadius: 8,
-              zIndex: 200,
-            }}
-          />
-        </>
-      )}
-
-      {/* MISS GRID — RED */}
+      {/* MISS GRID ONLY */}
       {SHOW_DEBUG &&
         getMissGrid().map((cell, i) => (
           <div
@@ -350,16 +301,29 @@ export default function ShooterPage() {
           </div>
         ))}
 
-      {/* UI: Score + Time */}
-      <div style={{ position: "absolute", top: 20, left: 20, color: "white", fontSize: "2.5rem" }}>
+      {/* SCORE */}
+      <div style={{
+        position: "absolute",
+        top: 20,
+        left: 20,
+        color: "white",
+        fontSize: "2.5rem"
+      }}>
         {score}
       </div>
 
-      <div style={{ position: "absolute", top: 20, right: 20, color: "white", fontSize: "2.5rem" }}>
+      {/* TIMER */}
+      <div style={{
+        position: "absolute",
+        top: 20,
+        right: 20,
+        color: "white",
+        fontSize: "2.5rem"
+      }}>
         {timeLeft ?? "--"}
       </div>
 
-      {/* COUNTDOWN */}
+      {/* COUNTDOWN OVERLAY */}
       {displayCountdown !== null && (
         <div
           style={{
@@ -376,7 +340,7 @@ export default function ShooterPage() {
             zIndex: 500,
           }}
         >
-          {displayCountdown > 0 ? countdownValue : "START!"}
+          {displayCountdown > 0 ? displayCountdown : "START!"}
         </div>
       )}
 

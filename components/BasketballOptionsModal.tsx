@@ -141,10 +141,10 @@ export default function BasketballOptionsModal({
           "w-full px-3 py-2 mb-4 rounded-lg text-black text-sm cursor-pointer"
         )}
       >
-        <option value="easy">Easy (Large Zones)</option>
-        <option value="medium">Medium (Normal Zones)</option>
-        <option value="hard">Hard (Small Zones)</option>
-        <option value="expert">Expert (Tiny Zones — 6×8 Grid)</option>
+        <option value="easy">Easy</option>
+        <option value="medium">Medium</option>
+        <option value="hard">Hard</option>
+        <option value="expert">Expert</option>
       </select>
 
       {/* ERROR MESSAGE */}
