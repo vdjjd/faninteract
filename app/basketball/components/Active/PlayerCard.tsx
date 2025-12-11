@@ -1,7 +1,6 @@
 "use client";
 
 import React from "react";
-import BallRenderer from "@/app/basketball/components/Active/BallRenderer";
 import RimSparks from "@/app/basketball/components/Effects/RimSparks";
 import { project3D } from "@/app/basketball/utils/projection";
 
@@ -93,18 +92,19 @@ function Rim3D() {
 }
 
 /* --------------------------------------------------
-   MAIN PLAYERCARD
+   MAIN PLAYERCARD (MODIFIED FOR ANIMATION OVERLAY)
 --------------------------------------------------- */
 export default function PlayerCard({
   index,
   player,
-  balls,
+  balls = [],
   timeLeft,
   score,
   borderColor,
   timerExpired,
   hostLogo,
   maxScore,
+  animationSrc,     // <-- NEW PROP
 }) {
   const isWinner =
     timerExpired && player && player.score === maxScore && maxScore > 0;
@@ -147,6 +147,22 @@ export default function PlayerCard({
         ...winnerPulseStyle,
       }}
     >
+      {/* ANIMATION OVERLAY */}
+      {animationSrc && (
+        <img
+          src={animationSrc}
+          style={{
+            position: "absolute",
+            inset: 0,
+            width: "100%",
+            height: "100%",
+            objectFit: "cover",
+            zIndex: 50,
+            pointerEvents: "none",
+          }}
+        />
+      )}
+
       {/* BACKBOARD + RIM (3D) */}
       <Backboard hostLogo={hostLogo} />
       <Rim3D />
@@ -155,7 +171,7 @@ export default function PlayerCard({
       <Net state={netState} />
       <RimSparks x={50} y={18} active={netState === "hit"} zIndex={180} />
 
-      {/* STATIC PREVIEW BALL */}
+      {/* STATIC BALL PREVIEW */}
       <div
         style={{
           position: "absolute",
@@ -175,15 +191,6 @@ export default function PlayerCard({
           }}
         />
       </div>
-
-      {/* PHYSICS BALLS */}
-      {balls.map((ball) => (
-        <React.Fragment key={ball.id}>
-          <BallRenderer ball={ball} />
-        </React.Fragment>
-      ))}
-
-      {/* --- UI ELEMENTS REMAIN EXACTLY THE SAME BELOW --- */}
 
       {/* TIMER */}
       <div
