@@ -5,20 +5,20 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { useCountdown } from "@/app/basketball/hooks/useCountdown";
 
-const SHOW_DEBUG = true; // Toggle grid visibility
+const SHOW_DEBUG = true;
 
 const CELL_COLORS = [
   "#FF3B30", "#FF9500", "#FFCC00", "#34C759", "#5AC8FA",
   "#007AFF", "#5856D6", "#AF52DE", "#FF2D55", "#A2845E",
 ];
 
-// ===========================================
-// SVG SWIPE BUTTON COMPONENT
-// ===========================================
+// ------------------------------------------------------------
+// SVG BUTTON COMPONENT
+// ------------------------------------------------------------
 function SwipeButton({ x, y, size, laneColor }) {
-  const glow = `0 0 20px ${laneColor}, 0 0 40px ${laneColor}`;
   const radius = size / 2;
   const textRadius = radius * 0.75;
+  const glow = `0 0 20px ${laneColor}, 0 0 40px ${laneColor}`;
 
   return (
     <svg
@@ -29,33 +29,29 @@ function SwipeButton({ x, y, size, laneColor }) {
         left: x,
         top: y,
         transform: "translate(-50%, -50%)",
-        overflow: "visible",
         filter: `drop-shadow(${glow})`,
         zIndex: 999,
+        pointerEvents: "none",
       }}
     >
-      {/* Circle */}
       <circle cx={radius} cy={radius} r={radius} fill={laneColor} />
 
-      {/* TOP ARC */}
       <path
         id="topArc"
         d={`M ${radius - textRadius} ${radius}
-           A ${textRadius} ${textRadius} 0 0 1
-             ${radius + textRadius} ${radius}`}
+            A ${textRadius} ${textRadius} 0 0 1
+              ${radius + textRadius} ${radius}`}
         fill="none"
       />
 
-      {/* BOTTOM ARC */}
       <path
         id="bottomArc"
         d={`M ${radius + textRadius} ${radius}
-           A ${textRadius} ${textRadius} 0 0 1
-             ${radius - textRadius} ${radius}`}
+            A ${textRadius} ${textRadius} 0 0 1
+              ${radius - textRadius} ${radius}`}
         fill="none"
       />
 
-      {/* TOP TEXT */}
       <text
         fill={laneColor}
         stroke="white"
@@ -65,12 +61,9 @@ function SwipeButton({ x, y, size, laneColor }) {
         letterSpacing={2}
         textAnchor="middle"
       >
-        <textPath href="#topArc" startOffset="50%">
-          SWIPE UP
-        </textPath>
+        <textPath href="#topArc" startOffset="50%">SWIPE UP</textPath>
       </text>
 
-      {/* BOTTOM TEXT */}
       <text
         fill={laneColor}
         stroke="white"
@@ -80,17 +73,15 @@ function SwipeButton({ x, y, size, laneColor }) {
         letterSpacing={2}
         textAnchor="middle"
       >
-        <textPath href="#bottomArc" startOffset="50%">
-          FINGER HERE
-        </textPath>
+        <textPath href="#bottomArc" startOffset="50%">FINGER HERE</textPath>
       </text>
     </svg>
   );
 }
 
-// ===========================================
+// ------------------------------------------------------------
 // SHOOTER PAGE
-// ===========================================
+// ------------------------------------------------------------
 export default function ShooterPage() {
   const { gameId } = useParams() as { gameId: string };
 
@@ -103,6 +94,7 @@ export default function ShooterPage() {
   const [laneColor, setLaneColor] = useState("#222");
   const [score, setScore] = useState(0);
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
+
   const [difficulty, setDifficulty] =
     useState<"easy" | "medium" | "hard" | "expert">("easy");
 
@@ -121,6 +113,7 @@ export default function ShooterPage() {
         .select("*")
         .eq("id", playerId)
         .single();
+
       if (!data) return;
 
       setLaneIndex(data.lane_index);
@@ -132,7 +125,7 @@ export default function ShooterPage() {
     return () => clearInterval(i);
   }, [playerId]);
 
-  // Load difficulty
+  // Load game settings
   useEffect(() => {
     async function loadGame() {
       const { data } = await supabase
@@ -146,23 +139,19 @@ export default function ShooterPage() {
   }, [gameId]);
 
   // ------------------------------------------------------------
-  // GRID LAYOUT FUNCTION
+  // GRID LAYOUT — PERFECT SQUARES
   // ------------------------------------------------------------
   function getGrid() {
-    let rows = 5, cols = 3; // EASY BASE
+    let rows = 5, cols = 3;
 
-    if (difficulty === "medium") {
-      cols = 5; rows = 10;
-    } else if (difficulty === "hard") {
-      cols = 7; rows = 14;
-    } else if (difficulty === "expert") {
-      cols = 9; rows = 18;
-    }
+    if (difficulty === "medium") { rows = 10; cols = 5; }
+    if (difficulty === "hard") { rows = 14; cols = 7; }
+    if (difficulty === "expert") { rows = 18; cols = 9; }
 
     const W = window.innerWidth;
     const H = window.innerHeight;
-    const cellSize = Math.min(W / cols, H / rows);
 
+    const cellSize = Math.min(W / cols, H / rows);
     const totalW = cols * cellSize;
     const totalH = rows * cellSize;
 
@@ -172,87 +161,60 @@ export default function ShooterPage() {
     const cells = [];
     for (let r = 0; r < rows; r++)
       for (let c = 0; c < cols; c++)
-        cells.push({
-          r, c,
-          x: offsetX + c * cellSize,
-          y: offsetY + r * cellSize,
-          w: cellSize,
-          h: cellSize,
-        });
+        cells.push({ r, c, x: offsetX + c * cellSize, y: offsetY + r * cellSize, w: cellSize, h: cellSize });
 
     return { cells, cellSize };
   }
 
   // ------------------------------------------------------------
-  // HITBOX COORDS
+  // HITBOX MAP (GREEN CELLS)
   // ------------------------------------------------------------
-  function getHitboxes() {
-    if (difficulty === "easy")
-      return { three: { r: 0, c: 1 }, two: { r: 2, c: 1 } };
-
-    if (difficulty === "medium")
-      return { three: { r: 1, c: 2 }, two: { r: 4, c: 2 } };
-
-    if (difficulty === "hard")
-      return { three: { r: 1, c: 3 }, two: { r: 6, c: 3 } };
-
+  function getHitboxMap() {
+    if (difficulty === "easy") return { three: { r: 0, c: 1 }, two: { r: 2, c: 1 } };
+    if (difficulty === "medium") return { three: { r: 1, c: 2 }, two: { r: 4, c: 2 } };
+    if (difficulty === "hard") return { three: { r: 1, c: 3 }, two: { r: 6, c: 3 } };
     return { three: { r: 1, c: 4 }, two: { r: 6, c: 4 } };
   }
 
   // ------------------------------------------------------------
-  // BUTTON PLACEMENT
+  // BUTTON PLACEMENT CELLS
   // ------------------------------------------------------------
-  function getButtonPosition(cells, cellSize) {
-    const btn = 160;
-    let target = null;
-
-    if (difficulty === "easy") {
-      target = cells.find(c => c.r === 4 && c.c === 1);
-    }
-    if (difficulty === "medium") {
-      target = cells.find(c => c.r === 8 && c.c === 2);
-    }
-    if (difficulty === "hard") {
-      target = cells.find(c => c.r === 12 && c.c === 3);
-    }
-    if (difficulty === "expert") {
-      target = cells.find(c => c.r === 16 && c.c === 4);
-    }
-
-    if (!target) return { x: 200, y: 200 };
-
-    return {
-      x: target.x + target.w / 2,
-      y: target.y + target.h / 2,
-    };
+  function getButtonCell() {
+    if (difficulty === "easy") return { r: 4, c: 1 };
+    if (difficulty === "medium") return { r: 8, c: 2 };
+    if (difficulty === "hard") return { r: 12, c: 3 };
+    return { r: 16, c: 4 }; // expert
   }
 
   // ------------------------------------------------------------
-  // TOUCH HANDLER → SEND MISS FOR NOW
+  // SEND MISS ONLY FOR NOW
   // ------------------------------------------------------------
-  function sendShot(type) {
+  function sendShot(type: string) {
     if (!playerId || laneIndex === null) return;
-
     supabase.channel(`basketball-${gameId}`).send({
       type: "broadcast",
       event: "shot_fired",
-      payload: {
-        lane_index: laneIndex,
-        pathType: type,
-        points: 0,
-      },
+      payload: { lane_index: laneIndex, pathType: type, points: 0 },
     });
   }
 
+  // ------------------------------------------------------------
+  // TOUCH HANDLER — IGNORE BUTTON CELLS
+  // ------------------------------------------------------------
   function handleTouchEnd(e) {
     if (displayCountdown !== null) return;
 
     const t = e.changedTouches[0];
-    const x = t.clientX;
-    const y = t.clientY;
+    const x = t.clientX, y = t.clientY;
 
     const { cells } = getGrid();
+    const btn = getButtonCell();
+
     for (const cell of cells) {
+      // IGNORE BUTTON ZONE
+      if (cell.r === btn.r && cell.c === btn.c) return;
+
+      // NORMAL MISS GRID CHECK
       if (x >= cell.x && x <= cell.x + cell.w &&
           y >= cell.y && y <= cell.y + cell.h) {
         sendShot("miss");
@@ -265,7 +227,8 @@ export default function ShooterPage() {
   // RENDER
   // ------------------------------------------------------------
   const { cells, cellSize } = getGrid();
-  const buttonPos = getButtonPosition(cells, cellSize);
+  const buttonCell = getButtonCell();
+  const btnCell = cells.find(c => c.r === buttonCell.r && c.c === buttonCell.c);
 
   return (
     <div
@@ -276,46 +239,68 @@ export default function ShooterPage() {
         border: `8px solid ${laneColor}`,
         position: "relative",
         overflow: "hidden",
+        touchAction: "none",
       }}
       onTouchEnd={handleTouchEnd}
     >
-      {/* GRID DEBUG */}
+      {/* GRID */}
       {SHOW_DEBUG &&
-        cells.map((cell, i) => (
-          <div
-            key={i}
-            style={{
-              position: "absolute",
-              left: cell.x,
-              top: cell.y,
-              width: cell.w,
-              height: cell.h,
-              background: "rgba(255,0,0,0.15)",
-              border: "1px solid red",
-              color: "white",
-              fontSize: 12,
-              pointerEvents: "none",
-              display: "flex",
-              justifyContent: "center",
-              alignItems: "center",
-            }}
-          >
-            {cell.r},{cell.c}
-          </div>
-        ))}
+        cells.map((cell, i) => {
+          let bg = "rgba(255,0,0,0.15)";
+          let border = "2px solid red";
 
-      {/* ALWAYS VISIBLE SWIPE BUTTON */}
-      <SwipeButton
-        x={buttonPos.x}
-        y={buttonPos.y}
-        size={160}
-        laneColor={laneColor}
-      />
+          const hit = getHitboxMap();
 
-      {/* SCORE + TIMER */}
+          if (cell.r === hit.three.r && cell.c === hit.three.c) {
+            bg = "rgba(0,255,0,0.45)";
+            border = "3px solid #00ff00";
+          }
+          if (cell.r === hit.two.r && cell.c === hit.two.c) {
+            bg = "rgba(0,150,0,0.45)";
+            border = "3px solid #009900";
+          }
+
+          return (
+            <div
+              key={i}
+              style={{
+                position: "absolute",
+                left: cell.x,
+                top: cell.y,
+                width: cell.w,
+                height: cell.h,
+                background: bg,
+                border,
+                color: "white",
+                fontSize: 12,
+                pointerEvents: "none",
+                display: "flex",
+                justifyContent: "center",
+                alignItems: "center",
+                opacity: SHOW_DEBUG ? 1 : 0,
+              }}
+            >
+              {cell.r},{cell.c}
+            </div>
+          );
+        })}
+
+      {/* BUTTON */}
+      {btnCell && (
+        <SwipeButton
+          x={btnCell.x + btnCell.w / 2}
+          y={btnCell.y + btnCell.h / 2}
+          size={160}
+          laneColor={laneColor}
+        />
+      )}
+
+      {/* SCORE */}
       <div style={{ position:"absolute", top:20, left:20, color:"white", fontSize:"2.5rem" }}>
         {score}
       </div>
+
+      {/* TIMER */}
       <div style={{ position:"absolute", top:20, right:20, color:"white", fontSize:"2.5rem" }}>
         {timeLeft ?? "--"}
       </div>
