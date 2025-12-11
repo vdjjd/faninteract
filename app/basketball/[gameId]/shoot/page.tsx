@@ -36,29 +36,20 @@ function SwipeButton({ x, y, size, laneColor }) {
     >
       <circle cx={radius} cy={radius} r={radius} fill={laneColor} />
 
-      {/* Top Arc */}
       <path
         id="topArc"
-        d={`
-          M ${radius - textRadius} ${radius}
-          A ${textRadius} ${textRadius} 0 0 1
-            ${radius + textRadius} ${radius}
-        `}
+        d={`M ${radius - textRadius} ${radius} A ${textRadius} ${textRadius} 0 0 1
+            ${radius + textRadius} ${radius}`}
         fill="none"
       />
 
-      {/* Bottom Arc */}
       <path
         id="bottomArc"
-        d={`
-          M ${radius + textRadius} ${radius}
-          A ${textRadius} ${textRadius} 0 0 1
-            ${radius - textRadius} ${radius}
-        `}
+        d={`M ${radius + textRadius} ${radius} A ${textRadius} ${textRadius} 0 0 1
+            ${radius - textRadius} ${radius}`}
         fill="none"
       />
 
-      {/* Top Text */}
       <text
         fill={laneColor}
         stroke="white"
@@ -71,7 +62,6 @@ function SwipeButton({ x, y, size, laneColor }) {
         <textPath href="#topArc" startOffset="50%">SWIPE UP</textPath>
       </text>
 
-      {/* Bottom Text */}
       <text
         fill={laneColor}
         stroke="white"
@@ -157,8 +147,7 @@ export default function ShooterPage() {
      GRID LAYOUT
   ------------------------------------------------------------ */
   function getGrid() {
-    let rows = 5, cols = 3; // EASY
-
+    let rows = 5, cols = 3;
     if (difficulty === "medium") { rows = 10; cols = 5; }
     if (difficulty === "hard") { rows = 14; cols = 7; }
     if (difficulty === "expert") { rows = 18; cols = 9; }
@@ -176,7 +165,13 @@ export default function ShooterPage() {
     const cells = [];
     for (let r = 0; r < rows; r++)
       for (let c = 0; c < cols; c++)
-        cells.push({ r, c, x: offsetX + c * cellSize, y: offsetY + r * cellSize, w: cellSize, h: cellSize });
+        cells.push({
+          r, c,
+          x: offsetX + c * cellSize,
+          y: offsetY + r * cellSize,
+          w: cellSize,
+          h: cellSize
+        });
 
     return { cells, cellSize };
   }
@@ -208,21 +203,25 @@ export default function ShooterPage() {
   }
 
   /* ------------------------------------------------------------
-     SEND SHOT EVENT (WITH ANIMATION SUPPORT)
+     SEND SHOT EVENT — FIXED FOR BROADCAST
   ------------------------------------------------------------ */
   function sendShot(payload: { type: string; animation: string | null }) {
     if (!playerId || laneIndex === null) return;
 
-    supabase.channel(`basketball-${gameId}`).send({
-      type: "broadcast",
-      event: "shot_fired",
-      payload: {
-        lane_index: laneIndex,
-        pathType: payload.type,
-        animation: payload.animation, // <-- REQUIRED
-        points: 0,
-      },
-    });
+    supabase
+      .channel(`basketball-${gameId}`, {
+        config: { broadcast: { ack: true } }
+      })
+      .send({
+        type: "broadcast",
+        event: "shot_fired",
+        payload: {
+          lane_index: laneIndex,
+          pathType: payload.type,
+          animation: payload.animation,
+          points: 0,
+        },
+      });
   }
 
   /* ------------------------------------------------------------
@@ -238,10 +237,9 @@ export default function ShooterPage() {
     const btn = getButtonCell();
 
     for (const cell of cells) {
-      // IGNORE BUTTON CELL
       if (cell.r === btn.r && cell.c === btn.c) return;
 
-      // SPECIAL SHORT MISS: EASY MODE (3,1)
+      // SPECIAL SHORT MISS — EASY MODE (3,1)
       if (
         difficulty === "easy" &&
         cell.r === 3 &&
@@ -270,7 +268,7 @@ export default function ShooterPage() {
   /* ------------------------------------------------------------
      RENDER
   ------------------------------------------------------------ */
-  const { cells, cellSize } = getGrid();
+  const { cells } = getGrid();
   const buttonCell = getButtonCell();
   const btnCell = cells.find(c => c.r === buttonCell.r && c.c === buttonCell.c);
   const hit = getHitboxMap();
@@ -288,7 +286,7 @@ export default function ShooterPage() {
       }}
       onTouchEnd={handleTouchEnd}
     >
-      {/* GRID */}
+      {/* GRID DEBUG */}
       {SHOW_DEBUG &&
         cells.map((cell, i) => {
           let bg = "rgba(255,0,0,0.15)";

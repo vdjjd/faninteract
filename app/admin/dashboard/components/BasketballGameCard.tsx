@@ -10,6 +10,9 @@ declare global {
   }
 }
 
+// 🔥 TOGGLE TEST BUTTON ON/OFF
+const SHOW_TEST_BUTTON = true;
+
 export default function BasketballGameCard({
   game,
   onOpenModeration,
@@ -21,9 +24,7 @@ export default function BasketballGameCard({
 }) {
   const [wallActivated, setWallActivated] = useState(false);
 
-  /* ------------------------------------------------------------
-     RESTORE wallActivated from DB (fixes StartGame disabled bug)
-  ------------------------------------------------------------ */
+  /* Restore wallActivated from DB */
   useEffect(() => {
     if (game?.wall_active) setWallActivated(true);
   }, [game?.wall_active]);
@@ -84,8 +85,7 @@ export default function BasketballGameCard({
   }
 
   /* ------------------------------------------------------------
-     START GAME → SEND COUNTDOWN
-     FIX: Use one universal channel that does NOT require subscribe()
+     START GAME → COUNTDOWN
   ------------------------------------------------------------ */
   async function handleStartGame() {
     if (!wallActivated) return;
@@ -96,7 +96,7 @@ export default function BasketballGameCard({
     // Tell wall popup
     window._basketballPopup?.postMessage({ type: "start_countdown" }, "*");
 
-    // Tell all clients (wall + shooters)
+    // Tell all shooters & wall
     await supabase.channel("broadcast").send({
       type: "broadcast",
       event: "start_countdown",
@@ -126,7 +126,7 @@ export default function BasketballGameCard({
   }
 
   /* ------------------------------------------------------------
-     RESET GAME
+     RESET
   ------------------------------------------------------------ */
   async function handleResetGame() {
     if (!game?.id) return;
@@ -144,9 +144,7 @@ export default function BasketballGameCard({
       .eq("id", game.id);
 
     setWallActivated(false);
-
     window._basketballPopup?.postMessage({ type: "refresh_wall" }, "*");
-
     await onRefresh();
   }
 
@@ -166,11 +164,11 @@ export default function BasketballGameCard({
       style={{ backgroundImage: "url('/BBgamebackground.png')" }}
     >
       <div>
-        <h3 className={cn('font-bold', 'text-lg', 'mb-1')}>
+        <h3 className={cn("font-bold text-lg mb-1")}>
           {game.title || "Untitled Game"}
         </h3>
 
-        <p className={cn('text-sm', 'mb-3', 'flex', 'justify-center', 'items-center', 'gap-2')}>
+        <p className={cn("text-sm mb-3 flex justify-center items-center gap-2")}>
           <strong>Status:</strong>
           <span
             className={cn(
@@ -187,31 +185,37 @@ export default function BasketballGameCard({
         </p>
       </div>
 
-      <div className={cn('flex', 'flex-col', 'gap-3', 'mt-auto', 'pt-3', 'border-t', 'border-white/10')}>
+      <div className={cn("flex flex-col gap-3 mt-auto pt-3 border-t border-white/10")}>
         <button
           onClick={() => onOpenModeration(game.id)}
-          className={cn('w-full', 'py-2', 'rounded', 'text-sm', 'font-semibold', 'bg-yellow-500', 'hover:bg-yellow-600', 'text-black')}
+          className={cn(
+            "w-full py-2 rounded text-sm font-semibold bg-yellow-500 hover:bg-yellow-600 text-black"
+          )}
         >
           👥 Moderate Players
         </button>
 
-        <div className={cn('grid', 'grid-cols-2', 'gap-2')}>
+        <div className={cn("grid grid-cols-2 gap-2")}>
           <button
             onClick={openWallWindow}
-            className={cn('w-full', 'py-2', 'rounded', 'text-sm', 'font-semibold', 'bg-purple-600', 'hover:bg-purple-700', 'text-white')}
+            className={cn(
+              "w-full py-2 rounded text-sm font-semibold bg-purple-600 hover:bg-purple-700 text-white"
+            )}
           >
             🚀 Launch Wall
           </button>
 
           <button
             onClick={handleActivateWall}
-            className={cn('w-full', 'py-2', 'rounded', 'text-sm', 'font-semibold', 'bg-blue-600', 'hover:bg-blue-700', 'text-white')}
+            className={cn(
+              "w-full py-2 rounded text-sm font-semibold bg-blue-600 hover:bg-blue-700 text-white"
+            )}
           >
             🟦 Activate Wall
           </button>
         </div>
 
-        <div className={cn('grid', 'grid-cols-2', 'gap-2')}>
+        <div className={cn("grid grid-cols-2 gap-2")}>
           <button
             onClick={handleStartGame}
             disabled={!wallActivated}
@@ -227,7 +231,9 @@ export default function BasketballGameCard({
 
           <button
             onClick={handleStopClick}
-            className={cn('w-full', 'py-2', 'rounded', 'text-sm', 'font-semibold', 'bg-red-600', 'hover:bg-red-700', 'text-white')}
+            className={cn(
+              "w-full py-2 rounded text-sm font-semibold bg-red-600 hover:bg-red-700 text-white"
+            )}
           >
             ⛔ Stop
           </button>
@@ -235,21 +241,39 @@ export default function BasketballGameCard({
 
         <button
           onClick={handleResetGame}
-          className={cn('w-full', 'py-2', 'rounded', 'text-sm', 'font-semibold', 'bg-orange-500', 'hover:bg-orange-600', 'text-white')}
+          className={cn(
+            "w-full py-2 rounded text-sm font-semibold bg-orange-500 hover:bg-orange-600 text-white"
+          )}
         >
           🔄 Reset Game
         </button>
 
         <button
           onClick={() => onOpenOptions(game)}
-          className={cn('w-full', 'py-2', 'mt-2', 'rounded', 'text-sm', 'font-semibold', 'bg-indigo-500', 'hover:bg-indigo-600', 'text-white')}
+          className={cn(
+            "w-full py-2 mt-2 rounded text-sm font-semibold bg-indigo-500 hover:bg-indigo-600 text-white"
+          )}
         >
           ⚙ Game Options
         </button>
 
+        {/* 🧪 DEV TEST BUTTON — controlled by SHOW_TEST_BUTTON */}
+        {SHOW_TEST_BUTTON && (
+          <button
+            onClick={() => window.open(`/basketball/${game.id}/test`, "_blank")}
+            className={cn(
+              "w-full py-2 rounded text-sm font-semibold bg-pink-600 hover:bg-pink-700 text-white"
+            )}
+          >
+            🧪 Animation Test
+          </button>
+        )}
+
         <button
           onClick={() => onDelete(game.id)}
-          className={cn('w-full', 'py-2', 'rounded', 'text-sm', 'font-semibold', 'bg-red-700', 'hover:bg-red-800', 'text-white')}
+          className={cn(
+            "w-full py-2 rounded text-sm font-semibold bg-red-700 hover:bg-red-800 text-white"
+          )}
         >
           ❌ Delete
         </button>

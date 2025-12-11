@@ -1,4 +1,4 @@
-'use client';
+"use client";
 
 import {
   createContext,
@@ -6,83 +6,44 @@ import {
   useEffect,
   useRef,
   useState
-} from 'react';
-import { supabase } from '@/lib/supabaseClient';
+} from "react";
 
-interface BroadcastMessage {
-  event: string;
-  payload: any;
-}
+/**
+ * SAFE REALTIME PROVIDER
+ *
+ * - Does NOT modify or override Supabase Realtime
+ * - Does NOT intercept websocket messages
+ * - Only provides a simple BroadcastChannel for cross-tab UI sync
+ * - NO fake "realtimeReady"
+ * - NO message interception
+ */
 
 const RTContext = createContext<{
-  realtimeReady: boolean;
   broadcast: (event: string, payload: any) => void;
 } | null>(null);
 
 export function SupabaseRealtimeProvider({ children }) {
-  const unifiedRef = useRef(null);
   const busRef = useRef<BroadcastChannel | null>(null);
-  const [realtimeReady, setRealtimeReady] = useState(false);
 
-  // 🚌 Create shared cross-tab bus
-  if (!busRef.current) {
-    busRef.current = new BroadcastChannel("faninteract_realtime_bus");
-  }
-
+  // Create cross-tab channel ONLY (no impact on Supabase)
   useEffect(() => {
-    console.log("🟢 Initializing unified realtime channel...");
-
-    const unified = supabase.channel("faninteract_unified_shared", {
-      config: {
-        broadcast: { self: false },
-        presence: { key: `client-${crypto.randomUUID()}` }
-      }
-    });
-
-    unified.on("broadcast", (msg) => {
-      console.log("📥 SUPABASE → BUS", msg);
-      busRef.current?.postMessage({
-        type: "broadcast",
-        msg
-      });
-    });
-
-    unified.subscribe((status) => {
-      console.log("📡 Unified status:", status);
-      if (status === "SUBSCRIBED") {
-        unifiedRef.current = unified;
-        setRealtimeReady(true);
-      }
-    });
+    busRef.current = new BroadcastChannel("faninteract_realtime_bus");
 
     return () => {
-      unified.unsubscribe();
+      busRef.current?.close();
     };
   }, []);
 
-  // 🟦 Safe broadcast function
+  /** Broadcast ONLY to other tabs (never touches Supabase) */
   function broadcast(event: string, payload: any) {
-    const safePayload = {
-      ...payload,
-      id: payload?.id ? String(payload.id).trim() : null
-    };
-
-    // 1. Send to supabase
-    unifiedRef.current?.send({
-      type: "broadcast",
-      event,
-      payload: safePayload
-    });
-
-    // 2. Mirror to all tabs instantly
     busRef.current?.postMessage({
       type: "broadcast",
-      msg: { event, payload: safePayload }
+      msg: { event, payload }
     });
   }
 
   return (
-    <RTContext.Provider value={{ realtimeReady, broadcast }}>
+    <RTContext.Provider value={{ broadcast }}>
       {children}
     </RTContext.Provider>
   );

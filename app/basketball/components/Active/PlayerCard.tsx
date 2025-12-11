@@ -3,6 +3,9 @@
 import React from "react";
 import RimSparks from "@/app/basketball/components/Effects/RimSparks";
 import { project3D } from "@/app/basketball/utils/projection";
+import LaneAnimationPlayer from "@/app/basketball/components/LaneAnimationPlayer";
+
+const SELFIE_SIZE = 54;
 
 /* ---------------- NET GRAPHIC ---------------- */
 function Net({ state }: { state: "idle" | "swish" | "hit" }) {
@@ -29,8 +32,6 @@ function Net({ state }: { state: "idle" | "swish" | "hit" }) {
     />
   );
 }
-
-const SELFIE_SIZE = 54;
 
 /* ---------------- 3D BACKBOARD ---------------- */
 function Backboard({ hostLogo }: { hostLogo?: string }) {
@@ -81,7 +82,7 @@ function Rim3D() {
         top: `${screenY}%`,
         width: `${14 * scale}%`,
         height: `${1.2 * scale}vh`,
-        transform: "translate(-50%, -50%)",
+        transform: "translate(-50%, -50%)", // FIXED QUOTE
         background: "#ff6a00",
         boxShadow: "0 0 12px rgba(255,120,0,0.8)",
         borderRadius: 10,
@@ -92,8 +93,21 @@ function Rim3D() {
 }
 
 /* --------------------------------------------------
-   MAIN PLAYERCARD (MODIFIED FOR ANIMATION OVERLAY)
+   MAIN PLAYER CARD
 --------------------------------------------------- */
+type PlayerCardProps = {
+  index: number;
+  player: any;
+  balls?: any[];
+  timeLeft: number;
+  score: number;
+  borderColor: string;
+  timerExpired: boolean;
+  hostLogo?: string | null;
+  maxScore: number;
+  animationName?: string | null; // SYSTEM B
+};
+
 export default function PlayerCard({
   index,
   player,
@@ -104,8 +118,8 @@ export default function PlayerCard({
   timerExpired,
   hostLogo,
   maxScore,
-  animationSrc,     // <-- NEW PROP
-}) {
+  animationName,
+}: PlayerCardProps) {
   const isWinner =
     timerExpired && player && player.score === maxScore && maxScore > 0;
 
@@ -147,31 +161,18 @@ export default function PlayerCard({
         ...winnerPulseStyle,
       }}
     >
-      {/* ANIMATION OVERLAY */}
-      {animationSrc && (
-        <img
-          src={animationSrc}
-          style={{
-            position: "absolute",
-            inset: 0,
-            width: "100%",
-            height: "100%",
-            objectFit: "cover",
-            zIndex: 50,
-            pointerEvents: "none",
-          }}
-        />
-      )}
+      {/* SYSTEM B ANIMATION LAYER */}
+      {animationName && <LaneAnimationPlayer animationName={animationName} />}
 
-      {/* BACKBOARD + RIM (3D) */}
-      <Backboard hostLogo={hostLogo} />
+      {/* BACKBOARD + RIM */}
+      <Backboard hostLogo={hostLogo ?? undefined} />
       <Rim3D />
 
       {/* NET */}
       <Net state={netState} />
       <RimSparks x={50} y={18} active={netState === "hit"} zIndex={180} />
 
-      {/* STATIC BALL PREVIEW */}
+      {/* STATIC BALL */}
       <div
         style={{
           position: "absolute",
@@ -298,7 +299,7 @@ export default function PlayerCard({
         {score}
       </div>
 
-      {/* WINNER */}
+      {/* WINNER LABEL */}
       {isWinner && (
         <div
           style={{

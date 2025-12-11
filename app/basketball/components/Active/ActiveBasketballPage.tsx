@@ -14,14 +14,19 @@ const CELL_COLORS = [
 ];
 
 export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
+
+  console.log("ACTIVE WALL MOUNTED with gameId =", gameId);
+
   const countdownValue = useCountdown(gameId);
   const { duration, timeLeft, timerExpired } = useGameTimer(gameId);
   const players = usePlayers(gameId);
 
   const [hostLogo, setHostLogo] = useState<string | null>(null);
-  const [animations, setAnimations] = useState<Record<number, any>>({});
+  const [animations, setAnimations] = useState<Record<number, string | null>>({});
 
-  // LOAD HOST LOGO
+  /* ------------------------------------------------------------
+     LOAD HOST LOGO
+  ------------------------------------------------------------ */
   useEffect(() => {
     async function loadHost() {
       const { data: gameRow } = await supabase
@@ -51,61 +56,61 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
     loadHost();
   }, [gameId]);
 
-  // RECEIVE SHOT → TRIGGER ANIMATION
+  /* ------------------------------------------------------------
+     REALTIME: RECEIVE shot_fired → PLAY animation
+  ------------------------------------------------------------ */
   useEffect(() => {
+    console.log("ACTIVE WALL: subscription effect running with gameId =", gameId);
+
     const ch = supabase
-      .channel(`basketball-${gameId}`)
+      .channel(`basketball-${gameId}`, {
+        config: { broadcast: { ack: true } }
+      })
       .on("broadcast", { event: "shot_fired" }, (event) => {
+
+        console.log("🔥 ACTIVE WALL RECEIVED EVENT =", event);
+
         const p = event?.payload;
         if (!p) return;
 
         const lane = p.lane_index;
+        const animName = p.animation;
 
-        if (p.animation === "short_two_point_miss") {
+        if (animName) {
+          console.log(
+            "🎬 PLAY ANIMATION:",
+            animName,
+            "→ LANE:", lane
+          );
+
+          // Trigger animation
           setAnimations((prev) => ({
             ...prev,
-            [lane]: {
-              folder: "short_two_point_miss",
-              frames: 12,
-              active: true,
-              frame: 0,
-            }
+            [lane]: animName,
           }));
+
+          // Reset so future clicks retrigger animation
+          setTimeout(() => {
+            setAnimations((prev) => ({
+              ...prev,
+              [lane]: null,
+            }));
+          }, 500); // clear slightly after animation finishes
         }
       })
-      .subscribe();
+      .subscribe((status) => {
+        console.log("ACTIVE WALL CHANNEL STATUS =", status);
+      });
 
     return () => {
+      console.log("ACTIVE WALL: unsubscribing channel");
       try { supabase.removeChannel(ch); } catch {}
     };
   }, [gameId]);
 
-  // FRAME ADVANCER
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setAnimations((prev) => {
-        const updated = { ...prev };
-
-        Object.keys(updated).forEach((key) => {
-          const lane = Number(key);
-          const anim = updated[lane];
-
-          if (!anim.active) return;
-
-          if (anim.frame >= anim.frames - 1) {
-            updated[lane] = { ...anim, active: false };
-          } else {
-            updated[lane] = { ...anim, frame: anim.frame + 1 };
-          }
-        });
-
-        return updated;
-      });
-    }, 75);
-
-    return () => clearInterval(interval);
-  }, []);
-
+  /* ------------------------------------------------------------
+     OTHER UI LOGIC
+  ------------------------------------------------------------ */
   const maxScore =
     players.length ? Math.max(...players.map((p) => p.score ?? 0)) : 0;
 
@@ -114,6 +119,9 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
       ? document.documentElement.requestFullscreen()
       : document.exitFullscreen();
 
+  /* ------------------------------------------------------------
+     RENDER WALL
+  ------------------------------------------------------------ */
   return (
     <div
       style={{
@@ -142,14 +150,7 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
       >
         {Array.from({ length: 10 }).map((_, i) => {
           const player = players.find((p) => p.cell === i);
-
-          const anim = animations[i];
-          const animSrc =
-            anim?.active
-              ? `/animations/${anim.folder}/shortmissed_Shot${String(
-                  anim.frame
-                ).padStart(2, "0")}.png`
-              : null;
+          const animationName = animations[i] ?? null;
 
           return (
             <PlayerCard
@@ -162,7 +163,7 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
               timerExpired={timerExpired}
               maxScore={maxScore}
               hostLogo={hostLogo}
-              animationSrc={animSrc}
+              animationName={animationName}
             />
           );
         })}
