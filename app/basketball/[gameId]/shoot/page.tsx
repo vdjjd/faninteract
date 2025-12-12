@@ -5,10 +5,6 @@ import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { useCountdown } from "@/app/basketball/hooks/useCountdown";
 
-/* ------------------------------------------------------------
-   CONSTANTS
------------------------------------------------------------- */
-
 const CELL_COLORS = [
   "#FF3B30",
   "#FF9500",
@@ -22,10 +18,6 @@ const CELL_COLORS = [
   "#A2845E",
 ];
 
-/* ------------------------------------------------------------
-   SHOOTER PAGE
------------------------------------------------------------- */
-
 export default function ShooterPage() {
   const { gameId } = useParams() as { gameId: string };
 
@@ -33,15 +25,12 @@ export default function ShooterPage() {
 
   const [playerId, setPlayerId] = useState<string | null>(null);
   const [laneIndex, setLaneIndex] = useState<number>(0);
-  const [laneColor, setLaneColor] = useState("#222");
+  const [laneColor, setLaneColor] = useState("#333");
   const [score, setScore] = useState(0);
-  const [timeLeft, setTimeLeft] = useState<number | null>(null);
 
-  const touchStartY = useRef<number | null>(null);
+  const startY = useRef<number | null>(null);
 
-  /* ------------------------------------------------------------
-     LOAD PLAYER
-  ------------------------------------------------------------ */
+  /* ---------------- LOAD PLAYER ---------------- */
   useEffect(() => {
     const stored = localStorage.getItem("bb_player_id");
     if (stored) setPlayerId(stored);
@@ -69,36 +58,33 @@ export default function ShooterPage() {
     return () => clearInterval(i);
   }, [playerId]);
 
-  /* ------------------------------------------------------------
-     TOUCH HANDLERS (SWIPE UP)
-  ------------------------------------------------------------ */
+  /* ---------------- TOUCH HANDLERS ---------------- */
 
   function onTouchStart(e: React.TouchEvent) {
-    touchStartY.current = e.touches[0].clientY;
+    startY.current = e.touches[0].clientY;
   }
 
   function onTouchEnd(e: React.TouchEvent) {
     if (countdownValue !== null) return;
-    if (touchStartY.current === null) return;
+    if (startY.current === null) return;
 
     const endY = e.changedTouches[0].clientY;
-    const deltaY = touchStartY.current - endY;
+    const delta = startY.current - endY;
+    startY.current = null;
 
-    touchStartY.current = null;
+    console.log("📱 SWIPE DELTA:", delta);
 
-    // Require a real swipe
-    if (deltaY < 40) return;
+    if (delta < 50) return; // must be a REAL swipe
 
     fireShot();
   }
 
-  /* ------------------------------------------------------------
-     SEND SHOT EVENT
-  ------------------------------------------------------------ */
+  /* ---------------- FIRE SHOT ---------------- */
+
   function fireShot() {
     if (!playerId) return;
 
-    console.log("🏀 SWIPE → SHOT (lane)", laneIndex);
+    console.log("🏀 SHOT FIRED → lane", laneIndex);
 
     supabase
       .channel(`basketball-${gameId}`, {
@@ -114,9 +100,7 @@ export default function ShooterPage() {
       });
   }
 
-  /* ------------------------------------------------------------
-     RENDER
-  ------------------------------------------------------------ */
+  /* ---------------- RENDER ---------------- */
 
   return (
     <div
@@ -125,15 +109,16 @@ export default function ShooterPage() {
       style={{
         width: "100vw",
         height: "100vh",
-        background: "#000",
+        background: "black",
         border: `10px solid ${laneColor}`,
         position: "relative",
         overflow: "hidden",
         touchAction: "none",
+        WebkitUserSelect: "none",
         userSelect: "none",
       }}
     >
-      {/* COUNTDOWN OVERLAY */}
+      {/* COUNTDOWN */}
       {countdownValue !== null && (
         <div
           style={{
@@ -141,10 +126,10 @@ export default function ShooterPage() {
             inset: 0,
             background: "rgba(0,0,0,0.9)",
             display: "flex",
-            justifyContent: "center",
             alignItems: "center",
+            justifyContent: "center",
             color: "white",
-            fontSize: "clamp(4rem,10vw,12rem)",
+            fontSize: "clamp(4rem, 10vw, 12rem)",
             fontWeight: 900,
             zIndex: 100,
           }}
@@ -167,21 +152,7 @@ export default function ShooterPage() {
         {score}
       </div>
 
-      {/* TIMER */}
-      <div
-        style={{
-          position: "absolute",
-          top: 20,
-          right: 20,
-          color: "white",
-          fontSize: "2.5rem",
-          fontWeight: 800,
-        }}
-      >
-        {timeLeft ?? "--"}
-      </div>
-
-      {/* SWIPE TARGET */}
+      {/* SWIPE BUTTON */}
       <div
         style={{
           position: "absolute",
@@ -193,12 +164,12 @@ export default function ShooterPage() {
           borderRadius: "50%",
           background: laneColor,
           display: "flex",
-          justifyContent: "center",
           alignItems: "center",
-          color: "white",
+          justifyContent: "center",
           fontWeight: 900,
+          color: "white",
           letterSpacing: 2,
-          boxShadow: `0 0 25px ${laneColor}`,
+          boxShadow: `0 0 30px ${laneColor}`,
         }}
       >
         SWIPE ↑
