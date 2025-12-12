@@ -15,17 +15,17 @@ export function getOrCreateGuestDeviceId() {
 }
 
 /* ----------------------------------------
-   SYNC GUEST PROFILE (FULLY PATCHED)
+   SYNC GUEST PROFILE (HOST-ASSIGNED)
 ---------------------------------------- */
 export async function syncGuestProfile(
   type: string,
   targetId: string,
-  form: any
+  form: any,
+  hostId: string
 ) {
   const supabase = getSupabaseClient();
   const deviceId = getOrCreateGuestDeviceId();
 
-  // Clean & sanitize data (FATAL BUG FIX HERE)
   const cleanAge =
     form.age && Number(form.age) > 0 ? Number(form.age) : null;
 
@@ -39,44 +39,33 @@ export async function syncGuestProfile(
     city: form.city?.trim() || "",
     state: form.state || "",
     zip: form.zip?.trim() || "",
-    age: cleanAge,                      // <-- FIXED
+    age: cleanAge,
+    host_id: hostId,
   };
 
-  /* ---------------------------------------------------------
-     Check existing guest
-  --------------------------------------------------------- */
-  const { data: existing, error: checkError } = await supabase
+  const { data: existing } = await supabase
     .from("guest_profiles")
     .select("*")
     .eq("device_id", deviceId)
     .maybeSingle();
 
-  if (checkError) {
-    console.error("❌ Error checking guest profile:", checkError);
-  }
-
-  let profile = null;
+  let profile;
 
   if (existing) {
-    // UPDATE
     const { data, error } = await supabase
       .from("guest_profiles")
       .update({
         ...payload,
+        host_id: existing.host_id ?? hostId, // FIRST HOST STICKS
         updated_at: new Date().toISOString(),
       })
       .eq("device_id", deviceId)
       .select()
       .single();
 
-    if (error) {
-      console.error("❌ Error updating guest:", error);
-      throw error;
-    }
-
+    if (error) throw error;
     profile = data;
   } else {
-    // INSERT NEW
     const { data, error } = await supabase
       .from("guest_profiles")
       .insert({
@@ -86,29 +75,21 @@ export async function syncGuestProfile(
       .select()
       .single();
 
-    if (error) {
-      console.error("❌ Error creating guest:", error);
-      throw error;
-    }
-
+    if (error) throw error;
     profile = data;
   }
 
-  if (!profile) {
-    console.error("❌ Guest profile insert/update returned NULL");
-    throw new Error("Guest profile failed");
-  }
+  if (!profile) throw new Error("Guest profile failed");
 
-  /* ---------------------------------------------------------
+  /* ----------------------------------------
      AUTO-LINK EVENT PARTICIPATION
-  --------------------------------------------------------- */
+  ---------------------------------------- */
   try {
     if (type === "wall") {
       await supabase.from("fan_wall_submissions").upsert(
         {
           wall_id: targetId,
           guest_id: profile.id,
-          created_at: new Date().toISOString(),
         },
         { onConflict: "wall_id,guest_id" }
       );
@@ -119,7 +100,6 @@ export async function syncGuestProfile(
         {
           wheel_id: targetId,
           guest_id: profile.id,
-          created_at: new Date().toISOString(),
         },
         { onConflict: "wheel_id,guest_id" }
       );
@@ -130,15 +110,13 @@ export async function syncGuestProfile(
         {
           poll_id: targetId,
           guest_id: profile.id,
-          created_at: new Date().toISOString(),
         },
         { onConflict: "poll_id,guest_id" }
       );
     }
   } catch (err) {
-    console.error("❌ Error linking event participation:", err);
+    console.error("Event link error:", err);
   }
 
-  /* Return final profile */
   return { profile };
 }

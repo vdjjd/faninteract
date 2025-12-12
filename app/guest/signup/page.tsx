@@ -27,8 +27,6 @@ export default function GuestSignupPage() {
   const wallId = params.get("wall");
   const wheelId = params.get("prizewheel");
   const pollId = params.get("poll");
-
-  // ⭐ NEW — Basketball support
   const basketballId = params.get("basketball");
 
   const supabase = getSupabaseClient();
@@ -38,7 +36,6 @@ export default function GuestSignupPage() {
 
   const [hostTerms, setHostTerms] = useState("");
   const [masterTerms, setMasterTerms] = useState("");
-
   const [showTermsModal, setShowTermsModal] = useState(false);
 
   const [form, setForm] = useState({
@@ -92,7 +89,6 @@ export default function GuestSignupPage() {
       if (data?.host_id) loadHost(data.host_id);
     }
 
-    // ⭐ NEW — Load basketball host
     async function loadHostForBasketball() {
       if (!basketballId) return;
       const { data } = await supabase
@@ -129,9 +125,6 @@ export default function GuestSignupPage() {
     }
   }
 
-  /* ----------------------------------------------------------
-   * AUTO-FORWARD RETURNING GUESTS → NOW SEND TO /submit
-   * ---------------------------------------------------------- */
   useEffect(() => {
     async function validateGuest() {
       const deviceId = localStorage.getItem("guest_device_id");
@@ -153,15 +146,12 @@ export default function GuestSignupPage() {
       if (wallId) return router.push(`/wall/${wallId}/submit`);
       if (wheelId) return router.push(`/prizewheel/${wheelId}/submit`);
       if (pollId) return router.push(`/polls/${pollId}/vote`);
-      if (basketballId) return router.push(`/basketball/${basketballId}/submit`); // ⭐ FIXED
+      if (basketballId) return router.push(`/basketball/${basketballId}/submit`);
     }
 
     validateGuest();
   }, [redirect, wallId, wheelId, pollId, basketballId]);
 
-  /* ----------------------------------------------------------
-   * SUBMIT FORM (Redirect to /submit for Basketball)
-   * ---------------------------------------------------------- */
   const handleSubmit = async (e: any) => {
     e.preventDefault();
     if (!agree) return alert("You must agree to the Terms.");
@@ -185,7 +175,12 @@ export default function GuestSignupPage() {
         basketballId ? "basketball" :
         "";
 
-      const { profile } = await syncGuestProfile(type, targetId, form);
+      const { profile } = await syncGuestProfile(
+        type,
+        targetId,
+        form,
+        hostSettings.id
+      );
 
       localStorage.setItem("guest_profile", JSON.stringify(profile));
 
@@ -193,7 +188,7 @@ export default function GuestSignupPage() {
       else if (wallId) router.push(`/wall/${wallId}/submit`);
       else if (wheelId) router.push(`/prizewheel/${wheelId}/submit`);
       else if (pollId) router.push(`/polls/${pollId}/vote`);
-      else if (basketballId) router.push(`/basketball/${basketballId}/submit`); // ⭐ FIXED
+      else if (basketballId) router.push(`/basketball/${basketballId}/submit`);
       else router.push("/");
     } catch (err) {
       console.error(err);
@@ -226,15 +221,15 @@ export default function GuestSignupPage() {
 
   if (!hostSettings)
     return (
-      <main className={cn('text-white', 'flex', 'items-center', 'justify-center', 'h-screen')}>
+      <main className={cn("text-white flex items-center justify-center h-screen")}>
         Loading…
       </main>
     );
 
   return (
-    <main className={cn('relative', 'flex', 'items-center', 'justify-center', 'min-h-screen', 'w-full', 'text-white')}>
+    <main className={cn("relative flex items-center justify-center min-h-screen w-full text-white")}>
       <div
-        className={cn('absolute', 'inset-0', 'bg-cover', 'bg-center')}
+        className={cn("absolute inset-0 bg-cover bg-center")}
         style={{
           backgroundImage: wall?.background_value?.includes("http")
             ? `url(${wall.background_value})`
@@ -242,8 +237,7 @@ export default function GuestSignupPage() {
               "linear-gradient(135deg,#0a2540,#1b2b44,#000000)",
         }}
       />
-
-      <div className={cn('absolute', 'inset-0', 'bg-black/60', 'backdrop-blur-md')} />
+      <div className={cn("absolute inset-0 bg-black/60 backdrop-blur-md")} />
 
       <motion.div
         initial={{ opacity: 0, y: 30, scale: 0.97 }}
@@ -255,42 +249,29 @@ export default function GuestSignupPage() {
           "border border-white/10 bg-white/10 backdrop-blur-lg"
         )}
       >
-        <div className={cn('flex', 'justify-center', 'mb-6')}>
+        <div className={cn("flex justify-center mb-6")}>
           <Image
             src="/faninteractlogo.png"
             alt="FanInteract"
             width={360}
             height={120}
-            className={cn('w-[240px]', 'md:w-[320px]', 'drop-shadow-[0_0_32px_rgba(56,189,248,0.4)]')}
+            className={cn("w-[240px] md:w-[320px]")}
           />
         </div>
 
         <motion.h2
-          animate={{
-            textShadow: [
-              "0 0 12px rgba(56,189,248,0.9)",
-              "0 0 28px rgba(56,189,248,0.6)",
-              "0 0 12px rgba(56,189,248,0.9)"
-            ],
-          }}
-          transition={{ duration: 2, repeat: Infinity }}
-          className={cn('text-center', 'text-2xl', 'font-semibold', 'text-sky-300', 'mb-6')}
+          className={cn("text-center text-2xl font-semibold text-sky-300 mb-6")}
         >
           Join the Fan Zone
         </motion.h2>
 
         <form onSubmit={handleSubmit} className="space-y-3">
           {renderField("first_name", "First Name *", "text", true)}
-          {hostSettings.require_last_name &&
-            renderField("last_name", "Last Name *", "text", true)}
-          {hostSettings.require_email &&
-            renderField("email", "Email *", "email", true)}
-          {hostSettings.require_phone &&
-            renderField("phone", "Phone *", "tel", true)}
-          {hostSettings.require_street &&
-            renderField("street", "Street Address *", "text", true)}
-          {hostSettings.require_city &&
-            renderField("city", "City *", "text", true)}
+          {hostSettings.require_last_name && renderField("last_name", "Last Name *", "text", true)}
+          {hostSettings.require_email && renderField("email", "Email *", "email", true)}
+          {hostSettings.require_phone && renderField("phone", "Phone *", "tel", true)}
+          {hostSettings.require_street && renderField("street", "Street Address *", "text", true)}
+          {hostSettings.require_city && renderField("city", "City *", "text", true)}
 
           {hostSettings.require_state && (
             <select
@@ -298,32 +279,24 @@ export default function GuestSignupPage() {
               required
               value={form.state}
               onChange={(e) => setForm({ ...form, state: e.target.value })}
-              className={cn(
-                "w-full p-3 rounded-xl bg-black/40 border border-white/20",
-                "focus:border-sky-400 outline-none text-white"
-              )}
+              className={cn("w-full p-3 rounded-xl bg-black/40 border border-white/20")}
             >
               <option value="">State *</option>
               {stateOptions.map((s) => (
-                <option key={s} value={s} className="text-black">
-                  {s}
-                </option>
+                <option key={s} value={s} className="text-black">{s}</option>
               ))}
             </select>
           )}
 
-          {hostSettings.require_zip &&
-            renderField("zip", "ZIP Code *", "tel", true)}
+          {hostSettings.require_zip && renderField("zip", "ZIP Code *", "tel", true)}
+          {hostSettings.require_age && renderField("age", "Age *", "number", true)}
 
-          {hostSettings.require_age &&
-            renderField("age", "Age *", "number", true)}
-
-          <label className={cn('flex', 'items-center', 'gap-2', 'text-sm', 'text-gray-300', 'mt-2')}>
+          <label className={cn("flex items-center gap-2 text-sm text-gray-300 mt-2")}>
             <input
               type="checkbox"
-              className={cn('w-4', 'h-4', 'accent-sky-400')}
               checked={agree}
               onChange={(e) => setAgree(e.target.checked)}
+              className="accent-sky-400"
             />
             I agree to the{" "}
             <button
@@ -339,8 +312,7 @@ export default function GuestSignupPage() {
             disabled={submitting}
             className={cn(
               "w-full py-3 rounded-xl bg-gradient-to-r",
-              "from-sky-500 to-blue-600 font-semibold shadow-lg",
-              "hover:scale-[1.03] active:scale-[0.97] transition-all"
+              "from-sky-500 to-blue-600 font-semibold"
             )}
           >
             {submitting ? "Submitting..." : "Continue"}

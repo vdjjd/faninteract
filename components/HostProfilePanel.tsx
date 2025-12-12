@@ -52,6 +52,16 @@ export default function HostProfilePanel({
     await supabase.auth.signOut();
     window.location.href = "/";
   }
+/* ---------------------- EXPORT GUEST DATA ---------------------- */
+function exportGuestsCSV() {
+  if (!host?.id) return;
+  window.open(`/api/export/guests?hostId=${host.id}`, "_blank");
+}
+
+function printGuestsPDF() {
+  if (!host?.id) return;
+  window.open(`/api/export/guests/print?hostId=${host.id}`, "_blank");
+}
 
   async function updateGuestOption(field: string, value: boolean) {
     await supabase.from("hosts").update({ [field]: value }).eq("id", host.id);
@@ -342,6 +352,23 @@ export default function HostProfilePanel({
 
             <GuestOptionsModal />
           </section>
+
+<Button
+  variant="outline"
+  className={cn("w-full", "mt-3")}
+  onClick={exportGuestsCSV}
+>
+  Export Guests (CSV)
+</Button>
+
+<Button
+  variant="outline"
+  className={cn("w-full", "mt-2")}
+  onClick={printGuestsPDF}
+>
+  Print Guests (PDF)
+</Button>
+
 
           {/* ---------------------- BILLING ----------------------- */}
           <section>
