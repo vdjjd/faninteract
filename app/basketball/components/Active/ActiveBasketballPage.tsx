@@ -1,28 +1,39 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
-import PlayerCard from "./PlayerCard";
 import { Countdown } from "../Countdown";
 import { usePlayers } from "@/app/basketball/hooks/usePlayers";
 import { useCountdown } from "@/app/basketball/hooks/useCountdown";
 import { useGameTimer } from "@/app/basketball/hooks/useGameTimer";
+import SingleLaneDemo, {
+  ShotHandle,
+} from "@/app/basketball/dev/SingleLaneDemo";
 
 const CELL_COLORS = [
-  "#FF3B30", "#FF9500", "#FFCC00", "#34C759", "#5AC8FA",
-  "#007AFF", "#5856D6", "#AF52DE", "#FF2D55", "#A2845E",
+  "#FF3B30",
+  "#FF9500",
+  "#FFCC00",
+  "#34C759",
+  "#5AC8FA",
+  "#007AFF",
+  "#5856D6",
+  "#AF52DE",
+  "#FF2D55",
+  "#A2845E",
 ];
 
-export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
-
-  console.log("ACTIVE WALL MOUNTED with gameId =", gameId);
-
+export default function ActiveBasketballPage({
+  gameId,
+}: {
+  gameId: string;
+}) {
   const countdownValue = useCountdown(gameId);
   const { duration, timeLeft, timerExpired } = useGameTimer(gameId);
   const players = usePlayers(gameId);
 
+  const laneRefs = useRef<Record<number, ShotHandle | null>>({});
   const [hostLogo, setHostLogo] = useState<string | null>(null);
-  const [animations, setAnimations] = useState<Record<number, string | null>>({});
 
   /* ------------------------------------------------------------
      LOAD HOST LOGO
@@ -48,8 +59,8 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
 
       setHostLogo(
         host?.branding_logo_url?.trim() ||
-        host?.logo_url?.trim() ||
-        "/faninteractlogo.png"
+          host?.logo_url?.trim() ||
+          "/faninteractlogo.png"
       );
     }
 
@@ -57,62 +68,30 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
   }, [gameId]);
 
   /* ------------------------------------------------------------
-     REALTIME: RECEIVE shot_fired → PLAY animation
+     REALTIME: RECEIVE SHOT → FIRE LANE
   ------------------------------------------------------------ */
   useEffect(() => {
-    console.log("ACTIVE WALL: subscription effect running with gameId =", gameId);
-
     const ch = supabase
       .channel(`basketball-${gameId}`, {
-        config: { broadcast: { ack: true } }
+        config: { broadcast: { ack: true } },
       })
       .on("broadcast", { event: "shot_fired" }, (event) => {
+        const lane = event?.payload?.lane_index;
+        if (lane === undefined) return;
 
-        console.log("🔥 ACTIVE WALL RECEIVED EVENT =", event);
-
-        const p = event?.payload;
-        if (!p) return;
-
-        const lane = p.lane_index;
-        const animName = p.animation;
-
-        if (animName) {
-          console.log(
-            "🎬 PLAY ANIMATION:",
-            animName,
-            "→ LANE:", lane
-          );
-
-          // Trigger animation
-          setAnimations((prev) => ({
-            ...prev,
-            [lane]: animName,
-          }));
-
-          // Reset so future clicks retrigger animation
-          setTimeout(() => {
-            setAnimations((prev) => ({
-              ...prev,
-              [lane]: null,
-            }));
-          }, 500); // clear slightly after animation finishes
-        }
+        laneRefs.current[lane]?.shoot();
       })
-      .subscribe((status) => {
-        console.log("ACTIVE WALL CHANNEL STATUS =", status);
-      });
+      .subscribe();
 
     return () => {
-      console.log("ACTIVE WALL: unsubscribing channel");
-      try { supabase.removeChannel(ch); } catch {}
+      supabase.removeChannel(ch);
     };
   }, [gameId]);
 
-  /* ------------------------------------------------------------
-     OTHER UI LOGIC
-  ------------------------------------------------------------ */
   const maxScore =
-    players.length ? Math.max(...players.map((p) => p.score ?? 0)) : 0;
+    players.length > 0
+      ? Math.max(...players.map((p) => p.score ?? 0))
+      : 0;
 
   const toggleFullscreen = () =>
     !document.fullscreenElement
@@ -120,7 +99,7 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
       : document.exitFullscreen();
 
   /* ------------------------------------------------------------
-     RENDER WALL
+     RENDER
   ------------------------------------------------------------ */
   return (
     <div
@@ -130,9 +109,6 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
         background: "#050A18",
         padding: 20,
         overflow: "hidden",
-        display: "flex",
-        justifyContent: "center",
-        alignItems: "center",
         position: "relative",
       }}
     >
@@ -142,33 +118,71 @@ export default function ActiveBasketballPage({ gameId }: { gameId: string }) {
         style={{
           width: "94vw",
           height: "90vh",
+          margin: "0 auto",
           display: "grid",
-          gap: "1.5vh",
           gridTemplateColumns: "repeat(5, 1fr)",
           gridTemplateRows: "repeat(2, 1fr)",
+          gap: "1.5vh",
         }}
       >
-        {Array.from({ length: 10 }).map((_, i) => {
-          const player = players.find((p) => p.cell === i);
-          const animationName = animations[i] ?? null;
+        {Array.from({ length: 10 }).map((_, laneIndex) => {
+          const player = players.find((p) => p.cell === laneIndex);
 
           return (
-            <PlayerCard
-              key={i}
-              index={i}
-              player={player}
-              timeLeft={timeLeft ?? duration}
-              score={player?.score ?? 0}
-              borderColor={CELL_COLORS[i]}
-              timerExpired={timerExpired}
-              maxScore={maxScore}
-              hostLogo={hostLogo}
-              animationName={animationName}
-            />
+            <div
+              key={laneIndex}
+              style={{
+                position: "relative",
+                borderRadius: 20,
+                border: `5px solid ${CELL_COLORS[laneIndex]}`,
+                overflow: "hidden",
+              }}
+            >
+              {/* 2.5D LANE */}
+              <SingleLaneDemo
+                ref={(el) => {
+                  laneRefs.current[laneIndex] = el;
+                }}
+              />
+
+              {/* PLAYER LABEL */}
+              <div
+                style={{
+                  position: "absolute",
+                  top: 6,
+                  left: 10,
+                  padding: "4px 10px",
+                  borderRadius: 8,
+                  background: CELL_COLORS[laneIndex],
+                  color: "white",
+                  fontWeight: 800,
+                  zIndex: 20,
+                }}
+              >
+                P{laneIndex + 1}
+              </div>
+
+              {/* SCORE */}
+              <div
+                style={{
+                  position: "absolute",
+                  bottom: 10,
+                  right: 10,
+                  fontSize: "2.6rem",
+                  fontFamily: "Digital, monospace",
+                  fontWeight: 900,
+                  color: "#ff2d2d",
+                  zIndex: 20,
+                }}
+              >
+                {player?.score ?? 0}
+              </div>
+            </div>
           );
         })}
       </div>
 
+      {/* FULLSCREEN */}
       <div
         onClick={toggleFullscreen}
         style={{
