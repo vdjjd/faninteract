@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import { getSupabaseClient } from "@/lib/supabaseClient";
+import { getOrCreateGuestDeviceId } from "@/lib/syncGuest";
 
 /* ---------------------------------------------------------
    Helpers
@@ -125,13 +126,13 @@ export default function ThankYouPage() {
   }, [id, type, supabase]);
 
   /* ---------------------------------------------------------
-     Record visit ONCE
+     Record visit (GUARANTEED)
   --------------------------------------------------------- */
   useEffect(() => {
     if (!profile || !data?.host?.id) return;
 
-    const deviceId = localStorage.getItem("guest_device_id");
-    if (!deviceId) return;
+    // ✅ GUARANTEES DEVICE ID EXISTS
+    const deviceId = getOrCreateGuestDeviceId();
 
     recordVisit({
       device_id: deviceId,
@@ -151,7 +152,7 @@ export default function ThankYouPage() {
       : data?.background_value ||
         "linear-gradient(135deg,#0a2540,#1b2b44,#000000)";
 
-  // ✅ EXACT SAME LOGIC AS INACTIVE WALL
+  // ✅ SAME LOGIC AS INACTIVE WALL
   const logo =
     data?.host?.branding_logo_url?.trim()
       ? data.host.branding_logo_url
@@ -292,3 +293,4 @@ export default function ThankYouPage() {
     </div>
   );
 }
+
