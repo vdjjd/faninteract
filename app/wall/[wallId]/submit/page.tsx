@@ -20,6 +20,14 @@ function getStoredGuestProfile() {
   }
 }
 
+/* ✅ REQUIRED HARD GUARD (ADDED) */
+function requireGuestProfileId(profile: any): string {
+  if (!profile || !profile.id) {
+    throw new Error("Guest profile ID missing — invalid signup state");
+  }
+  return profile.id;
+}
+
 export default function GuestSubmissionPage() {
   const router = useRouter();
   const params = useParams();
@@ -65,7 +73,7 @@ export default function GuestSubmissionPage() {
       const { data } = await supabase
         .from("fan_walls")
         .select(
-          "id,title,background_type,background_value,host:host_id (branding_logo_url)"
+          "id,title,background_type,background_value,host:host_id (id, branding_logo_url)"
         )
         .eq("id", wallUUID)
         .single();
@@ -143,27 +151,33 @@ export default function GuestSubmissionPage() {
     }
 
     setSubmitting(true);
-    const photoUrl = await uploadImage();
 
-    if (!photoUrl) {
-      alert("Photo upload failed.");
+    try {
+      const guestProfileId = requireGuestProfileId(profile);
+      const photoUrl = await uploadImage();
+
+      if (!photoUrl) {
+        throw new Error("Photo upload failed.");
+      }
+
+      await supabase.from("guest_posts").insert([
+        {
+          fan_wall_id: wallUUID,
+          guest_profile_id: guestProfileId, // ✅ GUARANTEED UUID
+          nickname: profile.first_name,
+          message,
+          photo_url: photoUrl,
+          status: "pending",
+        },
+      ]);
+
+      // ✅ REQUIRED ROUTING FIX
+      router.push(`/thanks/${wallUUID}?type=wall`);
+    } catch (err) {
+      console.error(err);
+      alert("Something went wrong. Please rescan and try again.");
       setSubmitting(false);
-      return;
     }
-
-    await supabase.from("guest_posts").insert([
-      {
-        fan_wall_id: wallUUID,
-        guest_profile_id: profile.id,
-        nickname: profile.first_name,
-        message,
-        photo_url: photoUrl,
-        status: "pending",
-      },
-    ]);
-
-    // ✅ PATCH: pass type to Thank You page
-    router.push(`/thanks/${wallUUID}?type=wall`);
   };
 
   /* ---------------------------------------------------------
