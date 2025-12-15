@@ -1,9 +1,7 @@
 import { serve } from "https://deno.land/std@0.192.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-/* ---------------------------------------------------------
-   CORS headers
---------------------------------------------------------- */
+/* ---------------- CORS ---------------- */
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
@@ -11,11 +9,8 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-/* ---------------------------------------------------------
-   Edge Function
---------------------------------------------------------- */
 serve(async (req) => {
-  // ✅ Handle CORS preflight
+  /* ✅ HANDLE PREFLIGHT FIRST */
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
@@ -37,7 +32,7 @@ serve(async (req) => {
 
     const today = new Date().toISOString().split("T")[0];
 
-    // 🔍 Existing loyalty row?
+    /* 🔍 EXISTING LOYALTY CHECK */
     const { data: loyalty } = await supabase
       .from("guest_host_loyalty")
       .select("*")
@@ -45,23 +40,26 @@ serve(async (req) => {
       .eq("host_id", host_id)
       .maybeSingle();
 
-    // 🆕 FIRST VISIT
+    /* 🆕 FIRST VISIT */
     if (!loyalty) {
       await supabase.from("guest_host_loyalty").insert({
         guest_profile_id,
         device_id,
         host_id,
-        last_visit_date: today,
         visit_count: 1,
+        last_visit_date: today,
       });
 
       return new Response(
-        JSON.stringify({ isReturning: false, visitCount: 1 }),
+        JSON.stringify({
+          isReturning: false,
+          visitCount: 1,
+        }),
         { status: 200, headers: corsHeaders }
       );
     }
 
-    // 🔁 NEW DAY RETURN
+    /* 🔁 NEW DAY VISIT */
     if (loyalty.last_visit_date < today) {
       const newCount = loyalty.visit_count + 1;
 
@@ -70,30 +68,32 @@ serve(async (req) => {
         .update({
           visit_count: newCount,
           last_visit_date: today,
-          updated_at: new Date().toISOString(),
         })
         .eq("id", loyalty.id);
 
       return new Response(
-        JSON.stringify({ isReturning: true, visitCount: newCount }),
+        JSON.stringify({
+          isReturning: true,
+          visitCount: newCount,
+        }),
         { status: 200, headers: corsHeaders }
       );
     }
 
-    // 🔒 SAME DAY — NO INCREMENT
+    /* 🔒 SAME DAY — NO INCREMENT */
     return new Response(
       JSON.stringify({
-        isReturning: false,
+        isReturning: true,
         visitCount: loyalty.visit_count,
       }),
       { status: 200, headers: corsHeaders }
     );
   } catch (err) {
     console.error("record-guest-visit error:", err);
+
     return new Response(
       JSON.stringify({ error: "Internal server error" }),
       { status: 500, headers: corsHeaders }
     );
   }
 });
-
