@@ -1,7 +1,6 @@
 import { serve } from "https://deno.land/std@0.192.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-/* ---------------- CORS ---------------- */
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
@@ -10,7 +9,7 @@ const corsHeaders = {
 };
 
 serve(async (req) => {
-  /* ✅ HANDLE PREFLIGHT FIRST */
+  // ✅ Handle CORS preflight
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
@@ -32,7 +31,7 @@ serve(async (req) => {
 
     const today = new Date().toISOString().split("T")[0];
 
-    /* 🔍 EXISTING LOYALTY CHECK */
+    // 🔍 Check existing loyalty
     const { data: loyalty } = await supabase
       .from("guest_host_loyalty")
       .select("*")
@@ -40,7 +39,10 @@ serve(async (req) => {
       .eq("host_id", host_id)
       .maybeSingle();
 
-    /* 🆕 FIRST VISIT */
+    let visitCount = 1;
+    let isReturning = false;
+
+    // 🆕 FIRST VISIT
     if (!loyalty) {
       await supabase.from("guest_host_loyalty").insert({
         guest_profile_id,
@@ -49,48 +51,58 @@ serve(async (req) => {
         visit_count: 1,
         last_visit_date: today,
       });
+    } else {
+      visitCount = loyalty.visit_count;
 
-      return new Response(
-        JSON.stringify({
-          isReturning: false,
-          visitCount: 1,
-        }),
-        { status: 200, headers: corsHeaders }
-      );
+      // 🔁 NEW DAY VISIT
+      if (loyalty.last_visit_date < today) {
+        visitCount += 1;
+        isReturning = true;
+
+        await supabase
+          .from("guest_host_loyalty")
+          .update({
+            visit_count: visitCount,
+            last_visit_date: today,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", loyalty.id);
+      }
     }
 
-    /* 🔁 NEW DAY VISIT */
-    if (loyalty.last_visit_date < today) {
-      const newCount = loyalty.visit_count + 1;
+    // 🏅 Get badge
+    const { data: badge } = await supabase
+      .from("loyalty_badges")
+      .select("code,label,description,min_visits")
+      .lte("min_visits", visitCount)
+      .order("min_visits", { ascending: false })
+      .limit(1)
+      .maybeSingle();
 
-      await supabase
-        .from("guest_host_loyalty")
-        .update({
-          visit_count: newCount,
-          last_visit_date: today,
-        })
-        .eq("id", loyalty.id);
+    // ⬆️ Increment global counter
+    const { data: profile } = await supabase
+      .from("guest_profiles")
+      .select("total_visit_count")
+      .eq("id", guest_profile_id)
+      .single();
 
-      return new Response(
-        JSON.stringify({
-          isReturning: true,
-          visitCount: newCount,
-        }),
-        { status: 200, headers: corsHeaders }
-      );
-    }
+    await supabase
+      .from("guest_profiles")
+      .update({
+        total_visit_count: (profile?.total_visit_count || 0) + 1,
+      })
+      .eq("id", guest_profile_id);
 
-    /* 🔒 SAME DAY — NO INCREMENT */
     return new Response(
       JSON.stringify({
-        isReturning: true,
-        visitCount: loyalty.visit_count,
+        isReturning,
+        visitCount,
+        badge,
       }),
       { status: 200, headers: corsHeaders }
     );
   } catch (err) {
     console.error("record-guest-visit error:", err);
-
     return new Response(
       JSON.stringify({ error: "Internal server error" }),
       { status: 500, headers: corsHeaders }
