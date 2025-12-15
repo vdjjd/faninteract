@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { useParams, useSearchParams, useRouter } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
+import { useParams, useSearchParams } from "next/navigation";
 import { getSupabaseClient } from "@/lib/supabaseClient";
 
 /* ---------------------------------------------------------
@@ -54,7 +54,6 @@ async function recordVisit({
 export default function ThankYouPage() {
   const { id } = useParams();
   const searchParams = useSearchParams();
-  const router = useRouter();
   const supabase = getSupabaseClient();
 
   const rawType = searchParams.get("type");
@@ -97,10 +96,7 @@ export default function ThankYouPage() {
       if (type === "lead") {
         setData({
           background_value: null,
-          host: {
-            id: null,
-            branding_logo_url: "/faninteractlogo.png",
-          },
+          host: null,
         });
         return;
       }
@@ -155,10 +151,13 @@ export default function ThankYouPage() {
       : data?.background_value ||
         "linear-gradient(135deg,#0a2540,#1b2b44,#000000)";
 
+  // ✅ EXACT SAME LOGIC AS INACTIVE WALL
   const logo =
-    data?.host?.branding_logo_url ||
-    data?.host?.logo_url ||
-    "/faninteractlogo.png";
+    data?.host?.branding_logo_url?.trim()
+      ? data.host.branding_logo_url
+      : data?.host?.logo_url?.trim()
+      ? data.host.logo_url
+      : "/faninteractlogo.png";
 
   const headline = visitInfo?.isReturning
     ? `Welcome back${profile?.first_name ? `, ${profile.first_name}` : ""}!`
