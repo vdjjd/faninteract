@@ -161,7 +161,7 @@ export default function ThankYouPage() {
       : "/faninteractlogo.png";
 
   const headline = visitInfo?.isReturning
-    ? `Welcome back${profile?.first_name ? `, ${profile.first_name}` : ""}!`
+    ? `Welcome Back${profile?.first_name ? `, ${profile.first_name}` : ""}!`
     : "Thank you!";
 
   const message = useMemo(() => {
