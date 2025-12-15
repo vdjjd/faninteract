@@ -5,119 +5,140 @@ import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { useCountdown } from "@/app/basketball/hooks/useCountdown";
 
-const CELL_COLORS = [
-  "#FF3B30",
-  "#FF9500",
-  "#FFCC00",
-  "#34C759",
-  "#5AC8FA",
-  "#007AFF",
-  "#5856D6",
-  "#AF52DE",
-  "#FF2D55",
-  "#A2845E",
-];
-
 export default function ShooterPage() {
   const { gameId } = useParams() as { gameId: string };
 
   const countdownValue = useCountdown(gameId);
 
+  const channelRef = useRef<any>(null);
+
+  const [status, setStatus] = useState("Initializing…");
   const [playerId, setPlayerId] = useState<string | null>(null);
-  const [laneIndex, setLaneIndex] = useState<number>(0);
-  const [laneColor, setLaneColor] = useState("#333");
-  const [score, setScore] = useState(0);
+  const [laneIndex, setLaneIndex] = useState<number | null>(null);
 
-  const startY = useRef<number | null>(null);
-
-  /* ---------------- LOAD PLAYER ---------------- */
+  /* ============================================================
+     LOAD OR RECOVER PLAYER
+  ============================================================ */
   useEffect(() => {
-    const stored = localStorage.getItem("bb_player_id");
-    if (stored) setPlayerId(stored);
-  }, []);
-
-  useEffect(() => {
-    if (!playerId) return;
-
     async function loadPlayer() {
-      const { data } = await supabase
+      const storedId = localStorage.getItem("bb_player_id");
+      console.log("📦 localStorage bb_player_id =", storedId);
+
+      // 1️⃣ Try stored player ID
+      if (storedId) {
+        const { data, error } = await supabase
+          .from("bb_game_players")
+          .select("id, lane_index")
+          .eq("id", storedId)
+          .eq("game_id", gameId)
+          .is("disconnected_at", null)
+          .maybeSingle();
+
+        if (data) {
+          console.log("✅ Player restored from storage:", data);
+          setPlayerId(data.id);
+          setLaneIndex(data.lane_index);
+          setStatus(`Ready — lane ${data.lane_index}`);
+          return;
+        }
+      }
+
+      // 2️⃣ Fallback: find active player for this game
+      console.warn("⚠️ Stored player invalid — searching active players");
+
+      const { data: activePlayers, error } = await supabase
         .from("bb_game_players")
-        .select("*")
-        .eq("id", playerId)
-        .single();
+        .select("id, lane_index")
+        .eq("game_id", gameId)
+        .is("disconnected_at", null)
+        .order("joined_at", { ascending: true })
+        .limit(1);
 
-      if (!data) return;
+      if (error || !activePlayers || activePlayers.length === 0) {
+        console.error("❌ No active player found", error);
+        setStatus("❌ No active player assigned");
+        return;
+      }
 
-      setLaneIndex(data.lane_index);
-      setLaneColor(CELL_COLORS[data.lane_index]);
-      setScore(data.score ?? 0);
+      const p = activePlayers[0];
+
+      console.log("✅ Active player recovered:", p);
+
+      localStorage.setItem("bb_player_id", p.id);
+
+      setPlayerId(p.id);
+      setLaneIndex(p.lane_index);
+      setStatus(`Ready — lane ${p.lane_index}`);
     }
 
     loadPlayer();
-    const i = setInterval(loadPlayer, 1000);
-    return () => clearInterval(i);
-  }, [playerId]);
+  }, [gameId]);
 
-  /* ---------------- TOUCH HANDLERS ---------------- */
+  /* ============================================================
+     OPEN BROADCAST CHANNEL (ONCE)
+  ============================================================ */
+  useEffect(() => {
+    if (channelRef.current) return;
 
-  function onTouchStart(e: React.TouchEvent) {
-    startY.current = e.touches[0].clientY;
-  }
-
-  function onTouchEnd(e: React.TouchEvent) {
-    if (countdownValue !== null) return;
-    if (startY.current === null) return;
-
-    const endY = e.changedTouches[0].clientY;
-    const delta = startY.current - endY;
-    startY.current = null;
-
-    console.log("📱 SWIPE DELTA:", delta);
-
-    if (delta < 50) return; // must be a REAL swipe
-
-    fireShot();
-  }
-
-  /* ---------------- FIRE SHOT ---------------- */
-
-  function fireShot() {
-    if (!playerId) return;
-
-    console.log("🏀 SHOT FIRED → lane", laneIndex);
-
-    supabase
+    const ch = supabase
       .channel(`basketball-${gameId}`, {
         config: { broadcast: { ack: true } },
       })
-      .send({
-        type: "broadcast",
-        event: "shot_fired",
-        payload: {
-          lane_index: laneIndex,
-          animation: "make",
-        },
+      .subscribe((status) => {
+        console.log("📡 SHOOTER CHANNEL STATUS:", status);
       });
+
+    channelRef.current = ch;
+
+    return () => {
+      supabase.removeChannel(ch);
+      channelRef.current = null;
+    };
+  }, [gameId]);
+
+  /* ============================================================
+     FIRE SHOT (BUTTON)
+  ============================================================ */
+  async function fireShot() {
+    if (!channelRef.current || laneIndex === null) {
+      console.warn("❌ Cannot shoot — channel or lane missing");
+      return;
+    }
+
+    console.log("🔥 FIRING SHOT → lane", laneIndex);
+
+    await channelRef.current.send({
+      type: "broadcast",
+      event: "shot_fired",
+      payload: {
+        lane_index: laneIndex,
+        animation: "swish",
+        points: 2,
+      },
+    });
   }
 
-  /* ---------------- RENDER ---------------- */
-
+  /* ============================================================
+     RENDER
+  ============================================================ */
   return (
     <div
-      onTouchStart={onTouchStart}
-      onTouchEnd={onTouchEnd}
       style={{
         width: "100vw",
         height: "100vh",
-        background: "black",
-        border: `10px solid ${laneColor}`,
-        position: "relative",
-        overflow: "hidden",
+        background: "#000",
+        color: "white",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 20,
         touchAction: "none",
-        WebkitUserSelect: "none",
-        userSelect: "none",
       }}
     >
+      {/* STATUS */}
+      <div style={{ fontSize: 22, opacity: 0.85 }}>{status}</div>
+
       {/* COUNTDOWN */}
       {countdownValue !== null && (
         <div
@@ -128,52 +149,32 @@ export default function ShooterPage() {
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            color: "white",
             fontSize: "clamp(4rem, 10vw, 12rem)",
             fontWeight: 900,
-            zIndex: 100,
+            zIndex: 50,
           }}
         >
-          {countdownValue > 0 ? countdownValue : "SHOOT!"}
+          {countdownValue > 0 ? countdownValue : "START!"}
         </div>
       )}
 
-      {/* SCORE */}
-      <div
+      {/* TEST BUTTON */}
+      <button
+        onClick={fireShot}
         style={{
-          position: "absolute",
-          top: 20,
-          left: 20,
-          color: "white",
-          fontSize: "2.5rem",
-          fontWeight: 800,
-        }}
-      >
-        {score}
-      </div>
-
-      {/* SWIPE BUTTON */}
-      <div
-        style={{
-          position: "absolute",
-          bottom: "12%",
-          left: "50%",
-          transform: "translateX(-50%)",
-          width: 180,
-          height: 180,
-          borderRadius: "50%",
-          background: laneColor,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
+          padding: "24px 40px",
+          fontSize: "2rem",
           fontWeight: 900,
-          color: "white",
-          letterSpacing: 2,
-          boxShadow: `0 0 30px ${laneColor}`,
+          borderRadius: 16,
+          background: "#ff6a00",
+          border: "none",
+          color: "black",
+          cursor: "pointer",
+          boxShadow: "0 0 30px rgba(255,120,0,0.8)",
         }}
       >
-        SWIPE ↑
-      </div>
+        SHOOT
+      </button>
     </div>
   );
 }

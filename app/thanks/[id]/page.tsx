@@ -4,7 +4,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
 import { getSupabaseClient } from "@/lib/supabaseClient";
 
-/* ----------------------------- helpers ----------------------------- */
+/* ---------------------------------------------------------
+   Helpers
+--------------------------------------------------------- */
 function getStoredGuestProfile() {
   try {
     const raw =
@@ -16,43 +18,43 @@ function getStoredGuestProfile() {
   }
 }
 
-/* ----------------------------- helper fn OUTSIDE blocks ----------------------------- */
-async function loadBasketballData(supabase: any, id: string) {
-  const { data: game } = await supabase
-    .from("bb_games")
-    .select("host_id")
-    .eq("id", id)
-    .maybeSingle();
+async function recordVisit({
+  device_id,
+  guest_profile_id,
+  host_id,
+}: {
+  device_id: string;
+  guest_profile_id: string;
+  host_id: string;
+}) {
+  const res = await fetch(
+    "https://zicbtsxjrhbpqjqemjrg.functions.supabase.co/record-guest-visit",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        device_id,
+        guest_profile_id,
+        host_id,
+      }),
+    }
+  );
 
-  if (!game?.host_id) {
-    return {
-      host: { branding_logo_url: "/faninteractlogo.png" },
-    };
+  if (!res.ok) {
+    console.error("Visit tracking failed");
+    return null;
   }
 
-  const { data: host } = await supabase
-    .from("hosts")
-    .select("branding_logo_url, logo_url")
-    .eq("id", game.host_id)
-    .maybeSingle();
-
-  return {
-    host: {
-      branding_logo_url:
-        host?.branding_logo_url ||
-        host?.logo_url ||
-        "/faninteractlogo.png",
-    },
-  };
+  return res.json();
 }
 
-/* ====================================================================== */
-/*                              COMPONENT                                 */
-/* ====================================================================== */
+/* ---------------------------------------------------------
+   Component
+--------------------------------------------------------- */
 export default function ThankYouPage() {
   const { id } = useParams();
-  const router = useRouter();
   const searchParams = useSearchParams();
+  const router = useRouter();
   const supabase = getSupabaseClient();
 
   const rawType = searchParams.get("type");
@@ -64,46 +66,41 @@ export default function ThankYouPage() {
     path.includes("/polls/") ? "poll" :
     path.includes("/prizewheel/") ? "wheel" :
     path.includes("/wall/") ? "wall" :
-    null;
+    "lead";
 
   if (rawType) detectedType = rawType.toLowerCase();
-
-  const type = detectedType || "lead";
+  const type = detectedType;
 
   const [data, setData] = useState<any>(null);
   const [profile, setProfile] = useState<any>(null);
-  const [showCloseHint, setShowCloseHint] = useState(false);
-  const wheelRowRef = useRef<any>(null);
+  const [visitInfo, setVisitInfo] = useState<{
+    isReturning: boolean;
+    visitCount: number;
+  } | null>(null);
 
-  /* ----------------------------- load profile ----------------------------- */
+  const [showCloseHint, setShowCloseHint] = useState(false);
+
+  /* ---------------------------------------------------------
+     Load guest profile
+  --------------------------------------------------------- */
   useEffect(() => {
     setProfile(getStoredGuestProfile());
   }, []);
 
-  /* ----------------------------- auto mark basketball session ----------------------------- */
-  useEffect(() => {
-    if (type === "basketball") {
-      try {
-        localStorage.setItem("bb_waiting", "true");
-      } catch {}
-    }
-  }, [type]);
-
-  /* ----------------------------- fetch data ----------------------------- */
+  /* ---------------------------------------------------------
+     Load host + background
+  --------------------------------------------------------- */
   useEffect(() => {
     if (!id) return;
 
     (async () => {
-      if (type === "basketball") {
-        const result = await loadBasketballData(supabase, id as string);
-        setData(result);
-        return;
-      }
-
       if (type === "lead") {
         setData({
           background_value: null,
-          host: { branding_logo_url: "/faninteractlogo.png" },
+          host: {
+            id: null,
+            branding_logo_url: "/faninteractlogo.png",
+          },
         });
         return;
       }
@@ -113,91 +110,72 @@ export default function ThankYouPage() {
           ? "polls"
           : type === "wheel"
           ? "prize_wheels"
+          : type === "basketball"
+          ? "bb_games"
           : "fan_walls";
 
       const { data } = await supabase
         .from(table)
         .select(
-          `id, title, background_value,
-           remote_spin_enabled, selected_remote_spinner,
-           host:host_id ( branding_logo_url, logo_url )`
+          `id,
+           background_value,
+           host:host_id ( id, branding_logo_url, logo_url )`
         )
         .eq("id", id as string)
         .maybeSingle();
 
       setData(data);
-
-      if (type === "wheel" && data) {
-        wheelRowRef.current = data;
-      }
     })();
   }, [id, type, supabase]);
 
-  /* ====================================================================== */
-  /*               REALTIME LISTENER → PLAYER APPROVED                     */
-  /* ====================================================================== */
+  /* ---------------------------------------------------------
+     Record visit ONCE
+  --------------------------------------------------------- */
   useEffect(() => {
-    if (type !== "basketball" || !profile?.id || !id) return;
+    if (!profile || !data?.host?.id) return;
 
-    const channel = supabase
-      .channel(`bb-approval-${profile.id}`)
-      .on(
-        "postgres_changes",
-        {
-          schema: "public",
-          table: "bb_game_players",
-          event: "INSERT",
-          filter: `guest_profile_id=eq.${profile.id}`,
-        },
-        async (payload: any) => {
-          const player = payload.new;
-          if (!player) return;
+    const deviceId = localStorage.getItem("guest_device_id");
+    if (!deviceId) return;
 
-          try {
-            localStorage.setItem("bb_player_id", player.id);
-            localStorage.removeItem("bb_waiting");
-          } catch {}
+    recordVisit({
+      device_id: deviceId,
+      guest_profile_id: profile.id,
+      host_id: data.host.id,
+    }).then((res) => {
+      if (res) setVisitInfo(res);
+    });
+  }, [profile, data?.host?.id]);
 
-          router.replace(`/basketball/${id}/shoot`);
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [type, profile?.id, id, supabase, router]);
-
-  /* ----------------------------- ui helpers ----------------------------- */
+  /* ---------------------------------------------------------
+     UI helpers
+  --------------------------------------------------------- */
   const bg =
-    type === "lead"
-      ? "linear-gradient(135deg,#0a2540,#1b2b44,#000000)"
+    data?.background_value?.includes("http")
+      ? `url(${data.background_value})`
       : data?.background_value ||
         "linear-gradient(135deg,#0a2540,#1b2b44,#000000)";
 
-  const displayLogo =
+  const logo =
     data?.host?.branding_logo_url ||
     data?.host?.logo_url ||
     "/faninteractlogo.png";
+
+  const headline = visitInfo?.isReturning
+    ? `Welcome back${profile?.first_name ? `, ${profile.first_name}` : ""}!`
+    : "Thank you!";
 
   const message = useMemo(() => {
     switch (type) {
       case "basketball":
         return "Your basketball entry was submitted!";
-      case "lead":
-        return "Your request has been submitted!";
       case "poll":
         return "Your vote has been recorded!";
       case "wheel":
         return "You're in! Watch for your chance…";
-      case "trivia":
-        return "Your answer has been submitted!";
       default:
-        return "Your post has been sent for approval!";
+        return "Your submission was received!";
     }
   }, [type]);
-
-  /* ----------------------------- handlers ----------------------------- */
 
   const handleClose = () => {
     setShowCloseHint(true);
@@ -206,20 +184,21 @@ export default function ThankYouPage() {
     } catch {}
   };
 
-  /* ----------------------------- render ----------------------------- */
-
+  /* ---------------------------------------------------------
+     Render
+  --------------------------------------------------------- */
   return (
     <div
       style={{
         minHeight: "100vh",
-        backgroundImage: bg.includes("http") ? `url(${bg})` : bg,
+        backgroundImage: bg,
         backgroundSize: "cover",
         backgroundPosition: "center",
         position: "relative",
         display: "flex",
         justifyContent: "center",
         alignItems: "center",
-        padding: 25,
+        padding: 24,
         textAlign: "center",
       }}
     >
@@ -236,45 +215,44 @@ export default function ThankYouPage() {
         style={{
           position: "relative",
           zIndex: 10,
-          maxWidth: 480,
+          maxWidth: 460,
           width: "100%",
           padding: "42px 26px",
           borderRadius: 22,
-          background: "rgba(0,0,0,0.55)",
-          border: "1px solid rgba(255,255,255,0.08)",
-          boxShadow: "0 0 35px rgba(0,0,0,0.6)",
+          background: "rgba(0,0,0,0.6)",
+          border: "1px solid rgba(255,255,255,0.1)",
+          boxShadow: "0 0 35px rgba(0,0,0,0.7)",
         }}
       >
         <img
-          src={displayLogo}
+          src={logo}
+          alt="logo"
           style={{
             width: "72%",
             maxWidth: 260,
             margin: "0 auto 16px",
             filter: "drop-shadow(0 0 25px rgba(255,128,64,0.65))",
           }}
-          alt="logo"
         />
 
         <h1
           style={{
             fontSize: "2.2rem",
-            marginBottom: 6,
             fontWeight: 900,
+            marginBottom: 6,
             background:
               "linear-gradient(90deg,#ffd8a6,#ffa65c,#ff7a00,#ff3b0a)",
             WebkitBackgroundClip: "text",
             color: "transparent",
           }}
         >
-          🎉 Thank You!
+          🎉 {headline}
         </h1>
 
-        <p style={{ color: "#f3e8e0", marginBottom: 18, opacity: 0.9 }}>
+        <p style={{ color: "#f3e8e0", marginBottom: 18 }}>
           {message}
         </p>
 
-        {/* 🔥 BASKETBALL NOTICE */}
         {type === "basketball" && (
           <div
             style={{
@@ -284,14 +262,10 @@ export default function ThankYouPage() {
               border: "1px solid rgba(255,120,0,0.35)",
               borderRadius: 12,
               color: "#ffd9b3",
-              fontSize: "1.2rem",
               fontWeight: 700,
-              lineHeight: 1.4,
             }}
           >
-            🚀 <span style={{ color: "#fff" }}>Keep this page open!</span>
-            <br />
-            This becomes your <strong>Basketball Controller</strong> once approved.
+            🚀 Keep this page open — it becomes your controller once approved
           </div>
         )}
 
@@ -299,18 +273,19 @@ export default function ThankYouPage() {
           <button
             onClick={handleClose}
             style={{
+              width: "100%",
               padding: "10px 16px",
               borderRadius: 10,
               background: "linear-gradient(90deg,#475569,#0f172a)",
               color: "#fff",
               fontWeight: 600,
-              width: "100%",
+              marginTop: 20,
             }}
           >
             Close
           </button>
         ) : (
-          <p style={{ color: "#fff", fontSize: 16, marginTop: 6 }}>
+          <p style={{ color: "#fff", marginTop: 10 }}>
             ✅ You can now close this tab
           </p>
         )}
