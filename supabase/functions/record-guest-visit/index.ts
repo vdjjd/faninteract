@@ -29,6 +29,25 @@ serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
+    // 🛑 GUARD: Host loyalty toggle
+    const { data: host } = await supabase
+      .from("hosts")
+      .select("loyalty_enabled")
+      .eq("id", host_id)
+      .single();
+
+    if (!host?.loyalty_enabled) {
+      return new Response(
+        JSON.stringify({
+          isReturning: false,
+          visitCount: null,
+          badge: null,
+          loyaltyDisabled: true,
+        }),
+        { status: 200, headers: corsHeaders }
+      );
+    }
+
     const today = new Date().toISOString().split("T")[0];
 
     // 🔍 Check existing loyalty

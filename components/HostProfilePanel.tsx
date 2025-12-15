@@ -333,6 +333,38 @@ function printGuestsPDF() {
               Created: {new Date(host?.created_at).toLocaleDateString()}
             </p>
 
+            {/* ---------------------- GUEST LOYALTY ---------------------- */}
+<div
+  className={cn(
+    "mt-4",
+    "flex",
+    "items-center",
+    "justify-between",
+    "p-3",
+    "bg-black/40",
+    "rounded-lg",
+    "border",
+    "border-white/10"
+  )}
+>
+  <div className={cn('flex', 'flex-col')}>
+    <span className={cn('font-medium', 'text-gray-200')}>
+      🏅 Guest Loyalty
+    </span>
+    <span className={cn('text-xs', 'text-gray-400')}>
+      Track return visits and show badges
+    </span>
+  </div>
+
+  <Switch
+    checked={!!host.loyalty_enabled}
+    onCheckedChange={(v) =>
+      updateGuestOption("loyalty_enabled", v)
+    }
+  />
+</div>
+
+
             <Button
               variant="outline"
               className={cn('w-full', 'mt-3', 'flex', 'items-center', 'justify-center', 'gap-2')}
