@@ -30,7 +30,7 @@ export default function GuestSubmissionPage() {
   const supabase = getSupabaseClient();
 
   const [wall, setWall] = useState<any>(null);
-  const [profile, setProfile] = useState<any | null>(undefined); // undefined = loading
+  const [profile, setProfile] = useState<any | null>(undefined);
 
   const [imageSrc, setImageSrc] = useState<string | null>(null);
   const [croppedAreaPixels, setCroppedAreaPixels] = useState(null);
@@ -50,7 +50,7 @@ export default function GuestSubmissionPage() {
 
     if (!p) {
       router.replace(`/guest/signup?wall=${wallUUID}`);
-      setProfile(null); // ensure null state
+      setProfile(null);
       return;
     }
 
@@ -162,17 +162,14 @@ export default function GuestSubmissionPage() {
       },
     ]);
 
-    router.push(`/thanks/${wallUUID}`);
+    // ✅ PATCH: pass type to Thank You page
+    router.push(`/thanks/${wallUUID}?type=wall`);
   };
 
   /* ---------------------------------------------------------
      Prevent rendering while loading OR redirecting
   --------------------------------------------------------- */
   if (profile === undefined || !wall) return null;
-
-  /* ---------------------------------------------------------
-     If redirect triggered, don't render the form
-  --------------------------------------------------------- */
   if (profile === null) return null;
 
   /* ---------------------------------------------------------
@@ -224,7 +221,6 @@ export default function GuestSubmissionPage() {
           border: "1px solid rgba(255,255,255,0.15)",
         }}
       >
-        {/* Logo */}
         <img
           src={logo}
           style={{
@@ -238,7 +234,6 @@ export default function GuestSubmissionPage() {
 
         <h2 style={{ marginBottom: 16, fontWeight: 800 }}>{wall.title}</h2>
 
-        {/* Cropper */}
         <div
           style={{
             width: "100%",
@@ -316,21 +311,6 @@ export default function GuestSubmissionPage() {
           onChange={handleFile}
         />
 
-        {imageSrc && (
-          <button
-            type="button"
-            onClick={() => setImageSrc(null)}
-            style={{
-              fontSize: 13,
-              marginBottom: 10,
-              textDecoration: "underline",
-              opacity: 0.8,
-            }}
-          >
-            ↻ Retake
-          </button>
-        )}
-
         <input
           value={profile.first_name}
           readOnly
@@ -350,7 +330,7 @@ export default function GuestSubmissionPage() {
           maxLength={150}
           value={message}
           onChange={(e) => setMessage(e.target.value)}
-          placeholder="Your message (optional)"
+          placeholder="Your message"
           style={{
             width: "100%",
             minHeight: 90,
@@ -383,14 +363,6 @@ export default function GuestSubmissionPage() {
           {submitting ? "Submitting…" : "Send to Wall"}
         </button>
       </form>
-
-      <style>{`
-        @keyframes pulse {
-          0% { filter: drop-shadow(0 0 12px rgba(56,189,248,0.6)); }
-          50% { filter: drop-shadow(0 0 35px rgba(56,189,248,0.9)); }
-          100% { filter: drop-shadow(0 0 12px rgba(56,189,248,0.6)); }
-        }
-      `}</style>
     </div>
   );
 }
