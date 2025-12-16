@@ -1,6 +1,9 @@
 import { serve } from "https://deno.land/std@0.192.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
+/* ---------------------------------------------------------
+   CORS
+--------------------------------------------------------- */
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
@@ -8,6 +11,9 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
+/* ---------------------------------------------------------
+   Function
+--------------------------------------------------------- */
 serve(async (req) => {
   // ✅ Handle CORS preflight
   if (req.method === "OPTIONS") {
@@ -29,7 +35,9 @@ serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
-    // 🛑 GUARD: Host loyalty toggle
+    /* ---------------------------------------------------------
+       Host-level loyalty toggle
+    --------------------------------------------------------- */
     const { data: host } = await supabase
       .from("hosts")
       .select("loyalty_enabled")
@@ -50,7 +58,9 @@ serve(async (req) => {
 
     const today = new Date().toISOString().split("T")[0];
 
-    // 🔍 Check existing loyalty
+    /* ---------------------------------------------------------
+       Per-host visit tracking
+    --------------------------------------------------------- */
     const { data: loyalty } = await supabase
       .from("guest_host_loyalty")
       .select("*")
@@ -61,7 +71,7 @@ serve(async (req) => {
     let visitCount = 1;
     let isReturning = false;
 
-    // 🆕 FIRST VISIT
+    // 🆕 First visit to this host
     if (!loyalty) {
       await supabase.from("guest_host_loyalty").insert({
         guest_profile_id,
@@ -73,7 +83,7 @@ serve(async (req) => {
     } else {
       visitCount = loyalty.visit_count;
 
-      // 🔁 NEW DAY VISIT
+      // 🔁 New calendar day visit
       if (loyalty.last_visit_date < today) {
         visitCount += 1;
         isReturning = true;
@@ -89,16 +99,20 @@ serve(async (req) => {
       }
     }
 
-    // 🏅 Get badge
+    /* ---------------------------------------------------------
+       Badge lookup (✅ FIXED: includes icon_url)
+    --------------------------------------------------------- */
     const { data: badge } = await supabase
       .from("loyalty_badges")
-      .select("code,label,description,min_visits")
+      .select("code,label,description,min_visits,icon_url")
       .lte("min_visits", visitCount)
       .order("min_visits", { ascending: false })
       .limit(1)
       .maybeSingle();
 
-    // ⬆️ Increment global counter
+    /* ---------------------------------------------------------
+       Global visit counter
+    --------------------------------------------------------- */
     const { data: profile } = await supabase
       .from("guest_profiles")
       .select("total_visit_count")
@@ -112,6 +126,9 @@ serve(async (req) => {
       })
       .eq("id", guest_profile_id);
 
+    /* ---------------------------------------------------------
+       Response
+    --------------------------------------------------------- */
     return new Response(
       JSON.stringify({
         isReturning,
