@@ -8,7 +8,7 @@ export default function VotePage() {
   const router = useRouter();
   const params = useParams();
 
-  // ✅ FIX: correct param name for /polls/[id]
+  // ✅ CORRECT PARAM FOR /polls/[id]
   const pollId = params.id as string;
 
   const [poll, setPoll] = useState<any>(null);
@@ -20,7 +20,7 @@ export default function VotePage() {
   const [hasLocalVoted, setHasLocalVoted] = useState<boolean | null>(null);
 
   /* ---------------------------------------------------------
-     Load localStorage (hydration-safe)
+     Load guest profile + vote status
   --------------------------------------------------------- */
   useEffect(() => {
     try {
@@ -37,15 +37,6 @@ export default function VotePage() {
       setHasLocalVoted(false);
     }
   }, [pollId]);
-
-  /* ---------------------------------------------------------
-     Redirect if already voted
-  --------------------------------------------------------- */
-  useEffect(() => {
-    if (hasLocalVoted === true && pollId) {
-      router.replace(`/thanks/${pollId}?type=poll`);
-    }
-  }, [hasLocalVoted, pollId, router]);
 
   /* ---------------------------------------------------------
      Load poll + options
@@ -72,7 +63,7 @@ export default function VotePage() {
   }, [pollId]);
 
   /* ---------------------------------------------------------
-     Realtime poll updates
+     Realtime updates
   --------------------------------------------------------- */
   useEffect(() => {
     if (!pollId) return;
@@ -99,7 +90,7 @@ export default function VotePage() {
   }, [pollId]);
 
   /* ---------------------------------------------------------
-     Submit vote → redirect to THANK YOU
+     Submit vote (ONLY redirect lives here)
   --------------------------------------------------------- */
   async function submitVote(optionId: string) {
     if (submitting || hasLocalVoted) return;
@@ -120,9 +111,8 @@ export default function VotePage() {
       .eq("id", optionId);
 
     localStorage.setItem(`voted_${pollId}`, "true");
-    setHasLocalVoted(true);
 
-    // ✅ FIX: correct thank-you route
+    // ✅ CORRECT THANK YOU PAGE
     router.push(`/thanks/${pollId}?type=poll`);
   }
 
