@@ -24,7 +24,7 @@ export default function GuestSignupPage() {
   const supabase = getSupabaseClient();
 
   /* -------------------------------------------------
-     🔥 NORMALIZE QR PARAMS (CRITICAL)
+     🔥 NORMALIZE QR PARAMS (CRITICAL FIX)
   ------------------------------------------------- */
   const redirect = params.get("redirect");
   const wallId = params.get("wall");
@@ -34,7 +34,7 @@ export default function GuestSignupPage() {
   const rawType = params.get("type");
   let pollId = params.get("poll");
 
-  // Fix malformed poll QR: ?type=poll=UUID
+  // Handles malformed QR: ?type=poll=UUID
   if (!pollId && rawType?.startsWith("poll=")) {
     pollId = rawType.split("=")[1];
   }
@@ -61,7 +61,6 @@ export default function GuestSignupPage() {
 
   const [agree, setAgree] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [ageError, setAgeError] = useState<string | null>(null);
 
   /* ------------------------------------------------- */
   useEffect(() => {
@@ -140,16 +139,34 @@ export default function GuestSignupPage() {
   }, [wallId, wheelId, pollId, basketballId, supabase]);
 
   /* -------------------------------------------------
-     AGE CALC + VALIDATION
+     AUTO-REDIRECT IF GUEST EXISTS
   ------------------------------------------------- */
-  function calculateAge(dob: string) {
-    const birth = new Date(dob);
-    const today = new Date();
-    let age = today.getFullYear() - birth.getFullYear();
-    const m = today.getMonth() - birth.getMonth();
-    if (m < 0 || (m === 0 && today.getDate() < birth.getDate())) age--;
-    return age;
-  }
+  useEffect(() => {
+    async function validateGuest() {
+      const deviceId = localStorage.getItem("guest_device_id");
+      const cached = localStorage.getItem("guest_profile");
+      if (!deviceId || !cached) return;
+
+      const { data } = await supabase
+        .from("guest_profiles")
+        .select("id")
+        .eq("device_id", deviceId)
+        .maybeSingle();
+
+      if (!data) {
+        localStorage.removeItem("guest_profile");
+        return;
+      }
+
+      if (redirect) return router.push(redirect);
+      if (wallId) return router.push(`/wall/${wallId}/submit`);
+      if (wheelId) return router.push(`/prizewheel/${wheelId}/submit`);
+      if (pollId) return router.push(`/polls/${pollId}/vote`);
+      if (basketballId) return router.push(`/basketball/${basketballId}/submit`);
+    }
+
+    validateGuest();
+  }, [redirect, wallId, wheelId, pollId, basketballId, router, supabase]);
 
   /* -------------------------------------------------
      SUBMIT
@@ -158,16 +175,7 @@ export default function GuestSignupPage() {
     e.preventDefault();
     if (!agree) return alert("You must agree to the Terms.");
 
-    if (hostSettings.require_age && hostSettings.minimum_age) {
-      const age = calculateAge(form.date_of_birth);
-      if (age < hostSettings.minimum_age) {
-        setAgeError(`You must be at least ${hostSettings.minimum_age} years old.`);
-        return;
-      }
-    }
-
     setSubmitting(true);
-    setAgeError(null);
 
     try {
       const targetId =
@@ -181,13 +189,20 @@ export default function GuestSignupPage() {
         basketballId ? "basketball" :
         "";
 
+      const payload = {
+        ...form,
+        age: form.date_of_birth
+          ? Math.floor(
+              (Date.now() - new Date(form.date_of_birth).getTime()) /
+              (1000 * 60 * 60 * 24 * 365.25)
+            )
+          : null,
+      };
+
       const { profile } = await syncGuestProfile(
         type,
         targetId,
-        {
-          ...form,
-          age: form.date_of_birth ? calculateAge(form.date_of_birth) : null,
-        },
+        payload,
         hostSettings.id
       );
 
@@ -207,6 +222,7 @@ export default function GuestSignupPage() {
     setSubmitting(false);
   }
 
+  /* ------------------------------------------------- */
   if (!hostSettings) {
     return (
       <main className={cn('text-white', 'flex', 'items-center', 'justify-center', 'h-screen')}>
@@ -252,47 +268,60 @@ export default function GuestSignupPage() {
         </motion.h2>
 
         <form onSubmit={handleSubmit} className="space-y-3">
-          <input required placeholder="First Name *"
-            className={cn('w-full', 'p-3', 'rounded-xl', 'bg-black/40', 'border', 'border-white/20')}
-            value={form.first_name}
-            onChange={e => setForm({ ...form, first_name: e.target.value })}
-          />
+
+          {/* REQUIRED FIELDS */}
+          <input required placeholder="First Name *" className={cn('w-full', 'p-3', 'rounded-xl', 'bg-black/40', 'border', 'border-white/20')}
+            value={form.first_name} onChange={e => setForm({ ...form, first_name: e.target.value })} />
 
           {hostSettings.require_last_name && (
-            <input required placeholder="Last Name *"
-              className={cn('w-full', 'p-3', 'rounded-xl', 'bg-black/40', 'border', 'border-white/20')}
-              value={form.last_name}
-              onChange={e => setForm({ ...form, last_name: e.target.value })}
-            />
+            <input required placeholder="Last Name *" className={cn('w-full', 'p-3', 'rounded-xl', 'bg-black/40', 'border', 'border-white/20')}
+              value={form.last_name} onChange={e => setForm({ ...form, last_name: e.target.value })} />
           )}
 
           {hostSettings.require_email && (
-            <input required type="email" placeholder="Email *"
-              className={cn('w-full', 'p-3', 'rounded-xl', 'bg-black/40', 'border', 'border-white/20')}
-              value={form.email}
-              onChange={e => setForm({ ...form, email: e.target.value })}
-            />
+            <input required type="email" placeholder="Email *" className={cn('w-full', 'p-3', 'rounded-xl', 'bg-black/40', 'border', 'border-white/20')}
+              value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} />
           )}
 
           {hostSettings.require_phone && (
-            <input required type="tel" placeholder="Phone *"
-              className={cn('w-full', 'p-3', 'rounded-xl', 'bg-black/40', 'border', 'border-white/20')}
-              value={form.phone}
-              onChange={e => setForm({ ...form, phone: e.target.value })}
-            />
+            <input required type="tel" placeholder="Phone *" className={cn('w-full', 'p-3', 'rounded-xl', 'bg-black/40', 'border', 'border-white/20')}
+              value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} />
           )}
 
+          {/* ADDRESS */}
+          {hostSettings.require_street && (
+            <input required placeholder="Street Address *" className={cn('w-full', 'p-3', 'rounded-xl', 'bg-black/40', 'border', 'border-white/20')}
+              value={form.street} onChange={e => setForm({ ...form, street: e.target.value })} />
+          )}
+
+          {hostSettings.require_city && (
+            <input required placeholder="City *" className={cn('w-full', 'p-3', 'rounded-xl', 'bg-black/40', 'border', 'border-white/20')}
+              value={form.city} onChange={e => setForm({ ...form, city: e.target.value })} />
+          )}
+
+          {hostSettings.require_state && (
+            <select required className={cn('w-full', 'p-3', 'rounded-xl', 'bg-black/40', 'border', 'border-white/20')}
+              value={form.state} onChange={e => setForm({ ...form, state: e.target.value })}>
+              <option value="">State *</option>
+              {stateOptions.map(s => <option key={s} value={s} className="text-black">{s}</option>)}
+            </select>
+          )}
+
+          {hostSettings.require_zip && (
+            <input required placeholder="ZIP Code *" className={cn('w-full', 'p-3', 'rounded-xl', 'bg-black/40', 'border', 'border-white/20')}
+              value={form.zip} onChange={e => setForm({ ...form, zip: e.target.value })} />
+          )}
+
+          {/* DOB → AGE */}
           {hostSettings.require_age && (
-            <input required type="date"
+            <input
+              required
+              type="date"
               max={new Date().toISOString().split("T")[0]}
-              className={cn('w-full', 'p-3', 'rounded-xl', 'bg-black/40', 'border', 'border-white/20')}
+              className={cn('w-full', 'p-3', 'rounded-xl', 'bg-black/40', 'border', 'border-white/20', 'text-white', 'appearance-none', '[color-scheme:dark]')}
               value={form.date_of_birth}
               onChange={e => setForm({ ...form, date_of_birth: e.target.value })}
             />
-          )}
-
-          {ageError && (
-            <p className={cn('text-red-400', 'text-sm', 'font-semibold')}>{ageError}</p>
           )}
 
           <label className={cn('flex', 'items-center', 'gap-2', 'text-sm', 'text-gray-300', 'mt-2')}>
