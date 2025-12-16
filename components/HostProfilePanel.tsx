@@ -68,6 +68,46 @@ function printGuestsPDF() {
     setHost((prev: any) => ({ ...prev, [field]: value }));
   }
 
+/* ---------------- AGE RESTRICTIONS ---------------- */
+const minimumAge = host?.minimum_age ?? null;
+const is18 = minimumAge === 18;
+const is21 = minimumAge === 21;
+
+async function toggleAgeRestriction(age: 18 | 21, enabled: boolean) {
+  if (!host?.id) return;
+
+  if (enabled) {
+    await supabase
+      .from("hosts")
+      .update({
+        require_age: true,
+        minimum_age: age,
+      })
+      .eq("id", host.id);
+
+    setHost((prev: any) => ({
+      ...prev,
+      require_age: true,
+      minimum_age: age,
+    }));
+  } else {
+    await supabase
+      .from("hosts")
+      .update({
+        require_age: false,
+        minimum_age: null,
+      })
+      .eq("id", host.id);
+
+    setHost((prev: any) => ({
+      ...prev,
+      require_age: false,
+      minimum_age: null,
+    }));
+  }
+}
+
+
   /* --------------------------- LOGO UPLOAD --------------------------- */
   async function handleLogoUpload(e: any) {
     const file = e.target.files?.[0];
