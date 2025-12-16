@@ -239,7 +239,7 @@ export default function ThankYouPage() {
           {message}
         </p>
 
-        {/* 🏅 BADGE (ONLY WHEN ENABLED) */}
+        {/* BADGE (ONLY WHEN ENABLED) */}
         {badge && (
           <div
             style={{
@@ -271,7 +271,7 @@ export default function ThankYouPage() {
                 marginBottom: 6,
               }}
             >
-              🏅 {badge.label}
+              {badge.label}
             </div>
 
             <div
