@@ -24,7 +24,7 @@ export default function GuestSignupPage() {
   const supabase = getSupabaseClient();
 
   /* -------------------------------------------------
-     🔥 NORMALIZE QR PARAMS (THIS FIXES WHITE SCREEN)
+     🔥 NORMALIZE QR PARAMS (CRITICAL)
   ------------------------------------------------- */
   const redirect = params.get("redirect");
   const wallId = params.get("wall");
@@ -34,7 +34,7 @@ export default function GuestSignupPage() {
   const rawType = params.get("type");
   let pollId = params.get("poll");
 
-  // Handle broken QR: ?type=poll=UUID
+  // Fix malformed poll QR: ?type=poll=UUID
   if (!pollId && rawType?.startsWith("poll=")) {
     pollId = rawType.split("=")[1];
   }
@@ -68,7 +68,7 @@ export default function GuestSignupPage() {
   }, []);
 
   /* -------------------------------------------------
-     LOAD HOST (Wall / Poll / Wheel / Basketball)
+     LOAD HOST CONTEXT
   ------------------------------------------------- */
   useEffect(() => {
     async function loadHostById(hostId: string) {
@@ -139,7 +139,7 @@ export default function GuestSignupPage() {
   }, [wallId, wheelId, pollId, basketballId, supabase]);
 
   /* -------------------------------------------------
-     AUTO-REDIRECT IF GUEST ALREADY EXISTS
+     AUTO-REDIRECT IF GUEST EXISTS
   ------------------------------------------------- */
   useEffect(() => {
     async function validateGuest() {
@@ -169,7 +169,7 @@ export default function GuestSignupPage() {
   }, [redirect, wallId, wheelId, pollId, basketballId, router, supabase]);
 
   /* -------------------------------------------------
-     SUBMIT SIGNUP
+     SUBMIT
   ------------------------------------------------- */
   async function handleSubmit(e: any) {
     e.preventDefault();
@@ -258,24 +258,95 @@ export default function GuestSignupPage() {
         </motion.h2>
 
         <form onSubmit={handleSubmit} className="space-y-3">
-          <input required placeholder="First Name *" className={cn('w-full', 'p-3', 'rounded-xl', 'bg-black/40', 'border', 'border-white/20')} value={form.first_name} onChange={e => setForm({ ...form, first_name: e.target.value })} />
+
+          <input required placeholder="First Name *"
+            className={cn('w-full', 'p-3', 'rounded-xl', 'bg-black/40', 'border', 'border-white/20')}
+            value={form.first_name}
+            onChange={e => setForm({ ...form, first_name: e.target.value })}
+          />
 
           {hostSettings.require_last_name && (
-            <input required placeholder="Last Name *" className={cn('w-full', 'p-3', 'rounded-xl', 'bg-black/40', 'border', 'border-white/20')} value={form.last_name} onChange={e => setForm({ ...form, last_name: e.target.value })} />
+            <input required placeholder="Last Name *"
+              className={cn('w-full', 'p-3', 'rounded-xl', 'bg-black/40', 'border', 'border-white/20')}
+              value={form.last_name}
+              onChange={e => setForm({ ...form, last_name: e.target.value })}
+            />
           )}
 
           {hostSettings.require_email && (
-            <input required type="email" placeholder="Email *" className={cn('w-full', 'p-3', 'rounded-xl', 'bg-black/40', 'border', 'border-white/20')} value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} />
+            <input required type="email" placeholder="Email *"
+              className={cn('w-full', 'p-3', 'rounded-xl', 'bg-black/40', 'border', 'border-white/20')}
+              value={form.email}
+              onChange={e => setForm({ ...form, email: e.target.value })}
+            />
+          )}
+
+          {hostSettings.require_phone && (
+            <input required type="tel" placeholder="Phone *"
+              className={cn('w-full', 'p-3', 'rounded-xl', 'bg-black/40', 'border', 'border-white/20')}
+              value={form.phone}
+              onChange={e => setForm({ ...form, phone: e.target.value })}
+            />
+          )}
+
+          {hostSettings.require_street && (
+            <input required placeholder="Street Address *"
+              className={cn('w-full', 'p-3', 'rounded-xl', 'bg-black/40', 'border', 'border-white/20')}
+              value={form.street}
+              onChange={e => setForm({ ...form, street: e.target.value })}
+            />
+          )}
+
+          {hostSettings.require_city && (
+            <input required placeholder="City *"
+              className={cn('w-full', 'p-3', 'rounded-xl', 'bg-black/40', 'border', 'border-white/20')}
+              value={form.city}
+              onChange={e => setForm({ ...form, city: e.target.value })}
+            />
+          )}
+
+          {hostSettings.require_state && (
+            <select required
+              className={cn('w-full', 'p-3', 'rounded-xl', 'bg-black/40', 'border', 'border-white/20')}
+              value={form.state}
+              onChange={e => setForm({ ...form, state: e.target.value })}
+            >
+              <option value="">State *</option>
+              {stateOptions.map(s => (
+                <option key={s} value={s} className="text-black">{s}</option>
+              ))}
+            </select>
+          )}
+
+          {hostSettings.require_zip && (
+            <input required placeholder="ZIP Code *"
+              className={cn('w-full', 'p-3', 'rounded-xl', 'bg-black/40', 'border', 'border-white/20')}
+              value={form.zip}
+              onChange={e => setForm({ ...form, zip: e.target.value })}
+            />
+          )}
+
+          {hostSettings.require_age && (
+            <input required type="number" placeholder="Age *"
+              className={cn('w-full', 'p-3', 'rounded-xl', 'bg-black/40', 'border', 'border-white/20')}
+              value={form.age}
+              onChange={e => setForm({ ...form, age: e.target.value })}
+            />
           )}
 
           <label className={cn('flex', 'items-center', 'gap-2', 'text-sm', 'text-gray-300', 'mt-2')}>
             <input type="checkbox" checked={agree} onChange={e => setAgree(e.target.checked)} />
-            I agree to the <button type="button" onClick={() => setShowTermsModal(true)} className={cn('underline', 'text-sky-400')}>Terms</button>
+            I agree to the{" "}
+            <button type="button" onClick={() => setShowTermsModal(true)} className={cn('underline', 'text-sky-400')}>
+              Terms
+            </button>
           </label>
 
-          <button disabled={submitting} className={cn('w-full', 'py-3', 'rounded-xl', 'bg-gradient-to-r', 'from-sky-500', 'to-blue-600', 'font-semibold')}>
+          <button disabled={submitting}
+            className={cn('w-full', 'py-3', 'rounded-xl', 'bg-gradient-to-r', 'from-sky-500', 'to-blue-600', 'font-semibold')}>
             {submitting ? "Submitting..." : "Continue"}
           </button>
+
         </form>
       </motion.div>
 
