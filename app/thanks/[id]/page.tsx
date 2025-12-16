@@ -19,6 +19,15 @@ function getStoredGuestProfile() {
   }
 }
 
+function getStoredBadge() {
+  try {
+    const raw = localStorage.getItem("guest_last_badge");
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
 async function recordVisit({
   device_id,
   guest_profile_id,
@@ -41,11 +50,7 @@ async function recordVisit({
     }
   );
 
-  if (!res.ok) {
-    console.error("Visit tracking failed");
-    return null;
-  }
-
+  if (!res.ok) return null;
   return res.json();
 }
 
@@ -73,18 +78,7 @@ export default function ThankYouPage() {
 
   const [data, setData] = useState<any>(null);
   const [profile, setProfile] = useState<any>(null);
-  const [visitInfo, setVisitInfo] = useState<{
-    isReturning: boolean;
-    visitCount: number;
-    badge?: {
-      code: string;
-      label: string;
-      description: string;
-      icon_url: string;
-      min_visits: number;
-    };
-  } | null>(null);
-
+  const [visitInfo, setVisitInfo] = useState<any>(null);
   const [showCloseHint, setShowCloseHint] = useState(false);
 
   /* ---------------------------------------------------------
@@ -102,10 +96,7 @@ export default function ThankYouPage() {
 
     (async () => {
       if (type === "lead") {
-        setData({
-          background_value: null,
-          host: null,
-        });
+        setData({ background_value: null, host: null });
         return;
       }
 
@@ -133,7 +124,7 @@ export default function ThankYouPage() {
   }, [id, type, supabase]);
 
   /* ---------------------------------------------------------
-     Record visit (GUARANTEED)
+     Record visit + badge
   --------------------------------------------------------- */
   useEffect(() => {
     if (!profile || !data?.host?.id) return;
@@ -145,9 +136,15 @@ export default function ThankYouPage() {
       guest_profile_id: profile.id,
       host_id: data.host.id,
     }).then((res) => {
-      if (res) setVisitInfo(res);
+      if (!res) return;
+      setVisitInfo(res);
+      if (res.badge) {
+        localStorage.setItem("guest_last_badge", JSON.stringify(res.badge));
+      }
     });
   }, [profile, data?.host?.id]);
+
+  const badge = visitInfo?.badge || getStoredBadge();
 
   /* ---------------------------------------------------------
      UI helpers
@@ -165,12 +162,9 @@ export default function ThankYouPage() {
       ? data.host.logo_url
       : "/faninteractlogo.png";
 
-  // ✅ ALWAYS INCLUDE NAME
-  const name = profile?.first_name ? `, ${profile.first_name}` : "";
-
   const headline = visitInfo?.isReturning
-    ? `Welcome back${name}!`
-    : `Thank you${name}!`;
+    ? `Welcome back, ${profile?.first_name || "friend"}!`
+    : `Thank you, ${profile?.first_name || "friend"}!`;
 
   const message = useMemo(() => {
     switch (type) {
@@ -184,13 +178,6 @@ export default function ThankYouPage() {
         return "Your submission was received!";
     }
   }, [type]);
-
-  const handleClose = () => {
-    setShowCloseHint(true);
-    try {
-      window.close();
-    } catch {}
-  };
 
   /* ---------------------------------------------------------
      Render
@@ -239,7 +226,6 @@ export default function ThankYouPage() {
             width: "72%",
             maxWidth: 260,
             margin: "0 auto 16px",
-            filter: "drop-shadow(0 0 25px rgba(255,128,64,0.65))",
           }}
         />
 
@@ -257,97 +243,67 @@ export default function ThankYouPage() {
           🎉 {headline}
         </h1>
 
-        <p style={{ color: "#f3e8e0", marginBottom: 18 }}>
-          {message}
-        </p>
+        <p style={{ color: "#f3e8e0", marginBottom: 12 }}>{message}</p>
 
-        {/* 🏅 BADGE DISPLAY */}
-        {visitInfo?.badge && (
+        {/* 🏅 BADGE */}
+        {badge && (
           <div
             style={{
-              marginTop: 12,
-              padding: "14px 16px",
-              borderRadius: 14,
+              marginTop: 18,
+              padding: 16,
+              borderRadius: 16,
               background: "rgba(255,255,255,0.08)",
               border: "1px solid rgba(255,255,255,0.15)",
-              display: "flex",
-              alignItems: "center",
-              gap: 14,
-              textAlign: "left",
             }}
           >
             <img
-              src={visitInfo.badge.icon_url}
-              alt={visitInfo.badge.label}
+              src={badge.icon_url}
+              alt={badge.label}
               style={{
-                width: 52,
-                height: 52,
-                flexShrink: 0,
-                filter:
-                  "drop-shadow(0 0 12px rgba(255,215,150,0.6))",
+                width: 90,
+                height: 90,
+                margin: "0 auto 10px",
+                display: "block",
               }}
             />
 
-            <div>
-              <div
-                style={{
-                  fontWeight: 800,
-                  fontSize: "1rem",
-                  color: "#ffd8a6",
-                }}
-              >
-                🏅 {visitInfo.badge.label}
-              </div>
+            <div
+              style={{
+                fontSize: "1.25rem",
+                fontWeight: 800,
+                color: "#ffd166",
+                marginBottom: 4,
+              }}
+            >
+              🏅 {badge.label}
+            </div>
 
-              <div
-                style={{
-                  fontSize: "0.9rem",
-                  color: "#e7e0d8",
-                  opacity: 0.9,
-                }}
-              >
-                {visitInfo.badge.description}
-              </div>
+            <div
+              style={{
+                fontSize: "0.95rem",
+                color: "#f1f5f9",
+                opacity: 0.9,
+              }}
+            >
+              {badge.description}
             </div>
           </div>
         )}
 
-        {type === "basketball" && (
-          <div
-            style={{
-              marginTop: 20,
-              padding: "14px 18px",
-              background: "rgba(255,150,0,0.15)",
-              border: "1px solid rgba(255,120,0,0.35)",
-              borderRadius: 12,
-              color: "#ffd9b3",
-              fontWeight: 700,
-            }}
-          >
-            🚀 Keep this page open — it becomes your controller once approved
-          </div>
-        )}
-
-        {!showCloseHint ? (
-          <button
-            onClick={handleClose}
-            style={{
-              width: "100%",
-              padding: "10px 16px",
-              borderRadius: 10,
-              background: "linear-gradient(90deg,#475569,#0f172a)",
-              color: "#fff",
-              fontWeight: 600,
-              marginTop: 20,
-            }}
-          >
-            Close
-          </button>
-        ) : (
-          <p style={{ color: "#fff", marginTop: 10 }}>
-            ✅ You can now close this tab
-          </p>
-        )}
+        <button
+          onClick={() => window.close()}
+          style={{
+            width: "100%",
+            padding: "10px 16px",
+            borderRadius: 10,
+            background: "linear-gradient(90deg,#475569,#0f172a)",
+            color: "#fff",
+            fontWeight: 600,
+            marginTop: 22,
+          }}
+        >
+          Close
+        </button>
       </div>
     </div>
   );
