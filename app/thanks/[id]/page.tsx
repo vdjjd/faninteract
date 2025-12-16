@@ -76,6 +76,13 @@ export default function ThankYouPage() {
   const [visitInfo, setVisitInfo] = useState<{
     isReturning: boolean;
     visitCount: number;
+    badge?: {
+      code: string;
+      label: string;
+      description: string;
+      icon_url: string;
+      min_visits: number;
+    };
   } | null>(null);
 
   const [showCloseHint, setShowCloseHint] = useState(false);
@@ -131,7 +138,6 @@ export default function ThankYouPage() {
   useEffect(() => {
     if (!profile || !data?.host?.id) return;
 
-    // ✅ GUARANTEES DEVICE ID EXISTS
     const deviceId = getOrCreateGuestDeviceId();
 
     recordVisit({
@@ -152,7 +158,6 @@ export default function ThankYouPage() {
       : data?.background_value ||
         "linear-gradient(135deg,#0a2540,#1b2b44,#000000)";
 
-  // ✅ SAME LOGIC AS INACTIVE WALL
   const logo =
     data?.host?.branding_logo_url?.trim()
       ? data.host.branding_logo_url
@@ -160,9 +165,12 @@ export default function ThankYouPage() {
       ? data.host.logo_url
       : "/faninteractlogo.png";
 
+  // ✅ ALWAYS INCLUDE NAME
+  const name = profile?.first_name ? `, ${profile.first_name}` : "";
+
   const headline = visitInfo?.isReturning
-    ? `Welcome Back${profile?.first_name ? `, ${profile.first_name}` : ""}!`
-    : "Thank you!";
+    ? `Welcome back${name}!`
+    : `Thank you${name}!`;
 
   const message = useMemo(() => {
     switch (type) {
@@ -253,6 +261,57 @@ export default function ThankYouPage() {
           {message}
         </p>
 
+        {/* 🏅 BADGE DISPLAY */}
+        {visitInfo?.badge && (
+          <div
+            style={{
+              marginTop: 12,
+              padding: "14px 16px",
+              borderRadius: 14,
+              background: "rgba(255,255,255,0.08)",
+              border: "1px solid rgba(255,255,255,0.15)",
+              display: "flex",
+              alignItems: "center",
+              gap: 14,
+              textAlign: "left",
+            }}
+          >
+            <img
+              src={visitInfo.badge.icon_url}
+              alt={visitInfo.badge.label}
+              style={{
+                width: 52,
+                height: 52,
+                flexShrink: 0,
+                filter:
+                  "drop-shadow(0 0 12px rgba(255,215,150,0.6))",
+              }}
+            />
+
+            <div>
+              <div
+                style={{
+                  fontWeight: 800,
+                  fontSize: "1rem",
+                  color: "#ffd8a6",
+                }}
+              >
+                🏅 {visitInfo.badge.label}
+              </div>
+
+              <div
+                style={{
+                  fontSize: "0.9rem",
+                  color: "#e7e0d8",
+                  opacity: 0.9,
+                }}
+              >
+                {visitInfo.badge.description}
+              </div>
+            </div>
+          </div>
+        )}
+
         {type === "basketball" && (
           <div
             style={{
@@ -293,4 +352,3 @@ export default function ThankYouPage() {
     </div>
   );
 }
-
