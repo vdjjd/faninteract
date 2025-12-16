@@ -314,15 +314,31 @@ export default function GuestSignupPage() {
 
           {/* DOB → AGE */}
           {hostSettings.require_age && (
-            <input
-              required
-              type="date"
-              max={new Date().toISOString().split("T")[0]}
-              className={cn('w-full', 'p-3', 'rounded-xl', 'bg-black/40', 'border', 'border-white/20', 'text-white', 'appearance-none', '[color-scheme:dark]')}
-              value={form.date_of_birth}
-              onChange={e => setForm({ ...form, date_of_birth: e.target.value })}
-            />
-          )}
+  <div className="relative">
+    <input
+      required
+      type="date"
+      max={new Date().toISOString().split("T")[0]}
+      className={cn(
+        "w-full p-3 rounded-xl bg-black/40 border border-white/20",
+        "text-white appearance-none [color-scheme:dark]"
+      )}
+      value={form.date_of_birth}
+      onChange={e => setForm({ ...form, date_of_birth: e.target.value })}
+    />
+
+    {!form.date_of_birth && (
+      <span
+        className={cn(
+          "absolute left-3 top-1/2 -translate-y-1/2",
+          "text-gray-400 pointer-events-none select-none"
+        )}
+      >
+        Enter D.O.B *
+      </span>
+    )}
+  </div>
+)}
 
           <label className={cn('flex', 'items-center', 'gap-2', 'text-sm', 'text-gray-300', 'mt-2')}>
             <input type="checkbox" checked={agree} onChange={e => setAgree(e.target.checked)} />
