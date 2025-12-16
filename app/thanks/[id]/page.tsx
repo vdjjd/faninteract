@@ -19,15 +19,6 @@ function getStoredGuestProfile() {
   }
 }
 
-function getStoredBadge() {
-  try {
-    const raw = localStorage.getItem("guest_last_badge");
-    return raw ? JSON.parse(raw) : null;
-  } catch {
-    return null;
-  }
-}
-
 async function recordVisit({
   device_id,
   guest_profile_id,
@@ -79,6 +70,7 @@ export default function ThankYouPage() {
   const [data, setData] = useState<any>(null);
   const [profile, setProfile] = useState<any>(null);
   const [visitInfo, setVisitInfo] = useState<any>(null);
+  const [showCloseHint, setShowCloseHint] = useState(false);
 
   /* ---------------------------------------------------------
      Load guest profile
@@ -123,7 +115,7 @@ export default function ThankYouPage() {
   }, [id, type, supabase]);
 
   /* ---------------------------------------------------------
-     Record visit + badge
+     Record visit
   --------------------------------------------------------- */
   useEffect(() => {
     if (!profile || !data?.host?.id) return;
@@ -135,15 +127,9 @@ export default function ThankYouPage() {
       guest_profile_id: profile.id,
       host_id: data.host.id,
     }).then((res) => {
-      if (!res) return;
-      setVisitInfo(res);
-      if (res.badge) {
-        localStorage.setItem("guest_last_badge", JSON.stringify(res.badge));
-      }
+      if (res) setVisitInfo(res);
     });
   }, [profile, data?.host?.id]);
-
-  const badge = visitInfo?.badge || getStoredBadge();
 
   /* ---------------------------------------------------------
      UI helpers
@@ -221,7 +207,11 @@ export default function ThankYouPage() {
         <img
           src={logo}
           alt="logo"
-          style={{ width: "72%", maxWidth: 260, margin: "0 auto 16px" }}
+          style={{
+            width: "72%",
+            maxWidth: 260,
+            margin: "0 auto 16px",
+          }}
         />
 
         <h1
@@ -238,53 +228,9 @@ export default function ThankYouPage() {
           🎉 {headline}
         </h1>
 
-        <p style={{ color: "#f3e8e0", marginBottom: 12 }}>{message}</p>
-
-        {/* 🏅 BADGE */}
-        {badge && (
-          <div
-            style={{
-              marginTop: 18,
-              padding: 16,
-              borderRadius: 16,
-              background: "rgba(255,255,255,0.08)",
-              border: "1px solid rgba(255,255,255,0.15)",
-            }}
-          >
-            <img
-              key={badge.icon_url}   // ✅ THIS IS THE FIX
-              src={badge.icon_url}
-              alt={badge.label}
-              style={{
-                width: 90,
-                height: 90,
-                margin: "0 auto 10px",
-                display: "block",
-              }}
-            />
-
-            <div
-              style={{
-                fontSize: "1.25rem",
-                fontWeight: 800,
-                color: "#ffd166",
-                marginBottom: 4,
-              }}
-            >
-              🏅 {badge.label}
-            </div>
-
-            <div
-              style={{
-                fontSize: "0.95rem",
-                color: "#f1f5f9",
-                opacity: 0.9,
-              }}
-            >
-              {badge.description}
-            </div>
-          </div>
-        )}
+        <p style={{ color: "#f3e8e0", marginBottom: 18 }}>
+          {message}
+        </p>
 
         <button
           onClick={() => window.close()}
@@ -295,7 +241,7 @@ export default function ThankYouPage() {
             background: "linear-gradient(90deg,#475569,#0f172a)",
             color: "#fff",
             fontWeight: 600,
-            marginTop: 22,
+            marginTop: 20,
           }}
         >
           Close
