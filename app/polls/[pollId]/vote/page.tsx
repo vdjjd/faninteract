@@ -8,9 +8,8 @@ export default function VotePage() {
   const router = useRouter();
   const params = useParams();
 
-  const pollId = Array.isArray(params.pollId)
-    ? params.pollId[0]
-    : params.pollId;
+  // ✅ FIX: correct param name for /polls/[id]
+  const pollId = params.id as string;
 
   const [poll, setPoll] = useState<any>(null);
   const [options, setOptions] = useState<any[]>([]);
@@ -20,7 +19,9 @@ export default function VotePage() {
   const [guestProfile, setGuestProfile] = useState<any | null>(null);
   const [hasLocalVoted, setHasLocalVoted] = useState<boolean | null>(null);
 
-  /* Load localStorage */
+  /* ---------------------------------------------------------
+     Load localStorage (hydration-safe)
+  --------------------------------------------------------- */
   useEffect(() => {
     try {
       const raw =
@@ -37,38 +38,42 @@ export default function VotePage() {
     }
   }, [pollId]);
 
-  /* Redirect if already voted */
+  /* ---------------------------------------------------------
+     Redirect if already voted
+  --------------------------------------------------------- */
   useEffect(() => {
-    if (hasLocalVoted && pollId) {
-      router.push(`/polls/${pollId}/thank-you?type=poll`);
+    if (hasLocalVoted === true && pollId) {
+      router.replace(`/thanks/${pollId}?type=poll`);
     }
   }, [hasLocalVoted, pollId, router]);
 
-  /* Load poll + options */
-  async function loadEverything() {
+  /* ---------------------------------------------------------
+     Load poll + options
+  --------------------------------------------------------- */
+  useEffect(() => {
     if (!pollId) return;
 
-    const { data: pollData } = await supabase
-      .from("polls")
-      .select("*")
-      .eq("id", pollId)
-      .maybeSingle();
+    (async () => {
+      const { data: pollData } = await supabase
+        .from("polls")
+        .select("*")
+        .eq("id", pollId)
+        .maybeSingle();
 
-    const { data: opts } = await supabase
-      .from("poll_options")
-      .select("*")
-      .eq("poll_id", pollId);
+      const { data: opts } = await supabase
+        .from("poll_options")
+        .select("*")
+        .eq("poll_id", pollId);
 
-    setPoll(pollData || null);
-    setOptions(opts || []);
-    setLoading(false);
-  }
-
-  useEffect(() => {
-    loadEverything();
+      setPoll(pollData || null);
+      setOptions(opts || []);
+      setLoading(false);
+    })();
   }, [pollId]);
 
-  /* Realtime updates */
+  /* ---------------------------------------------------------
+     Realtime poll updates
+  --------------------------------------------------------- */
   useEffect(() => {
     if (!pollId) return;
 
@@ -93,7 +98,9 @@ export default function VotePage() {
     };
   }, [pollId]);
 
-  /* Submit vote */
+  /* ---------------------------------------------------------
+     Submit vote → redirect to THANK YOU
+  --------------------------------------------------------- */
   async function submitVote(optionId: string) {
     if (submitting || hasLocalVoted) return;
 
@@ -115,9 +122,13 @@ export default function VotePage() {
     localStorage.setItem(`voted_${pollId}`, "true");
     setHasLocalVoted(true);
 
-    router.push(`/polls/${pollId}/thank-you?type=poll`);
+    // ✅ FIX: correct thank-you route
+    router.push(`/thanks/${pollId}?type=poll`);
   }
 
+  /* ---------------------------------------------------------
+     Render guards
+  --------------------------------------------------------- */
   if (loading || guestProfile === null || hasLocalVoted === null) {
     return <div style={{ color: "#fff", textAlign: "center" }}>Loading…</div>;
   }
@@ -144,6 +155,9 @@ export default function VotePage() {
 
   const logo = "/faninteractlogo.png";
 
+  /* ---------------------------------------------------------
+     UI
+  --------------------------------------------------------- */
   return (
     <div
       style={{
@@ -203,7 +217,7 @@ export default function VotePage() {
         {options.map((opt) => (
           <button
             key={opt.id}
-            disabled={!isActive}
+            disabled={!isActive || hasLocalVoted}
             onClick={() => submitVote(opt.id)}
             style={{
               width: "100%",
@@ -211,12 +225,13 @@ export default function VotePage() {
               marginBottom: 14,
               borderRadius: 14,
               background: opt.bar_color || "#1e3a8a",
-              opacity: isActive ? 1 : 0.35,
+              opacity: isActive && !hasLocalVoted ? 1 : 0.35,
               color: "#fff",
               fontWeight: 800,
               fontSize: "1.6rem",
               border: "none",
-              cursor: isActive ? "pointer" : "not-allowed",
+              cursor:
+                isActive && !hasLocalVoted ? "pointer" : "not-allowed",
               boxShadow: "0 0 25px rgba(0,0,0,0.6)",
               transition: "0.25s",
             }}
