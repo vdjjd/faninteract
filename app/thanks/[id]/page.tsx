@@ -283,8 +283,7 @@ export default function ThankYouPage() {
                 marginBottom: 6,
               }}
             >
-              🏅 {badge.label}
-            </div>
+               </div>
 
             <div
               style={{
