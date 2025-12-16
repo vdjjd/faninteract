@@ -1,4 +1,4 @@
-"use client";
+'use client';
 
 import { useEffect, useState } from "react";
 import { useRouter, useParams } from "next/navigation";
@@ -10,7 +10,9 @@ import { supabase } from "@/lib/supabaseClient";
 export default function VotePage() {
   const router = useRouter();
   const params = useParams();
-  const pollId = Array.isArray(params.pollId) ? params.pollId[0] : params.pollId;
+
+  // ✅ FIX: correct param name
+  const pollId = Array.isArray(params.id) ? params.id[0] : params.id;
 
   const [poll, setPoll] = useState<any>(null);
   const [options, setOptions] = useState<any[]>([]);
@@ -18,13 +20,13 @@ export default function VotePage() {
 
   const [submitting, setSubmitting] = useState(false);
 
-  // localStorage hydration-safe states
+  // hydration-safe states
   const [guestProfile, setGuestProfile] = useState<any | undefined>(undefined);
   const [hasLocalVoted, setHasLocalVoted] = useState<boolean | undefined>(undefined);
 
   /* ---------------------------------------------------------
      Safe localStorage load
---------------------------------------------------------- */
+  --------------------------------------------------------- */
   useEffect(() => {
     try {
       const raw =
@@ -43,19 +45,20 @@ export default function VotePage() {
 
   /* ---------------------------------------------------------
      Redirect only AFTER hydration finishes
---------------------------------------------------------- */
+  --------------------------------------------------------- */
   useEffect(() => {
-    if (guestProfile === undefined) return; // not loaded yet
+    if (guestProfile === undefined) return;
     if (!pollId) return;
 
+    // ✅ FIX: canonical guest entry
     if (!guestProfile) {
-      router.push(`/guest/signup?redirect=/polls/${pollId}/vote`);
+      router.push(`/guest/signup?type=poll&id=${pollId}`);
     }
   }, [guestProfile, pollId, router]);
 
   /* ---------------------------------------------------------
-     Load poll + poll options (NO JOIN, SAFE FOR ANON USERS)
---------------------------------------------------------- */
+     Load poll + options
+  --------------------------------------------------------- */
   async function loadEverything() {
     const { data: pollData } = await supabase
       .from("polls")
@@ -80,7 +83,7 @@ export default function VotePage() {
 
   /* ---------------------------------------------------------
      Realtime poll status
---------------------------------------------------------- */
+  --------------------------------------------------------- */
   useEffect(() => {
     if (!pollId) return;
 
@@ -107,7 +110,7 @@ export default function VotePage() {
 
   /* ---------------------------------------------------------
      Submit Vote
---------------------------------------------------------- */
+  --------------------------------------------------------- */
   async function submitVote(optionId: string) {
     if (submitting) return;
     if (hasLocalVoted) {
@@ -117,7 +120,6 @@ export default function VotePage() {
 
     setSubmitting(true);
 
-    // read option
     const { data: optionRow, error: fetchError } = await supabase
       .from("poll_options")
       .select("vote_count")
@@ -146,14 +148,15 @@ export default function VotePage() {
     // lock vote locally
     localStorage.setItem(`voted_${pollId}`, "true");
     setHasLocalVoted(true);
-
     setSubmitting(false);
-    router.push(`/thanks/${pollId}`);
+
+    // ✅ FIX: correct Thank You destination
+    router.push(`/thank-you/${pollId}?type=poll`);
   }
 
   /* ---------------------------------------------------------
      Loading States
---------------------------------------------------------- */
+  --------------------------------------------------------- */
   if (loading || guestProfile === undefined || hasLocalVoted === undefined) {
     return <div style={{ color: "#fff" }}>Loading…</div>;
   }
@@ -165,8 +168,8 @@ export default function VotePage() {
   const isActive = poll.status === "active";
 
   /* ---------------------------------------------------------
-     Background Logic
---------------------------------------------------------- */
+     Background
+  --------------------------------------------------------- */
   const bg =
     poll.background_type === "image" &&
     poll.background_value?.startsWith("http")
@@ -176,8 +179,8 @@ export default function VotePage() {
   const logo = "/faninteractlogo.png";
 
   /* ---------------------------------------------------------
-     UI Rendering
---------------------------------------------------------- */
+     UI
+  --------------------------------------------------------- */
   return (
     <div
       style={{

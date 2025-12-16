@@ -53,6 +53,28 @@ const STYLE: Record<string, React.CSSProperties> = {
     `,
   },
 
+  /* ✅ NEW: Badge row */
+  badgeRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 14,
+    marginTop: '0.8vh',
+    marginBottom: '0.6vh',
+  },
+
+  /* ✅ NEW: Visit text */
+  visitText: {
+    color: '#fff',
+    fontWeight: 900,
+    fontSize: 'clamp(1.6rem,2vw,2.4rem)',
+    textShadow: `
+      2px 2px 2px #000,
+      -2px 2px 2px #000,
+      2px -2px 2px #000,
+      -2px -2px 2px #000
+    `,
+  },
+
   /* ⭐ PATCH ADDED — BLACK OUTLINE */
   message: {
     fontSize: 'clamp(4rem,1vw,2.4rem)',
@@ -164,7 +186,7 @@ const transitions: Record<string, any> = {
 
 const transitionKeys = Object.keys(transitions);
 
-const speedMap = {
+const speedMap: Record<string, number> = {
   Slow: 12000,
   Medium: 8000,
   Fast: 4000,
@@ -179,7 +201,7 @@ export default function SingleHighlightWall({
   posts,
   tickSubmissionDisplayed,
   pauseFlag,
-}) {
+}: any) {
   const [livePosts, setLivePosts] = useState(posts || []);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [randomTransition, setRandomTransition] = useState<string | null>(null);
@@ -338,10 +360,26 @@ export default function SingleHighlightWall({
 
           <div style={STYLE.greyBar} />
 
-          {/* ⭐ NOW OUTLINED IN BLACK */}
+          {/* Nickname */}
           <p style={STYLE.nickname}>{current?.nickname || 'Guest'}</p>
 
-          {/* ⭐ NOW OUTLINED IN BLACK */}
+          {/* ✅ NEW: Visit # + Badge (placed under nickname) */}
+          {current?.visit_count != null && current?.badge_icon_url ? (
+            <div style={STYLE.badgeRow}>
+              <img
+                src={current.badge_icon_url}
+                alt="Loyalty Badge"
+                style={{
+                  width: 64,
+                  height: 64,
+                  filter: 'drop-shadow(0 0 12px rgba(0,0,0,0.65))',
+                }}
+              />
+              <div style={STYLE.visitText}>Visit #{current.visit_count}</div>
+            </div>
+          ) : null}
+
+          {/* Message */}
           <p style={STYLE.message}>{current?.message || 'Be the first to post!'}</p>
         </div>
       </div>
