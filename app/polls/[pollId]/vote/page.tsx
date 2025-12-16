@@ -8,8 +8,9 @@ export default function VotePage() {
   const router = useRouter();
   const params = useParams();
 
-  // ✅ CORRECT PARAM (route = /polls/[id])
-  const pollId = params.id as string;
+  const pollId = Array.isArray(params.pollId)
+    ? params.pollId[0]
+    : params.pollId;
 
   const [poll, setPoll] = useState<any>(null);
   const [options, setOptions] = useState<any[]>([]);
@@ -19,9 +20,7 @@ export default function VotePage() {
   const [guestProfile, setGuestProfile] = useState<any | null>(null);
   const [hasLocalVoted, setHasLocalVoted] = useState<boolean | null>(null);
 
-  /* ---------------------------------------------------------
-     Load localStorage
-  --------------------------------------------------------- */
+  /* Load localStorage */
   useEffect(() => {
     try {
       const raw =
@@ -38,18 +37,14 @@ export default function VotePage() {
     }
   }, [pollId]);
 
-  /* ---------------------------------------------------------
-     Redirect if already voted
-  --------------------------------------------------------- */
+  /* Redirect if already voted */
   useEffect(() => {
     if (hasLocalVoted && pollId) {
-      router.replace(`/polls/${pollId}/thank-you?type=poll`);
+      router.push(`/polls/${pollId}/thank-you?type=poll`);
     }
   }, [hasLocalVoted, pollId, router]);
 
-  /* ---------------------------------------------------------
-     Load poll + options
-  --------------------------------------------------------- */
+  /* Load poll + options */
   async function loadEverything() {
     if (!pollId) return;
 
@@ -73,9 +68,7 @@ export default function VotePage() {
     loadEverything();
   }, [pollId]);
 
-  /* ---------------------------------------------------------
-     Realtime updates
-  --------------------------------------------------------- */
+  /* Realtime updates */
   useEffect(() => {
     if (!pollId) return;
 
@@ -100,9 +93,7 @@ export default function VotePage() {
     };
   }, [pollId]);
 
-  /* ---------------------------------------------------------
-     Submit vote
-  --------------------------------------------------------- */
+  /* Submit vote */
   async function submitVote(optionId: string) {
     if (submitting || hasLocalVoted) return;
 
@@ -127,9 +118,6 @@ export default function VotePage() {
     router.push(`/polls/${pollId}/thank-you?type=poll`);
   }
 
-  /* ---------------------------------------------------------
-     Render guards
-  --------------------------------------------------------- */
   if (loading || guestProfile === null || hasLocalVoted === null) {
     return <div style={{ color: "#fff", textAlign: "center" }}>Loading…</div>;
   }
@@ -156,9 +144,6 @@ export default function VotePage() {
 
   const logo = "/faninteractlogo.png";
 
-  /* ---------------------------------------------------------
-     UI
-  --------------------------------------------------------- */
   return (
     <div
       style={{
@@ -218,7 +203,7 @@ export default function VotePage() {
         {options.map((opt) => (
           <button
             key={opt.id}
-            disabled={!isActive || hasLocalVoted}
+            disabled={!isActive}
             onClick={() => submitVote(opt.id)}
             style={{
               width: "100%",
@@ -226,13 +211,12 @@ export default function VotePage() {
               marginBottom: 14,
               borderRadius: 14,
               background: opt.bar_color || "#1e3a8a",
-              opacity: isActive && !hasLocalVoted ? 1 : 0.35,
+              opacity: isActive ? 1 : 0.35,
               color: "#fff",
               fontWeight: 800,
               fontSize: "1.6rem",
               border: "none",
-              cursor:
-                isActive && !hasLocalVoted ? "pointer" : "not-allowed",
+              cursor: isActive ? "pointer" : "not-allowed",
               boxShadow: "0 0 25px rgba(0,0,0,0.6)",
               transition: "0.25s",
             }}
