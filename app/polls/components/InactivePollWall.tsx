@@ -100,7 +100,8 @@ export default function InactivePollWall({ poll, host }) {
   }, [poll]);
 
   const origin = typeof window !== 'undefined' ? window.location.origin : '';
-  const qrValue = `${origin}/guest/signup?redirect=/polls/${poll?.id}/vote`;
+  const qrValue = `${origin}/guest/signup?type=poll&id=${poll.id}`;
+
 
   const displayLogo =
     host?.branding_logo_url?.trim()
