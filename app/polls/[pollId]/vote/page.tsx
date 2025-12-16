@@ -11,21 +11,22 @@ export default function VotePage() {
   const router = useRouter();
   const params = useParams();
 
-  // ✅ FIX: correct param name
-  const pollId = Array.isArray(params.id) ? params.id[0] : params.id;
+  /* ✅ CORRECT PARAM NAME */
+  const pollId = Array.isArray(params.pollId)
+    ? params.pollId[0]
+    : params.pollId;
 
   const [poll, setPoll] = useState<any>(null);
   const [options, setOptions] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-
   const [submitting, setSubmitting] = useState(false);
 
-  // hydration-safe states
-  const [guestProfile, setGuestProfile] = useState<any | undefined>(undefined);
-  const [hasLocalVoted, setHasLocalVoted] = useState<boolean | undefined>(undefined);
+  /* hydration-safe states */
+  const [guestProfile, setGuestProfile] = useState<any | null>(null);
+  const [hasLocalVoted, setHasLocalVoted] = useState<boolean | null>(null);
 
   /* ---------------------------------------------------------
-     Safe localStorage load
+     Load localStorage safely (NO REDIRECTS HERE)
   --------------------------------------------------------- */
   useEffect(() => {
     try {
@@ -44,22 +45,11 @@ export default function VotePage() {
   }, [pollId]);
 
   /* ---------------------------------------------------------
-     Redirect only AFTER hydration finishes
-  --------------------------------------------------------- */
-  useEffect(() => {
-    if (guestProfile === undefined) return;
-    if (!pollId) return;
-
-    // ✅ FIX: canonical guest entry
-    if (!guestProfile) {
-      router.push(`/guest/signup?type=poll&id=${pollId}`);
-    }
-  }, [guestProfile, pollId, router]);
-
-  /* ---------------------------------------------------------
      Load poll + options
   --------------------------------------------------------- */
   async function loadEverything() {
+    if (!pollId) return;
+
     const { data: pollData } = await supabase
       .from("polls")
       .select("*")
@@ -77,12 +67,11 @@ export default function VotePage() {
   }
 
   useEffect(() => {
-    if (!pollId) return;
     loadEverything();
   }, [pollId]);
 
   /* ---------------------------------------------------------
-     Realtime poll status
+     Realtime poll updates
   --------------------------------------------------------- */
   useEffect(() => {
     if (!pollId) return;
@@ -112,53 +101,44 @@ export default function VotePage() {
      Submit Vote
   --------------------------------------------------------- */
   async function submitVote(optionId: string) {
-    if (submitting) return;
-    if (hasLocalVoted) {
-      alert("You already voted in this poll.");
-      return;
-    }
+    if (submitting || hasLocalVoted) return;
 
     setSubmitting(true);
 
-    const { data: optionRow, error: fetchError } = await supabase
+    const { data: optionRow } = await supabase
       .from("poll_options")
       .select("vote_count")
       .eq("id", optionId)
       .single();
 
-    if (fetchError) {
-      alert("Could not read current votes.");
-      setSubmitting(false);
-      return;
-    }
+    const newCount = (optionRow?.vote_count || 0) + 1;
 
-    const newCount = (optionRow.vote_count || 0) + 1;
-
-    const { error: updateError } = await supabase
+    await supabase
       .from("poll_options")
       .update({ vote_count: newCount })
       .eq("id", optionId);
 
-    if (updateError) {
-      alert("Vote failed.");
-      setSubmitting(false);
-      return;
-    }
-
-    // lock vote locally
     localStorage.setItem(`voted_${pollId}`, "true");
     setHasLocalVoted(true);
     setSubmitting(false);
 
-    // ✅ FIX: correct Thank You destination
+    /* ✅ Correct thank-you destination */
     router.push(`/thank-you/${pollId}?type=poll`);
   }
 
   /* ---------------------------------------------------------
-     Loading States
+     Render Guards (NO WHITE SCREENS)
   --------------------------------------------------------- */
-  if (loading || guestProfile === undefined || hasLocalVoted === undefined) {
-    return <div style={{ color: "#fff" }}>Loading…</div>;
+  if (loading || guestProfile === null || hasLocalVoted === null) {
+    return <div style={{ color: "#fff", textAlign: "center" }}>Loading…</div>;
+  }
+
+  if (!guestProfile) {
+    return (
+      <div style={{ color: "#fff", textAlign: "center", paddingTop: "40vh" }}>
+        Guest profile missing. Please rescan the QR code.
+      </div>
+    );
   }
 
   if (!poll) {
