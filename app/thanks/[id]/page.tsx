@@ -19,15 +19,6 @@ function getStoredGuestProfile() {
   }
 }
 
-function getStoredBadge() {
-  try {
-    const raw = localStorage.getItem("guest_last_badge");
-    return raw ? JSON.parse(raw) : null;
-  } catch {
-    return null;
-  }
-}
-
 async function recordVisit({
   device_id,
   guest_profile_id,
@@ -123,7 +114,7 @@ export default function ThankYouPage() {
   }, [id, type, supabase]);
 
   /* ---------------------------------------------------------
-     Record visit + badge
+     Record visit (ALWAYS)
   --------------------------------------------------------- */
   useEffect(() => {
     if (!profile || !data?.host?.id) return;
@@ -137,13 +128,14 @@ export default function ThankYouPage() {
     }).then((res) => {
       if (!res) return;
       setVisitInfo(res);
-      if (res.badge) {
-        localStorage.setItem("guest_last_badge", JSON.stringify(res.badge));
-      }
     });
   }, [profile, data?.host?.id]);
 
-  const badge = visitInfo?.badge || getStoredBadge();
+  /* ---------------------------------------------------------
+     Badge logic (STRICT)
+  --------------------------------------------------------- */
+  const badge =
+    visitInfo?.loyaltyDisabled ? null : visitInfo?.badge ?? null;
 
   /* ---------------------------------------------------------
      UI helpers
@@ -247,7 +239,7 @@ export default function ThankYouPage() {
           {message}
         </p>
 
-        {/* 🏅 BADGE */}
+        {/* 🏅 BADGE (ONLY WHEN ENABLED) */}
         {badge && (
           <div
             style={{
@@ -262,10 +254,6 @@ export default function ThankYouPage() {
               <img
                 src={badge.icon_url}
                 alt={badge.label}
-                decoding="async"
-                onError={(e) => {
-                  (e.currentTarget as HTMLImageElement).style.display = "none";
-                }}
                 style={{
                   width: 96,
                   height: 96,
@@ -283,7 +271,8 @@ export default function ThankYouPage() {
                 marginBottom: 6,
               }}
             >
-               </div>
+              🏅 {badge.label}
+            </div>
 
             <div
               style={{
