@@ -225,6 +225,7 @@ export default function ThankYouPage() {
             width: "72%",
             maxWidth: 260,
             margin: "0 auto 16px",
+            display: "block",
           }}
         />
 
@@ -246,7 +247,7 @@ export default function ThankYouPage() {
           {message}
         </p>
 
-        {/* 🏅 BADGE TEXT ONLY */}
+        {/* 🏅 BADGE */}
         {badge && (
           <div
             style={{
@@ -257,6 +258,23 @@ export default function ThankYouPage() {
               border: "1px solid rgba(255,255,255,0.15)",
             }}
           >
+            {badge.icon_url && (
+              <img
+                src={badge.icon_url}
+                alt={badge.label}
+                decoding="async"
+                onError={(e) => {
+                  (e.currentTarget as HTMLImageElement).style.display = "none";
+                }}
+                style={{
+                  width: 96,
+                  height: 96,
+                  margin: "0 auto 10px",
+                  display: "block",
+                }}
+              />
+            )}
+
             <div
               style={{
                 fontSize: "1.35rem",
