@@ -225,7 +225,7 @@ export default function ThankYouPage() {
             color: "transparent",
           }}
         >
-          🎉 {headline}
+          🎉 {headline} 🎉 
         </h1>
 
         <p style={{ color: "#f3e8e0", marginBottom: 18 }}>
