@@ -1,17 +1,13 @@
-'use client';
+"use client";
 
 import { useEffect, useState } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
-/* ---------------------------------------------------------
-   Component
---------------------------------------------------------- */
 export default function VotePage() {
   const router = useRouter();
   const params = useParams();
 
-  /* ✅ CORRECT PARAM NAME */
   const pollId = Array.isArray(params.pollId)
     ? params.pollId[0]
     : params.pollId;
@@ -21,13 +17,10 @@ export default function VotePage() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
 
-  /* hydration-safe states */
   const [guestProfile, setGuestProfile] = useState<any | null>(null);
   const [hasLocalVoted, setHasLocalVoted] = useState<boolean | null>(null);
 
-  /* ---------------------------------------------------------
-     Load localStorage safely (NO REDIRECTS HERE)
-  --------------------------------------------------------- */
+  /* Load localStorage */
   useEffect(() => {
     try {
       const raw =
@@ -44,9 +37,14 @@ export default function VotePage() {
     }
   }, [pollId]);
 
-  /* ---------------------------------------------------------
-     Load poll + options
-  --------------------------------------------------------- */
+  /* Redirect if already voted */
+  useEffect(() => {
+    if (hasLocalVoted && pollId) {
+      router.replace(`/thank-you/${pollId}?type=poll`);
+    }
+  }, [hasLocalVoted, pollId, router]);
+
+  /* Load poll + options */
   async function loadEverything() {
     if (!pollId) return;
 
@@ -70,9 +68,7 @@ export default function VotePage() {
     loadEverything();
   }, [pollId]);
 
-  /* ---------------------------------------------------------
-     Realtime poll updates
-  --------------------------------------------------------- */
+  /* Realtime updates */
   useEffect(() => {
     if (!pollId) return;
 
@@ -97,9 +93,7 @@ export default function VotePage() {
     };
   }, [pollId]);
 
-  /* ---------------------------------------------------------
-     Submit Vote
-  --------------------------------------------------------- */
+  /* Submit vote */
   async function submitVote(optionId: string) {
     if (submitting || hasLocalVoted) return;
 
@@ -120,15 +114,10 @@ export default function VotePage() {
 
     localStorage.setItem(`voted_${pollId}`, "true");
     setHasLocalVoted(true);
-    setSubmitting(false);
 
-    /* ✅ Correct thank-you destination */
     router.push(`/thank-you/${pollId}?type=poll`);
   }
 
-  /* ---------------------------------------------------------
-     Render Guards (NO WHITE SCREENS)
-  --------------------------------------------------------- */
   if (loading || guestProfile === null || hasLocalVoted === null) {
     return <div style={{ color: "#fff", textAlign: "center" }}>Loading…</div>;
   }
@@ -147,9 +136,6 @@ export default function VotePage() {
 
   const isActive = poll.status === "active";
 
-  /* ---------------------------------------------------------
-     Background
-  --------------------------------------------------------- */
   const bg =
     poll.background_type === "image" &&
     poll.background_value?.startsWith("http")
@@ -158,9 +144,6 @@ export default function VotePage() {
 
   const logo = "/faninteractlogo.png";
 
-  /* ---------------------------------------------------------
-     UI
-  --------------------------------------------------------- */
   return (
     <div
       style={{
@@ -220,7 +203,7 @@ export default function VotePage() {
         {options.map((opt) => (
           <button
             key={opt.id}
-            disabled={!isActive || hasLocalVoted}
+            disabled={!isActive}
             onClick={() => submitVote(opt.id)}
             style={{
               width: "100%",
@@ -228,13 +211,12 @@ export default function VotePage() {
               marginBottom: 14,
               borderRadius: 14,
               background: opt.bar_color || "#1e3a8a",
-              opacity: isActive && !hasLocalVoted ? 1 : 0.35,
+              opacity: isActive ? 1 : 0.35,
               color: "#fff",
               fontWeight: 800,
               fontSize: "1.6rem",
               border: "none",
-              cursor:
-                isActive && !hasLocalVoted ? "pointer" : "not-allowed",
+              cursor: isActive ? "pointer" : "not-allowed",
               boxShadow: "0 0 25px rgba(0,0,0,0.6)",
               transition: "0.25s",
             }}
