@@ -320,11 +320,14 @@ export default function GuestSignupPage() {
       type="date"
       max={new Date().toISOString().split("T")[0]}
       className={cn(
-        "w-full p-3 rounded-xl bg-black/40 border border-white/20",
+        "w-full h-[52px] px-3 rounded-xl",
+        "bg-black/40 border border-white/20",
         "text-white appearance-none [color-scheme:dark]"
       )}
       value={form.date_of_birth}
-      onChange={e => setForm({ ...form, date_of_birth: e.target.value })}
+      onChange={e =>
+        setForm({ ...form, date_of_birth: e.target.value })
+      }
     />
 
     {!form.date_of_birth && (
