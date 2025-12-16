@@ -79,7 +79,6 @@ export default function ThankYouPage() {
   const [data, setData] = useState<any>(null);
   const [profile, setProfile] = useState<any>(null);
   const [visitInfo, setVisitInfo] = useState<any>(null);
-  const [showCloseHint, setShowCloseHint] = useState(false);
 
   /* ---------------------------------------------------------
      Load guest profile
@@ -222,11 +221,7 @@ export default function ThankYouPage() {
         <img
           src={logo}
           alt="logo"
-          style={{
-            width: "72%",
-            maxWidth: 260,
-            margin: "0 auto 16px",
-          }}
+          style={{ width: "72%", maxWidth: 260, margin: "0 auto 16px" }}
         />
 
         <h1
@@ -257,6 +252,7 @@ export default function ThankYouPage() {
             }}
           >
             <img
+              key={badge.icon_url}   // ✅ THIS IS THE FIX
               src={badge.icon_url}
               alt={badge.label}
               style={{
