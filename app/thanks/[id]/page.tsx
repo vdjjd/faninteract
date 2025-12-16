@@ -19,6 +19,15 @@ function getStoredGuestProfile() {
   }
 }
 
+function getStoredBadge() {
+  try {
+    const raw = localStorage.getItem("guest_last_badge");
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
 async function recordVisit({
   device_id,
   guest_profile_id,
@@ -70,7 +79,6 @@ export default function ThankYouPage() {
   const [data, setData] = useState<any>(null);
   const [profile, setProfile] = useState<any>(null);
   const [visitInfo, setVisitInfo] = useState<any>(null);
-  const [showCloseHint, setShowCloseHint] = useState(false);
 
   /* ---------------------------------------------------------
      Load guest profile
@@ -115,7 +123,7 @@ export default function ThankYouPage() {
   }, [id, type, supabase]);
 
   /* ---------------------------------------------------------
-     Record visit
+     Record visit + badge
   --------------------------------------------------------- */
   useEffect(() => {
     if (!profile || !data?.host?.id) return;
@@ -127,9 +135,15 @@ export default function ThankYouPage() {
       guest_profile_id: profile.id,
       host_id: data.host.id,
     }).then((res) => {
-      if (res) setVisitInfo(res);
+      if (!res) return;
+      setVisitInfo(res);
+      if (res.badge) {
+        localStorage.setItem("guest_last_badge", JSON.stringify(res.badge));
+      }
     });
   }, [profile, data?.host?.id]);
+
+  const badge = visitInfo?.badge || getStoredBadge();
 
   /* ---------------------------------------------------------
      UI helpers
@@ -225,12 +239,46 @@ export default function ThankYouPage() {
             color: "transparent",
           }}
         >
-          🎉 {headline} 🎉 
+          🎉 {headline}
         </h1>
 
-        <p style={{ color: "#f3e8e0", marginBottom: 18 }}>
+        <p style={{ color: "#f3e8e0", marginBottom: 12 }}>
           {message}
         </p>
+
+        {/* 🏅 BADGE TEXT ONLY */}
+        {badge && (
+          <div
+            style={{
+              marginTop: 18,
+              padding: 16,
+              borderRadius: 16,
+              background: "rgba(255,255,255,0.08)",
+              border: "1px solid rgba(255,255,255,0.15)",
+            }}
+          >
+            <div
+              style={{
+                fontSize: "1.35rem",
+                fontWeight: 900,
+                color: "#ffd166",
+                marginBottom: 6,
+              }}
+            >
+              🏅 {badge.label}
+            </div>
+
+            <div
+              style={{
+                fontSize: "0.95rem",
+                color: "#f1f5f9",
+                opacity: 0.95,
+              }}
+            >
+              {badge.description}
+            </div>
+          </div>
+        )}
 
         <button
           onClick={() => window.close()}
@@ -241,7 +289,7 @@ export default function ThankYouPage() {
             background: "linear-gradient(90deg,#475569,#0f172a)",
             color: "#fff",
             fontWeight: 600,
-            marginTop: 20,
+            marginTop: 22,
           }}
         >
           Close
