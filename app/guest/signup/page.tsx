@@ -56,11 +56,12 @@ export default function GuestSignupPage() {
     city: "",
     state: "",
     zip: "",
-    age: "",
+    date_of_birth: "",
   });
 
   const [agree, setAgree] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [ageError, setAgeError] = useState<string | null>(null);
 
   /* ------------------------------------------------- */
   useEffect(() => {
@@ -139,34 +140,16 @@ export default function GuestSignupPage() {
   }, [wallId, wheelId, pollId, basketballId, supabase]);
 
   /* -------------------------------------------------
-     AUTO-REDIRECT IF GUEST EXISTS
+     AGE CALC + VALIDATION
   ------------------------------------------------- */
-  useEffect(() => {
-    async function validateGuest() {
-      const deviceId = localStorage.getItem("guest_device_id");
-      const cached = localStorage.getItem("guest_profile");
-      if (!deviceId || !cached) return;
-
-      const { data } = await supabase
-        .from("guest_profiles")
-        .select("id")
-        .eq("device_id", deviceId)
-        .maybeSingle();
-
-      if (!data) {
-        localStorage.removeItem("guest_profile");
-        return;
-      }
-
-      if (redirect) return router.push(redirect);
-      if (wallId) return router.push(`/wall/${wallId}/submit`);
-      if (wheelId) return router.push(`/prizewheel/${wheelId}/submit`);
-      if (pollId) return router.push(`/polls/${pollId}/vote`);
-      if (basketballId) return router.push(`/basketball/${basketballId}/submit`);
-    }
-
-    validateGuest();
-  }, [redirect, wallId, wheelId, pollId, basketballId, router, supabase]);
+  function calculateAge(dob: string) {
+    const birth = new Date(dob);
+    const today = new Date();
+    let age = today.getFullYear() - birth.getFullYear();
+    const m = today.getMonth() - birth.getMonth();
+    if (m < 0 || (m === 0 && today.getDate() < birth.getDate())) age--;
+    return age;
+  }
 
   /* -------------------------------------------------
      SUBMIT
@@ -175,7 +158,16 @@ export default function GuestSignupPage() {
     e.preventDefault();
     if (!agree) return alert("You must agree to the Terms.");
 
+    if (hostSettings.require_age && hostSettings.minimum_age) {
+      const age = calculateAge(form.date_of_birth);
+      if (age < hostSettings.minimum_age) {
+        setAgeError(`You must be at least ${hostSettings.minimum_age} years old.`);
+        return;
+      }
+    }
+
     setSubmitting(true);
+    setAgeError(null);
 
     try {
       const targetId =
@@ -192,7 +184,10 @@ export default function GuestSignupPage() {
       const { profile } = await syncGuestProfile(
         type,
         targetId,
-        form,
+        {
+          ...form,
+          age: form.date_of_birth ? calculateAge(form.date_of_birth) : null,
+        },
         hostSettings.id
       );
 
@@ -212,7 +207,6 @@ export default function GuestSignupPage() {
     setSubmitting(false);
   }
 
-  /* ------------------------------------------------- */
   if (!hostSettings) {
     return (
       <main className={cn('text-white', 'flex', 'items-center', 'justify-center', 'h-screen')}>
@@ -258,7 +252,6 @@ export default function GuestSignupPage() {
         </motion.h2>
 
         <form onSubmit={handleSubmit} className="space-y-3">
-
           <input required placeholder="First Name *"
             className={cn('w-full', 'p-3', 'rounded-xl', 'bg-black/40', 'border', 'border-white/20')}
             value={form.first_name}
@@ -289,49 +282,17 @@ export default function GuestSignupPage() {
             />
           )}
 
-          {hostSettings.require_street && (
-            <input required placeholder="Street Address *"
-              className={cn('w-full', 'p-3', 'rounded-xl', 'bg-black/40', 'border', 'border-white/20')}
-              value={form.street}
-              onChange={e => setForm({ ...form, street: e.target.value })}
-            />
-          )}
-
-          {hostSettings.require_city && (
-            <input required placeholder="City *"
-              className={cn('w-full', 'p-3', 'rounded-xl', 'bg-black/40', 'border', 'border-white/20')}
-              value={form.city}
-              onChange={e => setForm({ ...form, city: e.target.value })}
-            />
-          )}
-
-          {hostSettings.require_state && (
-            <select required
-              className={cn('w-full', 'p-3', 'rounded-xl', 'bg-black/40', 'border', 'border-white/20')}
-              value={form.state}
-              onChange={e => setForm({ ...form, state: e.target.value })}
-            >
-              <option value="">State *</option>
-              {stateOptions.map(s => (
-                <option key={s} value={s} className="text-black">{s}</option>
-              ))}
-            </select>
-          )}
-
-          {hostSettings.require_zip && (
-            <input required placeholder="ZIP Code *"
-              className={cn('w-full', 'p-3', 'rounded-xl', 'bg-black/40', 'border', 'border-white/20')}
-              value={form.zip}
-              onChange={e => setForm({ ...form, zip: e.target.value })}
-            />
-          )}
-
           {hostSettings.require_age && (
-            <input required type="number" placeholder="Age *"
+            <input required type="date"
+              max={new Date().toISOString().split("T")[0]}
               className={cn('w-full', 'p-3', 'rounded-xl', 'bg-black/40', 'border', 'border-white/20')}
-              value={form.age}
-              onChange={e => setForm({ ...form, age: e.target.value })}
+              value={form.date_of_birth}
+              onChange={e => setForm({ ...form, date_of_birth: e.target.value })}
             />
+          )}
+
+          {ageError && (
+            <p className={cn('text-red-400', 'text-sm', 'font-semibold')}>{ageError}</p>
           )}
 
           <label className={cn('flex', 'items-center', 'gap-2', 'text-sm', 'text-gray-300', 'mt-2')}>
@@ -346,7 +307,6 @@ export default function GuestSignupPage() {
             className={cn('w-full', 'py-3', 'rounded-xl', 'bg-gradient-to-r', 'from-sky-500', 'to-blue-600', 'font-semibold')}>
             {submitting ? "Submitting..." : "Continue"}
           </button>
-
         </form>
       </motion.div>
 
