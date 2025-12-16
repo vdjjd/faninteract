@@ -40,7 +40,7 @@ export default function VotePage() {
   /* Redirect if already voted */
   useEffect(() => {
     if (hasLocalVoted && pollId) {
-      router.replace(`/thank-you/${pollId}?type=poll`);
+      router.replace(`/polls/thank-you/${pollId}?type=poll`);
     }
   }, [hasLocalVoted, pollId, router]);
 
@@ -115,7 +115,7 @@ export default function VotePage() {
     localStorage.setItem(`voted_${pollId}`, "true");
     setHasLocalVoted(true);
 
-    router.push(`/thank-you/${pollId}?type=poll`);
+    router.push(`/polls/thank-you/${pollId}?type=poll`);
   }
 
   if (loading || guestProfile === null || hasLocalVoted === null) {
