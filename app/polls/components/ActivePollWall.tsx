@@ -127,7 +127,7 @@ export default function ActivePollWall({ poll, host }) {
       ? window.location.origin
       : 'https://faninteract.vercel.app';
 
-  const qrValue = `${origin}/guest/signup?type=poll&id=${poll.id}`;
+  const qrValue = `${origin}/guest/signup?type=poll=${poll.id}`;
 
   /* FULLSCREEN HANDLER */
   function toggleFullscreen() {
