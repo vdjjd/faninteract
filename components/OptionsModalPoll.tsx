@@ -19,6 +19,18 @@ const PRESET_COLORS = [
 ];
 
 /* ----------------------------- */
+/* ⭐ OPTION GRADIENT HELPERS    */
+/* ----------------------------- */
+type OptionColor = {
+  start: string; // top
+  end: string;   // bottom
+};
+
+function buildOptionGradient(start: string, end: string) {
+  return `linear-gradient(to bottom, ${start}, ${end})`;
+}
+
+/* ----------------------------- */
 /* ⭐ GRADIENT HELPERS           */
 /* ----------------------------- */
 function applyBrightnessToGradient(gradient: string, brightness: number) {
@@ -98,7 +110,8 @@ export default function OptionsModalPoll({
   const [question, setQuestion] = useState('');
   const [privateTitle, setPrivateTitle] = useState('');
   const [options, setOptions] = useState<string[]>([]);
-  const [optionColors, setOptionColors] = useState<string[]>([]);
+  const [optionColors, setOptionColors] = useState<OptionColor[]>([]);
+  const [optionImages, setOptionImages] = useState<(string | null)[]>([]);
   const [saving, setSaving] = useState(false);
 
   const [bgType, setBgType] = useState('gradient');
@@ -112,12 +125,19 @@ export default function OptionsModalPoll({
   const [countdown, setCountdown] = useState('none');
   const [duration, setDuration] = useState<DurationLabel>('5 min');
 
+  // NEW: display mode & per-option uploading indicator
+  const [displayMode, setDisplayMode] = useState<'standard' | 'picture'>('standard');
+  const [optionUploadingIndex, setOptionUploadingIndex] = useState<number | null>(null);
+
+  const maxOptions = displayMode === 'picture' ? 5 : 8;
+
   /* ----------------------------- */
   /* Load from DB                  */
   /* ----------------------------- */
   useEffect(() => {
     if (!poll?.id) return;
     loadPoll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [poll?.id]);
 
   async function loadPoll() {
@@ -130,7 +150,25 @@ export default function OptionsModalPoll({
       setQuestion(poll.question || '');
       setPrivateTitle(poll.host_title || '');
       setOptions(opts?.map((o: any) => o.option_text) || []);
-      setOptionColors(opts?.map((o: any) => o.bar_color || PRESET_COLORS[0]) || []);
+
+      // Use gradient_start/gradient_end if present; otherwise fall back to bar_color
+      setOptionColors(
+        opts?.map((o: any, i: number) => ({
+          start:
+            o.gradient_start ||
+            o.bar_color ||
+            PRESET_COLORS[i % PRESET_COLORS.length],
+          end:
+            o.gradient_end ||
+            o.bar_color ||
+            PRESET_COLORS[(i + 1) % PRESET_COLORS.length],
+        })) || []
+      );
+
+      // NEW: option images
+      setOptionImages(
+        opts?.map((o: any) => o.image_url || null) || []
+      );
 
       const { data: pollData } = await supabase
         .from('polls')
@@ -147,6 +185,9 @@ export default function OptionsModalPoll({
         setBrightness(pollData.background_brightness ?? 100);
         setCountdown(pollData.countdown || 'none');
         setDuration(minutesToLabel(pollData.duration_minutes));
+        setDisplayMode(
+          (pollData.display_mode as 'standard' | 'picture') || 'standard'
+        );
       }
     } catch (err) {
       console.error('❌ Failed to load poll:', err);
@@ -160,23 +201,77 @@ export default function OptionsModalPoll({
     setOptions((prev) => prev.map((o, idx) => (idx === i ? val : o)));
   }
 
-  function updateOptionColor(i: number, color: string) {
-    setOptionColors((prev) => prev.map((c, idx) => (idx === i ? color : c)));
+  function updateOptionColor(i: number, part: 'start' | 'end', value: string) {
+    setOptionColors((prev) =>
+      prev.map((c, idx) =>
+        idx === i ? { ...c, [part]: value } : c
+      )
+    );
   }
 
   function addOption() {
-    if (options.length >= 8) return;
+    if (options.length >= maxOptions) return;
+    const idx = options.length;
     setOptions((prev) => [...prev, '']);
     setOptionColors((prev) => [
       ...prev,
-      PRESET_COLORS[prev.length % PRESET_COLORS.length],
+      {
+        start: PRESET_COLORS[idx % PRESET_COLORS.length],
+        end: PRESET_COLORS[(idx + 1) % PRESET_COLORS.length],
+      },
     ]);
+    setOptionImages((prev) => [...prev, null]);
   }
 
   function removeOption(i: number) {
     if (options.length <= 2) return;
     setOptions((prev) => prev.filter((_, idx) => idx !== i));
     setOptionColors((prev) => prev.filter((_, idx) => idx !== i));
+    setOptionImages((prev) => prev.filter((_, idx) => idx !== i));
+  }
+
+  /* ----------------------------- */
+  /* Per-option image upload (picture mode)                        */
+  /* ----------------------------- */
+  async function handleOptionImageUpload(
+    index: number,
+    e: React.ChangeEvent<HTMLInputElement>
+  ) {
+    try {
+      const file = e.target.files?.[0];
+      if (!file || !poll?.id || !hostId) return;
+
+      setOptionUploadingIndex(index);
+
+      const compressed = await imageCompression(file, {
+        maxWidthOrHeight: 1900,
+        useWebWorker: true,
+      });
+
+      const ext = file.type.split('/')[1] || 'jpg';
+      const path = `host_${hostId}/poll_${poll.id}/option_${index}-${Date.now()}.${ext}`;
+
+      const { error: uploadErr } = await supabase.storage
+        .from('wall-backgrounds') // reuse existing bucket
+        .upload(path, compressed, { upsert: true });
+
+      if (uploadErr) {
+        console.error('❌ Option image upload error:', uploadErr);
+        return;
+      }
+
+      const { data } = supabase.storage.from('wall-backgrounds').getPublicUrl(path);
+
+      setOptionImages((prev) => {
+        const next = [...prev];
+        next[index] = data.publicUrl;
+        return next;
+      });
+    } catch (err) {
+      console.error('❌ Option image upload exception:', err);
+    } finally {
+      setOptionUploadingIndex(null);
+    }
   }
 
   /* ----------------------------- */
@@ -281,6 +376,9 @@ export default function OptionsModalPoll({
 
           status: 'inactive',
           duration_minutes,
+
+          // NEW: display mode
+          display_mode: displayMode,
         })
         .eq('id', poll.id);
 
@@ -304,8 +402,20 @@ export default function OptionsModalPoll({
       const rows = filled.map((text, i) => ({
         poll_id: poll.id,
         option_text: text,
-        bar_color: optionColors[i] || PRESET_COLORS[i % PRESET_COLORS.length],
         vote_count: 0,
+
+        // legacy/simple solid color
+        bar_color: optionColors[i]?.start || PRESET_COLORS[i % PRESET_COLORS.length],
+
+        // gradient columns for this bar (used in standard mode)
+        gradient_start: optionColors[i]?.start || PRESET_COLORS[i % PRESET_COLORS.length],
+        gradient_end: optionColors[i]?.end || PRESET_COLORS[(i + 1) % PRESET_COLORS.length],
+
+        // only actually used in standard mode
+        use_gradient: displayMode === 'standard',
+
+        // NEW: per-option image (picture mode)
+        image_url: optionImages[i] || null,
       }));
 
       const { error: insertErr } = await supabase.from('poll_options').insert(rows);
@@ -367,6 +477,30 @@ export default function OptionsModalPoll({
           />
         </div>
 
+        {/* DISPLAY MODE */}
+        <div>
+          <label className={cn('block text-sm font-semibold mb-1')}>
+            Display Mode
+          </label>
+          <select
+            value={displayMode}
+            onChange={(e) =>
+              setDisplayMode(e.target.value as 'standard' | 'picture')
+            }
+            className={cn(
+              'w-full px-3 py-2 rounded-lg bg-black/40 border border-white/10'
+            )}
+          >
+            <option value="standard">Standard (up to 8 options, gradient bars)</option>
+            <option value="picture">Picture Background (up to 5 options)</option>
+          </select>
+          <p className={cn('text-xs', 'text-gray-300', 'mt-1')}>
+            {displayMode === 'standard'
+              ? 'Standard mode with gradient bars.'
+              : 'Picture mode: each option can have an image that fills the bar background.'}
+          </p>
+        </div>
+
         {/* COUNTDOWN */}
         <div>
           <label className={cn('block text-sm font-semibold mb-1')}>
@@ -411,7 +545,7 @@ export default function OptionsModalPoll({
         <div>
           <label className={cn('block text-sm font-semibold mb-1')}>Options</label>
           {options.map((opt, i) => (
-            <div key={i} className="mb-3">
+            <div key={i} className="mb-4">
               <div className={cn('flex gap-2 mb-1')}>
                 <input
                   value={opt}
@@ -432,39 +566,88 @@ export default function OptionsModalPoll({
                   </button>
                 )}
               </div>
-              <div className={cn('flex gap-2 justify-center')}>
-                {PRESET_COLORS.map((c) => (
-                  <button
-                    key={c}
-                    onClick={() => updateOptionColor(i, c)}
-                    className={cn(
-                      'w-5 h-5 rounded-full border-2 transition',
-                      optionColors[i] === c
-                        ? 'border-white scale-110'
-                        : 'border-transparent opacity-80 hover:opacity-100'
-                    )}
-                    style={{ backgroundColor: c }}
+
+              {/* Per-option gradient controls (always available; used in standard mode) */}
+              <div className={cn('flex gap-4 justify-center items-center mb-2')}>
+                <div>
+                  <label className={cn('block text-xs mb-1')}>Top</label>
+                  <input
+                    type="color"
+                    value={optionColors[i]?.start ?? PRESET_COLORS[0]}
+                    onChange={(e) =>
+                      updateOptionColor(i, 'start', e.target.value)
+                    }
                   />
-                ))}
+                </div>
+
+                <div>
+                  <label className={cn('block text-xs mb-1')}>Bottom</label>
+                  <input
+                    type="color"
+                    value={optionColors[i]?.end ?? PRESET_COLORS[1]}
+                    onChange={(e) =>
+                      updateOptionColor(i, 'end', e.target.value)
+                    }
+                  />
+                </div>
+
+                <div
+                  className={cn(
+                    'w-6 h-10 rounded-md border border-white/20 shadow-inner'
+                  )}
+                  style={{
+                    background: buildOptionGradient(
+                      optionColors[i]?.start ?? PRESET_COLORS[0],
+                      optionColors[i]?.end ?? PRESET_COLORS[1]
+                    ),
+                  }}
+                />
               </div>
+
+              {/* Picture mode: per-option image upload */}
+              {displayMode === 'picture' && (
+                <div className="mt-1">
+                  <label className={cn('block text-xs mb-1')}>
+                    Option Image (background)
+                  </label>
+                  <div className={cn('flex', 'items-center', 'gap-2')}>
+                    <input
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp"
+                      onChange={(e) => handleOptionImageUpload(i, e)}
+                      className="text-xs"
+                    />
+                    {optionUploadingIndex === i && (
+                      <span className={cn('text-xs', 'text-emerald-300')}>
+                        Uploading...
+                      </span>
+                    )}
+                  </div>
+                  {optionImages[i] && (
+                    <p className={cn('text-[10px]', 'text-gray-300', 'mt-1')}>
+                      {optionImages[i]?.split('/').pop()}
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
           ))}
 
           <button
             onClick={addOption}
-            disabled={options.length >= 8}
+            disabled={options.length >= maxOptions}
             className={cn(
               'px-3 py-2 rounded-lg border border-white/10 transition',
-              options.length >= 8
+              options.length >= maxOptions
                 ? 'opacity-40 cursor-not-allowed'
                 : 'bg-white/10 hover:bg-white/15'
             )}
           >
             + Add Option
           </button>
-          {options.length >= 8 && (
+          {options.length >= maxOptions && (
             <p className={cn('text-xs text-red-400 mt-1 text-center')}>
-              Maximum of 8 options allowed.
+              Maximum of {maxOptions} options allowed in this mode.
             </p>
           )}
         </div>

@@ -5,7 +5,6 @@ import { QRCodeCanvas } from 'qrcode.react';
 import { supabase } from '@/lib/supabaseClient';
 
 export default function ActivePollWall({ poll, host }) {
-
   /* ------------------------------------------------------------- */
   /* 🔧 POLL TITLE CONTROLS                                        */
   /* ------------------------------------------------------------- */
@@ -59,8 +58,8 @@ export default function ActivePollWall({ poll, host }) {
   /* 🔧 BAR CONTAINER POSITION                                    */
   /* ------------------------------------------------------------- */
   const BARS_TOP_VH = 10;
-  const BARS_LEFT_VW = 17.50;
-  const BARS_WIDTH_VW = 77.60;
+  const BARS_LEFT_VW = 17.5;
+  const BARS_WIDTH_VW = 77.6;
   const BARS_HEIGHT_VH = 80;
 
   /* ------------------------------------------------------------- */
@@ -72,7 +71,8 @@ export default function ActivePollWall({ poll, host }) {
 
   /* BACKGROUND */
   const [bg, setBg] = useState(
-    poll?.background_value || 'linear-gradient(to bottom right,#1b2735,#090a0f)'
+    poll?.background_value ||
+      'linear-gradient(to bottom right,#1b2735,#090a0f)'
   );
   const [brightness, setBrightness] = useState(
     poll?.background_brightness ?? 100
@@ -99,7 +99,7 @@ export default function ActivePollWall({ poll, host }) {
 
     const { data } = await supabase
       .from('poll_options')
-      .select('*')
+      .select('*') // includes bar_color, gradient_start, gradient_end, use_gradient, image_url
       .eq('poll_id', poll.id)
       .order('id', { ascending: true });
 
@@ -115,6 +115,11 @@ export default function ActivePollWall({ poll, host }) {
   const maxVotesRaw = Math.max(...options.map(o => o.vote_count || 0), 1);
   const maxVotesCurve = Math.pow(maxVotesRaw, CURVE_POWER);
 
+  // MODE: 'standard' vs 'picture'
+  const displayMode: 'standard' | 'picture' =
+    (poll?.display_mode as 'standard' | 'picture') || 'standard';
+  const isPictureMode = displayMode === 'picture';
+
   /* LOGO URL */
   const displayLogo =
     host?.branding_logo_url ||
@@ -128,7 +133,6 @@ export default function ActivePollWall({ poll, host }) {
       : 'https://faninteract.vercel.app';
 
   const qrValue = `${origin}/guest/signup?poll=${poll.id}`;
-
 
   /* FULLSCREEN HANDLER */
   function toggleFullscreen() {
@@ -153,31 +157,32 @@ export default function ActivePollWall({ poll, host }) {
         position: 'relative',
       }}
     >
-
       {/* Title */}
-<h1
-  style={{
-    position: 'absolute',
-    top: `${TITLE_TOP_VH}vh`,
-    left: '50%',
-    transform: 'translateX(-50%)',
-    width: `${TITLE_WIDTH_VW}vw`,
-    color: '#fff',
-    fontSize: 'clamp(2.5rem,4vw,5rem)',
-    fontWeight: 900,
-    margin: 0,
-    textAlign: 'center',
-    textShadow: `
-      2px 2px 2px #000,
-      -2px 2px 2px #000,
-      2px -2px 2px #000,
-      -2px -2px 2px #000
-    `,
-    zIndex: 50,
-  }}
->
-  {poll?.question || 'Poll'}
-</h1>   {/* ------------------------ LOGO --------------------------- */}
+      <h1
+        style={{
+          position: 'absolute',
+          top: `${TITLE_TOP_VH}vh`,
+          left: '50%',
+          transform: 'translateX(-50%)',
+          width: `${TITLE_WIDTH_VW}vw`,
+          color: '#fff',
+          fontSize: 'clamp(2.5rem,4vw,5rem)',
+          fontWeight: 900,
+          margin: 0,
+          textAlign: 'center',
+          textShadow: `
+            2px 2px 2px #000,
+            -2px 2px 2px #000,
+            2px -2px 2px #000,
+            -2px -2px 2px #000
+          `,
+          zIndex: 50,
+        }}
+      >
+        {poll?.question || 'Poll'}
+      </h1>
+
+      {/* ------------------------ LOGO --------------------------- */}
       <div
         style={{
           position: 'absolute',
@@ -215,7 +220,7 @@ export default function ActivePollWall({ poll, host }) {
         }}
       />
 
-      {/* ------------------- BAR CONTAINER ------------------------ */}
+      {/* ------------------- BAR / CARD CONTAINER ---------------- */}
       <div
         style={{
           position: 'absolute',
@@ -240,7 +245,7 @@ export default function ActivePollWall({ poll, host }) {
               display: 'grid',
               gridTemplateColumns: `repeat(${options.length}, 1fr)`,
               alignItems: 'end',
-              gap: '2vw',
+              gap: '10px',
             }}
           >
             {options.map((opt, i) => {
@@ -254,6 +259,102 @@ export default function ActivePollWall({ poll, host }) {
                   barPct = MIN_NONZERO_HEIGHT_PCT;
                 }
               }
+
+              // 🎨 per-option colors used in BOTH modes
+              const topColor =
+                opt.gradient_start ||
+                opt.bar_color ||
+                '#1e88e5';
+              const bottomColor =
+                opt.gradient_end ||
+                opt.bar_color ||
+                '#1e88e5';
+
+              if (isPictureMode) {
+                // ---------------- PICTURE MODE CARD -----------------
+                const imageUrl = opt.image_url as string | null;
+
+                return (
+                  <div
+                    key={i}
+                    style={{
+                      position: 'relative',
+                      width: '100%',
+                      height: '100%',
+                      borderRadius: '18px',
+                      overflow: 'hidden',
+                      backgroundImage: imageUrl
+                        ? `url(${imageUrl})`
+                        : 'linear-gradient(to bottom, #444, #111)',
+                      backgroundSize: 'cover',
+                      backgroundPosition: 'center',
+                      boxShadow: `
+                        0 0 18px rgba(0,0,0,0.8),
+                        0 0 26px ${bottomColor}66
+                      `,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      justifyContent: 'flex-end',
+                    }}
+                  >
+                    {/* Translucent fill from bottom, tinted by gradient colors (lighter) */}
+                    <div
+                      style={{
+                        position: 'absolute',
+                        left: 0,
+                        bottom: 0,
+                        width: '100%',
+                        height: `${barPct}%`,
+                        background: `
+                          linear-gradient(
+                            to top,
+                            ${bottomColor}b3,
+                            ${topColor}33
+                          )
+                        `,
+                        backdropFilter: 'blur(2px)',
+                        WebkitBackdropFilter: 'blur(2px)',
+                        transition: 'height 0.6s ease',
+                      }}
+                    />
+
+                    {/* Header row ~10px from top */}
+                    <div
+                      style={{
+                        position: 'absolute',
+                        top: '10px',
+                        left: '12px',
+                        right: '12px',
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        color: '#fff',
+                        fontWeight: 800,
+                        fontSize: '1.1vw',
+                        textShadow: '0 0 8px rgba(0,0,0,0.9)',
+                        zIndex: 2,
+                      }}
+                    >
+                      <span
+                        style={{
+                          maxWidth: '70%',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {opt.option_text}
+                      </span>
+                      <span>{votes}</span>
+                    </div>
+                  </div>
+                );
+              }
+
+              // ---------------- STANDARD MODE BAR -------------------
+              const barBackground = opt.use_gradient
+                ? `linear-gradient(to bottom, ${topColor}, ${bottomColor})`
+                : topColor;
 
               return (
                 <div
@@ -282,12 +383,13 @@ export default function ActivePollWall({ poll, host }) {
                   {/* bar */}
                   <div
                     style={{
-                      width: '60%',
+                      width: '100%',
                       height: `${barPct}%`,
-                      background: opt.bar_color || 'white',
+                      background: barBackground,
                       borderRadius: '10px',
                       boxShadow: '0 0 12px rgba(255,255,255,0.9)',
-                      transition: 'height 0.6s ease',
+                      transition:
+                        'height 0.6s ease, background 0.3s ease',
                     }}
                   />
 
