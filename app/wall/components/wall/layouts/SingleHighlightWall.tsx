@@ -38,7 +38,6 @@ const STYLE: Record<string, React.CSSProperties> = {
     borderRadius: '6px',
   },
 
-  /* ⭐ PATCH ADDED — BLACK OUTLINE */
   nickname: {
     fontSize: 'clamp(3rem,4vw,5rem)',
     fontWeight: 900,
@@ -53,29 +52,42 @@ const STYLE: Record<string, React.CSSProperties> = {
     `,
   },
 
-  /* ✅ NEW: Badge row */
-  badgeRow: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 14,
-    marginTop: '0.8vh',
-    marginBottom: '0.6vh',
+  /* Independent overlay wrappers (positioned inside Right Panel) */
+  badgeWrapper: {
+    position: 'absolute',
+    transform: 'translate(-50%, -50%)',
+    pointerEvents: 'none',
   },
 
-  /* ✅ NEW: Visit text */
+  visitWrapper: {
+    position: 'absolute',
+    transform: 'translate(-50%, -50%)',
+    pointerEvents: 'none',
+  },
+
+  /* Badge that scales like the logo using clamp() */
+  badgeImage: {
+    width: 'clamp(135px, 7vw, 110px)',
+    height: 'clamp(65px, 8vw, 115px)',
+    borderRadius: '999px',
+    objectFit: 'cover',
+    filter: 'drop-shadow(0 0 12px rgba(0,0,0,0.65))',
+  },
+
+  /* Visit count text that scales like the logo */
   visitText: {
     color: '#fff',
     fontWeight: 900,
-    fontSize: 'clamp(1.6rem,2vw,2.4rem)',
+    fontSize: 'clamp(1rem, 0vw, 2.2rem)',
     textShadow: `
       2px 2px 2px #000,
       -2px 2px 2px #000,
       2px -2px 2px #000,
       -2px -2px 2px #000
     `,
+    whiteSpace: 'nowrap',
   },
 
-  /* ⭐ PATCH ADDED — BLACK OUTLINE */
   message: {
     fontSize: 'clamp(4rem,1vw,2.4rem)',
     color: '#fff',
@@ -169,7 +181,7 @@ const transitions: Record<string, any> = {
     transition: { duration: 0.9, ease: 'easeInOut' },
   },
 
-  'Flip': {
+  Flip: {
     initial: { opacity: 0, rotateY: 90 },
     animate: { opacity: 1, rotateY: 0 },
     exit: { opacity: 0, rotateY: -90 },
@@ -193,7 +205,7 @@ const speedMap: Record<string, number> = {
 };
 
 /* ---------------------------------------------------- */
-/*      SingleHighlightWall (FINAL + PATCHED)           */
+/*      SingleHighlightWall                              */
 /* ---------------------------------------------------- */
 
 export default function SingleHighlightWall({
@@ -222,6 +234,18 @@ export default function SingleHighlightWall({
   const transitionType = event?.post_transition || 'Fade In / Fade Out';
   const displayDuration = speedMap[event?.transition_speed || 'Medium'];
 
+  /* 🧭 MANUAL POSITION CONTROLS (edit these to move them) */
+  // percentages are relative to the Right Panel (which is position: relative)
+  const BADGE_POSITION = {
+    top: '55.5%',  // roughly aligned with name row
+    left: '20%', // right side of the name
+  };
+
+  const VISIT_POSITION = {
+    top: '64.5%',  // slightly below name row
+    left: '20%', // left side of the name
+  };
+
   /* Reset posts when list changes */
   useEffect(() => {
     setLivePosts(posts || []);
@@ -246,7 +270,7 @@ export default function SingleHighlightWall({
 
     const interval = setInterval(cycle, displayDuration);
     return () => clearInterval(interval);
-  }, [livePosts.length, displayDuration, transitionType]);
+  }, [livePosts.length, displayDuration, transitionType, pauseFlag, tickSubmissionDisplayed]);
 
   const effectiveTransition = useMemo(() => {
     if (transitionType === 'Random')
@@ -331,6 +355,7 @@ export default function SingleHighlightWall({
             display: 'flex',
             flexDirection: 'column',
             alignItems: 'center',
+            position: 'relative', // needed for absolute badge/visit positioning
           }}
         >
           {/* Logo */}
@@ -360,27 +385,45 @@ export default function SingleHighlightWall({
 
           <div style={STYLE.greyBar} />
 
-          {/* Nickname */}
+          {/* Name stays in normal flow */}
           <p style={STYLE.nickname}>{current?.nickname || 'Guest'}</p>
 
-          {/* ✅ NEW: Visit # + Badge (placed under nickname) */}
-          {current?.visit_count != null && current?.badge_icon_url ? (
-            <div style={STYLE.badgeRow}>
+          {/* Independent Visit Count (left of name area) */}
+          {current?.visit_count != null && (
+            <div
+              style={{
+                ...STYLE.visitWrapper,
+                top: VISIT_POSITION.top,
+                left: VISIT_POSITION.left,
+              }}
+            >
+              <span style={STYLE.visitText}>
+                Visit #{current.visit_count}
+              </span>
+            </div>
+          )}
+
+          {/* Independent Badge (right of name area) */}
+          {current?.badge_icon_url && (
+            <div
+              style={{
+                ...STYLE.badgeWrapper,
+                top: BADGE_POSITION.top,
+                left: BADGE_POSITION.left,
+              }}
+            >
               <img
                 src={current.badge_icon_url}
                 alt="Loyalty Badge"
-                style={{
-                  width: 64,
-                  height: 64,
-                  filter: 'drop-shadow(0 0 12px rgba(0,0,0,0.65))',
-                }}
+                style={STYLE.badgeImage}
               />
-              <div style={STYLE.visitText}>Visit #{current.visit_count}</div>
             </div>
-          ) : null}
+          )}
 
           {/* Message */}
-          <p style={STYLE.message}>{current?.message || 'Be the first to post!'}</p>
+          <p style={STYLE.message}>
+            {current?.message || 'Be the first to post!'}
+          </p>
         </div>
       </div>
 
