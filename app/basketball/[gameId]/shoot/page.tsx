@@ -5,12 +5,14 @@ import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { useCountdown } from "@/app/basketball/hooks/useCountdown";
 
+const COOLDOWN_MS = 500;
+
 export default function ShooterPage() {
   const { gameId } = useParams() as { gameId: string };
 
   const countdownValue = useCountdown(gameId);
-
   const channelRef = useRef<any>(null);
+  const lastShotRef = useRef<number>(0);
 
   const [status, setStatus] = useState("Initializing…");
   const [playerId, setPlayerId] = useState<string | null>(null);
@@ -22,11 +24,9 @@ export default function ShooterPage() {
   useEffect(() => {
     async function loadPlayer() {
       const storedId = localStorage.getItem("bb_player_id");
-      console.log("📦 localStorage bb_player_id =", storedId);
 
-      // 1️⃣ Try stored player ID
       if (storedId) {
-        const { data, error } = await supabase
+        const { data } = await supabase
           .from("bb_game_players")
           .select("id, lane_index")
           .eq("id", storedId)
@@ -35,47 +35,21 @@ export default function ShooterPage() {
           .maybeSingle();
 
         if (data) {
-          console.log("✅ Player restored from storage:", data);
           setPlayerId(data.id);
           setLaneIndex(data.lane_index);
-          setStatus(`Ready — lane ${data.lane_index}`);
+          setStatus(`Ready — lane ${data.lane_index + 1}`);
           return;
         }
       }
 
-      // 2️⃣ Fallback: find active player for this game
-      console.warn("⚠️ Stored player invalid — searching active players");
-
-      const { data: activePlayers, error } = await supabase
-        .from("bb_game_players")
-        .select("id, lane_index")
-        .eq("game_id", gameId)
-        .is("disconnected_at", null)
-        .order("joined_at", { ascending: true })
-        .limit(1);
-
-      if (error || !activePlayers || activePlayers.length === 0) {
-        console.error("❌ No active player found", error);
-        setStatus("❌ No active player assigned");
-        return;
-      }
-
-      const p = activePlayers[0];
-
-      console.log("✅ Active player recovered:", p);
-
-      localStorage.setItem("bb_player_id", p.id);
-
-      setPlayerId(p.id);
-      setLaneIndex(p.lane_index);
-      setStatus(`Ready — lane ${p.lane_index}`);
+      setStatus("❌ Player not assigned");
     }
 
     loadPlayer();
   }, [gameId]);
 
   /* ============================================================
-     OPEN BROADCAST CHANNEL (ONCE)
+     OPEN BROADCAST CHANNEL
   ============================================================ */
   useEffect(() => {
     if (channelRef.current) return;
@@ -84,9 +58,7 @@ export default function ShooterPage() {
       .channel(`basketball-${gameId}`, {
         config: { broadcast: { ack: true } },
       })
-      .subscribe((status) => {
-        console.log("📡 SHOOTER CHANNEL STATUS:", status);
-      });
+      .subscribe();
 
     channelRef.current = ch;
 
@@ -97,23 +69,31 @@ export default function ShooterPage() {
   }, [gameId]);
 
   /* ============================================================
-     FIRE SHOT (BUTTON)
+     FIRE SHOT (COOLDOWN ENFORCED)
   ============================================================ */
-  async function fireShot() {
-    if (!channelRef.current || laneIndex === null) {
-      console.warn("❌ Cannot shoot — channel or lane missing");
-      return;
-    }
+  function fireShot(animation = "swish") {
+    if (!channelRef.current || laneIndex === null) return;
 
-    console.log("🔥 FIRING SHOT → lane", laneIndex);
+    // 🚫 Pre-game / countdown lockout
+    if (countdownValue !== null && countdownValue > 0) return;
 
-    await channelRef.current.send({
+    const now = Date.now();
+
+    // 🚫 Cooldown
+    if (now - lastShotRef.current < COOLDOWN_MS) return;
+
+    lastShotRef.current = now;
+
+    const shotId = crypto.randomUUID();
+
+    channelRef.current.send({
       type: "broadcast",
       event: "shot_fired",
       payload: {
+        shot_id: shotId,
         lane_index: laneIndex,
-        animation: "swish",
-        points: 2,
+        animation, // dev-only override
+        ts: now,
       },
     });
   }
@@ -139,7 +119,7 @@ export default function ShooterPage() {
       {/* STATUS */}
       <div style={{ fontSize: 22, opacity: 0.85 }}>{status}</div>
 
-      {/* COUNTDOWN */}
+      {/* COUNTDOWN OVERLAY */}
       {countdownValue !== null && (
         <div
           style={{
@@ -158,14 +138,14 @@ export default function ShooterPage() {
         </div>
       )}
 
-      {/* TEST BUTTON */}
+      {/* MAIN SHOOT BUTTON */}
       <button
-        onClick={fireShot}
+        onClick={() => fireShot("swish")}
         style={{
-          padding: "24px 40px",
-          fontSize: "2rem",
+          padding: "26px 46px",
+          fontSize: "2.2rem",
           fontWeight: 900,
-          borderRadius: 16,
+          borderRadius: 18,
           background: "#ff6a00",
           border: "none",
           color: "black",
@@ -175,6 +155,39 @@ export default function ShooterPage() {
       >
         SHOOT
       </button>
+
+      {/* DEV CONTROLS */}
+      <div style={{ display: "flex", gap: 12, marginTop: 20 }}>
+        <button
+          onClick={() => fireShot("miss_left")}
+          style={devBtn("#2563eb")}
+        >
+          MISS LEFT
+        </button>
+
+        <button
+          onClick={() => fireShot("miss_right")}
+          style={devBtn("#dc2626")}
+        >
+          MISS RIGHT
+        </button>
+      </div>
     </div>
   );
+}
+
+/* ============================================================
+   DEV BUTTON STYLE
+============================================================ */
+function devBtn(bg: string) {
+  return {
+    padding: "12px 18px",
+    fontSize: "1rem",
+    fontWeight: 700,
+    borderRadius: 10,
+    background: bg,
+    border: "none",
+    color: "white",
+    cursor: "pointer",
+  };
 }

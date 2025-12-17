@@ -6,45 +6,54 @@ import PlayerCard from "./PlayerCard";
 
 const LANES = 10;
 
+type ShotEvent = {
+  shotId: string;
+  animation: string;
+};
+
 export default function ActiveBasketballPage({
   gameId,
 }: {
   gameId: string;
 }) {
   const [animationByLane, setAnimationByLane] = useState<
-    Record<number, string | null>
+    Record<number, ShotEvent | null>
   >({});
 
   /* ============================================================
-     LISTEN FOR SHOTS
+     LISTEN FOR SHOT ATTEMPTS
   ============================================================ */
   useEffect(() => {
     const channel = supabase
       .channel(`basketball-${gameId}`)
       .on(
         "broadcast",
-        { event: "shot_fired" },
+        { event: "shot_fired" }, // we’ll rename later
         ({ payload }) => {
           console.log("🏀 WALL RECEIVED SHOT:", payload);
 
           const lane = payload?.lane_index;
-          const animation = payload?.animation ?? "swish";
-
           if (typeof lane !== "number") return;
 
-          // trigger animation for this lane
+          // 🔑 EVENT-BASED SHOT (unique every time)
+          const shotEvent: ShotEvent = {
+            shotId: payload?.shot_id ?? crypto.randomUUID(),
+            animation: payload?.animation ?? "swish",
+          };
+
+          // Trigger animation for this lane
           setAnimationByLane((prev) => ({
             ...prev,
-            [lane]: animation,
+            [lane]: shotEvent,
           }));
 
-          // clear animation after playback
+          // Clear after animation duration
           setTimeout(() => {
             setAnimationByLane((prev) => ({
               ...prev,
               [lane]: null,
             }));
-          }, 900);
+          }, 1400); // long enough for arc + depth
         }
       )
       .subscribe();
@@ -75,14 +84,16 @@ export default function ActiveBasketballPage({
           key={index}
           index={index}
           player={null}
-          balls={[]}               // ← physics comes later
+          balls={[]}               // physics later
           timeLeft={0}
           score={0}
           borderColor="#444"
           timerExpired={false}
           hostLogo={null}
           maxScore={0}
-          animationName={animationByLane[index] ?? null}
+          animationName={
+            animationByLane[index]?.animation ?? null
+          }
         />
       ))}
     </div>
