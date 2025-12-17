@@ -24,7 +24,7 @@ export default function VotePage() {
   const [hasLocalVoted, setHasLocalVoted] = useState<boolean | null>(null);
 
   /* ---------------------------------------------------------
-     Load guest profile + vote status
+     Load guest profile (once)
   --------------------------------------------------------- */
   useEffect(() => {
     try {
@@ -33,14 +33,10 @@ export default function VotePage() {
         localStorage.getItem("guestInfo");
 
       setGuestProfile(raw ? JSON.parse(raw) : null);
-
-      const voted = localStorage.getItem(`voted_${pollId}`) === "true";
-      setHasLocalVoted(voted);
     } catch {
       setGuestProfile(null);
-      setHasLocalVoted(false);
     }
-  }, [pollId]);
+  }, []);
 
   /* ---------------------------------------------------------
      Initial load: poll + options + HOST LOGO
@@ -122,7 +118,7 @@ export default function VotePage() {
           );
         }
       )
-      // 3) Broadcast: poll_update (in case we use that to push status)
+      // 3) Broadcast: poll_update
       .on(
         "broadcast",
         { event: "poll_update" },
@@ -151,7 +147,6 @@ export default function VotePage() {
 
   /* ---------------------------------------------------------
      Fallback: poll status from DB every 2s
-     (safety net if realtime ever misses)
   --------------------------------------------------------- */
   useEffect(() => {
     if (!pollId) return;
@@ -160,7 +155,7 @@ export default function VotePage() {
     async function refreshStatus() {
       const { data } = await supabase
         .from("polls")
-        .select("status,countdown,countdown_active")
+        .select("status,countdown,countdown_active,reset_version")
         .eq("id", pollId)
         .maybeSingle();
 
@@ -173,6 +168,7 @@ export default function VotePage() {
                 countdown_active:
                   data.countdown_active ?? prev.countdown_active,
                 countdown: data.countdown ?? prev.countdown,
+                reset_version: data.reset_version ?? prev.reset_version,
               }
             : data
         );
@@ -190,10 +186,27 @@ export default function VotePage() {
   }, [pollId]);
 
   /* ---------------------------------------------------------
+     Local "has voted" flag depends on reset_version
+  --------------------------------------------------------- */
+  useEffect(() => {
+    if (!pollId || !poll) return;
+
+    const resetVersion = poll.reset_version ?? 1;
+    const voteKey = `voted_${pollId}_v${resetVersion}`;
+
+    try {
+      const voted = localStorage.getItem(voteKey) === "true";
+      setHasLocalVoted(voted);
+    } catch {
+      setHasLocalVoted(false);
+    }
+  }, [pollId, poll?.reset_version]);
+
+  /* ---------------------------------------------------------
      Submit vote → redirect to THANK YOU
   --------------------------------------------------------- */
   async function submitVote(optionId: string) {
-    if (submitting || hasLocalVoted) return;
+    if (submitting || hasLocalVoted || !poll) return;
 
     setSubmitting(true);
 
@@ -210,7 +223,14 @@ export default function VotePage() {
       .update({ vote_count: newCount })
       .eq("id", optionId);
 
-    localStorage.setItem(`voted_${pollId}`, "true");
+    const resetVersion = poll.reset_version ?? 1;
+    const voteKey = `voted_${pollId}_v${resetVersion}`;
+
+    try {
+      localStorage.setItem(voteKey, "true");
+    } catch {
+      // ignore storage issues
+    }
 
     router.push(`/thanks/${pollId}?type=poll`);
   }

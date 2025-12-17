@@ -21,7 +21,7 @@ export default function PollGrid({
   const [countdowns, setCountdowns] = useState<{ [key: string]: number }>({});
   const [voteCounts, setVoteCounts] = useState<{ [key: string]: number }>({});
 
-  // NEW: track which polls currently have highlight ON
+  // Track which polls currently have highlight ON
   const [highlightedPolls, setHighlightedPolls] = useState<{
     [pollId: string]: boolean;
   }>({});
@@ -235,7 +235,7 @@ export default function PollGrid({
     try {
       const currentlyOn = !!highlightedPolls[pollId];
 
-      // 🔁 If it's already highlighted, clicking again turns it OFF
+      // If already highlighted, clicking again turns it OFF
       if (currentlyOn) {
         await supabase.channel(`poll-${pollId}`).send({
           type: 'broadcast',
@@ -291,10 +291,28 @@ export default function PollGrid({
 
   /* ------------------------------------------------------------
      🔄 RESET POLL
+     - Zero votes
+     - Set status back to inactive
+     - Bump reset_version so guests can vote again
+     - Clear winner highlight
   ------------------------------------------------------------ */
   async function handleResetPoll(pollId: string) {
     try {
-      // Zero out votes
+      // 1) Get current reset_version so we can bump it
+      const { data: pollRow, error: pollErr } = await supabase
+        .from('polls')
+        .select('reset_version')
+        .eq('id', pollId)
+        .maybeSingle();
+
+      if (pollErr) {
+        console.error('❌ load reset_version error:', pollErr);
+      }
+
+      const currentVersion = pollRow?.reset_version ?? 1;
+      const newVersion = currentVersion + 1;
+
+      // 2) Zero out votes
       const { error: resetErr } = await supabase
         .from('poll_options')
         .update({ vote_count: 0 })
@@ -305,22 +323,43 @@ export default function PollGrid({
         return;
       }
 
-      // Set poll back to inactive, kill countdown
-      await supabase
+      // 3) Set poll back to INACTIVE + bump reset_version
+      const { error: pollUpdateErr } = await supabase
         .from('polls')
         .update({
           status: 'inactive',
           countdown_active: false,
+          countdown: 'none',
+          reset_version: newVersion,
         })
         .eq('id', pollId);
 
-      // Clear highlight on the wall
+      if (pollUpdateErr) {
+        console.error('❌ reset poll row error:', pollUpdateErr);
+        return;
+      }
+
+      // 4) Broadcast updated status + reset_version to walls / vote page
       await supabase.channel(`poll-${pollId}`).send({
         type: 'broadcast',
-        event: 'poll_reset',
-        payload: { id: pollId },
+        event: 'poll_update',
+        payload: {
+          id: pollId,
+          status: 'inactive',
+          countdown_active: false,
+          countdown: 'none',
+          reset_version: newVersion,
+        },
       });
 
+      // 5) Also clear winner highlight on the wall
+      await supabase.channel(`poll-${pollId}`).send({
+        type: 'broadcast',
+        event: 'highlight_winner',
+        payload: { option_id: null },
+      });
+
+      // local dashboard state: clear highlight badge
       setHighlightedPolls((prev) => ({ ...prev, [pollId]: false }));
 
       await refreshPolls();
