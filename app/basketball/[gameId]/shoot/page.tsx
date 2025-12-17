@@ -15,7 +15,6 @@ export default function ShooterPage() {
   const lastShotRef = useRef<number>(0);
 
   const [status, setStatus] = useState("Initializing…");
-  const [playerId, setPlayerId] = useState<string | null>(null);
   const [laneIndex, setLaneIndex] = useState<number | null>(null);
 
   /* ============================================================
@@ -32,20 +31,19 @@ export default function ShooterPage() {
 
       const { data } = await supabase
         .from("bb_game_players")
-        .select("id, lane_index")
+        .select("lane_index")
         .eq("id", storedId)
         .eq("game_id", gameId)
         .is("disconnected_at", null)
         .maybeSingle();
 
       if (!data) {
-        setStatus("❌ Player not assigned");
+        setStatus("❌ Player not active");
         return;
       }
 
-      setPlayerId(data.id);
       setLaneIndex(data.lane_index);
-      setStatus(`Ready — lane ${data.lane_index + 1}`);
+      setStatus(`READY — Lane ${data.lane_index + 1}`);
     }
 
     loadPlayer();
@@ -55,13 +53,13 @@ export default function ShooterPage() {
      OPEN BROADCAST CHANNEL
   ============================================================ */
   useEffect(() => {
-    if (channelRef.current) return;
-
     const ch = supabase
-      .channel(`basketball-${gameId}`, {
-        config: { broadcast: { ack: true } },
-      })
-      .subscribe();
+      .channel(`basketball-${gameId}`)
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") {
+          console.log("✅ Shooter channel connected");
+        }
+      });
 
     channelRef.current = ch;
 
@@ -72,42 +70,38 @@ export default function ShooterPage() {
   }, [gameId]);
 
   /* ============================================================
-     SEND SHOT
+     FIRE SHOT
   ============================================================ */
   function fireShot(animation: string) {
-    if (!channelRef.current || laneIndex === null) return;
+    if (!channelRef.current) return;
+    if (laneIndex === null) return;
 
-    // 🚫 Block during countdown
+    // 🚫 Block ONLY while countdown > 0
     if (countdownValue !== null && countdownValue > 0) return;
 
     const now = Date.now();
 
-    // 🚫 Cooldown
     if (now - lastShotRef.current < COOLDOWN_MS) return;
     lastShotRef.current = now;
 
-    const shotId = crypto.randomUUID();
-
-    console.log("📤 SHOOTER SENDING:", {
-      animation,
+    const payload = {
+      shot_id: crypto.randomUUID(),
       lane_index: laneIndex,
-      shot_id: shotId,
-    });
+      animation,
+      ts: now,
+    };
+
+    console.log("🏀 SHOOT:", payload);
 
     channelRef.current.send({
       type: "broadcast",
       event: "shot_fired",
-      payload: {
-        shot_id: shotId,
-        lane_index: laneIndex,
-        animation,
-        ts: now,
-      },
+      payload,
     });
   }
 
   /* ============================================================
-     RENDER
+     UI
   ============================================================ */
   return (
     <div
@@ -120,15 +114,14 @@ export default function ShooterPage() {
         flexDirection: "column",
         alignItems: "center",
         justifyContent: "center",
-        gap: 18,
+        gap: 20,
         touchAction: "none",
       }}
     >
-      {/* STATUS */}
       <div style={{ fontSize: 22, opacity: 0.85 }}>{status}</div>
 
-      {/* COUNTDOWN OVERLAY */}
-      {countdownValue !== null && (
+      {/* COUNTDOWN */}
+      {countdownValue !== null && countdownValue > 0 && (
         <div
           style={{
             position: "absolute",
@@ -142,47 +135,28 @@ export default function ShooterPage() {
             zIndex: 50,
           }}
         >
-          {countdownValue > 0 ? countdownValue : "START!"}
+          {countdownValue}
         </div>
       )}
 
-      {/* MAIN SHOOT */}
-      <button
-        onClick={() => fireShot("close_hit")}
-        style={mainBtn()}
-      >
+      <button onClick={() => fireShot("close_hit")} style={mainBtn()}>
         SHOOT
       </button>
 
-      {/* DEV CONTROLS */}
-      <div style={{ display: "flex", gap: 12, marginTop: 14 }}>
-        <button
-          onClick={() => fireShot("close_miss_left")}
-          style={devBtn("#2563eb")}
-        >
+      <div style={{ display: "flex", gap: 12 }}>
+        <button onClick={() => fireShot("close_miss_left")} style={devBtn("#2563eb")}>
           MISS LEFT
         </button>
-
-        <button
-          onClick={() => fireShot("close_miss_right")}
-          style={devBtn("#dc2626")}
-        >
+        <button onClick={() => fireShot("close_miss_right")} style={devBtn("#dc2626")}>
           MISS RIGHT
         </button>
-
-        <button
-          onClick={() => fireShot("close_miss_long")}
-          style={devBtn("#7c3aed")}
-        >
+        <button onClick={() => fireShot("close_miss_long")} style={devBtn("#7c3aed")}>
           MISS LONG
         </button>
       </div>
 
       <div style={{ display: "flex", gap: 12 }}>
-        <button
-          onClick={() => fireShot("three_hit")}
-          style={devBtn("#16a34a")}
-        >
+        <button onClick={() => fireShot("three_hit")} style={devBtn("#16a34a")}>
           3PT HIT
         </button>
       </div>
