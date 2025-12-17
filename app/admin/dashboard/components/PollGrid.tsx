@@ -21,7 +21,7 @@ export default function PollGrid({
   const [countdowns, setCountdowns] = useState<{ [key: string]: number }>({});
   const [voteCounts, setVoteCounts] = useState<{ [key: string]: number }>({});
 
-  // Track which polls currently have highlight ON
+  // track which polls currently have highlight ON
   const [highlightedPolls, setHighlightedPolls] = useState<{
     [pollId: string]: boolean;
   }>({});
@@ -89,7 +89,7 @@ export default function PollGrid({
   }, [host?.id]);
 
   /* ------------------------------------------------------------
-     Countdown Helpers
+     Countdown Helpers (pre-open countdown)
   ------------------------------------------------------------ */
   function getCountdownSeconds(poll: any): number {
     if (!poll?.countdown || poll.countdown === 'none') return 0;
@@ -101,11 +101,13 @@ export default function PollGrid({
   }
 
   /* ------------------------------------------------------------
-     Start / Stop Countdown
+     Start / Stop Countdown + DURATION
   ------------------------------------------------------------ */
   async function startCountdown(poll: any) {
     const secs = getCountdownSeconds(poll);
+    const durationSeconds = (poll.duration_minutes || 0) * 60;
 
+    // ⏩ No pre-countdown: instantly ACTIVE + start duration (if set)
     if (secs === 0) {
       await supabase
         .from('polls')
@@ -122,10 +124,20 @@ export default function PollGrid({
         payload: { id: poll.id, status: 'active', countdown_active: false },
       });
 
+      // ⭐ Start duration timer only when poll is ACTIVE
+      if (durationSeconds > 0) {
+        await supabase.channel(`poll-${poll.id}`).send({
+          type: 'broadcast',
+          event: 'duration_start',
+          payload: { seconds: durationSeconds },
+        });
+      }
+
       await refreshPolls();
       return;
     }
 
+    // ⏱ Pre-countdown path (open after N seconds)
     await supabase
       .from('polls')
       .update({
@@ -149,6 +161,7 @@ export default function PollGrid({
         if (current <= 1) {
           clearInterval(timers.current[poll.id]);
 
+          // flip to ACTIVE
           supabase
             .from('polls')
             .update({
@@ -168,6 +181,15 @@ export default function PollGrid({
             },
           });
 
+          // ⭐ Start duration when pre-countdown completes
+          if (durationSeconds > 0) {
+            supabase.channel(`poll-${poll.id}`).send({
+              type: 'broadcast',
+              event: 'duration_start',
+              payload: { seconds: durationSeconds },
+            });
+          }
+
           return { ...prev, [poll.id]: 0 };
         }
 
@@ -182,7 +204,16 @@ export default function PollGrid({
     const secs = getCountdownSeconds(poll);
     clearInterval(timers.current[poll.id]);
     setCountdowns((prev) => ({ ...prev, [poll.id]: secs }));
+
     await handleStatus(poll.id, 'inactive');
+
+    // ⭐ STOP / RESET duration back to original setting
+    const durationSeconds = (poll.duration_minutes || 0) * 60;
+    await supabase.channel(`poll-${poll.id}`).send({
+      type: 'broadcast',
+      event: 'duration_reset',
+      payload: { seconds: durationSeconds },
+    });
   }
 
   async function handleStatus(id: string, status: string) {
@@ -227,15 +258,13 @@ export default function PollGrid({
   }
 
   /* ------------------------------------------------------------
-     🥇 HIGHLIGHT WINNER (TOGGLE)
-     - If OFF → compute winner and highlight
-     - If ON  → send option_id: null to stop highlight
+     🥇 HIGHLIGHT WINNER (TOGGLE BUTTON)
   ------------------------------------------------------------ */
   async function handleHighlightWinner(pollId: string) {
     try {
       const currentlyOn = !!highlightedPolls[pollId];
 
-      // If already highlighted, clicking again turns it OFF
+      // If it's already highlighted, clicking again turns it OFF
       if (currentlyOn) {
         await supabase.channel(`poll-${pollId}`).send({
           type: 'broadcast',
@@ -290,29 +319,11 @@ export default function PollGrid({
   }
 
   /* ------------------------------------------------------------
-     🔄 RESET POLL
-     - Zero votes
-     - Set status back to inactive
-     - Bump reset_version so guests can vote again
-     - Clear winner highlight
+     🔄 RESET POLL (votes + duration)
   ------------------------------------------------------------ */
   async function handleResetPoll(pollId: string) {
     try {
-      // 1) Get current reset_version so we can bump it
-      const { data: pollRow, error: pollErr } = await supabase
-        .from('polls')
-        .select('reset_version')
-        .eq('id', pollId)
-        .maybeSingle();
-
-      if (pollErr) {
-        console.error('❌ load reset_version error:', pollErr);
-      }
-
-      const currentVersion = pollRow?.reset_version ?? 1;
-      const newVersion = currentVersion + 1;
-
-      // 2) Zero out votes
+      // Zero out votes
       const { error: resetErr } = await supabase
         .from('poll_options')
         .update({ vote_count: 0 })
@@ -323,44 +334,38 @@ export default function PollGrid({
         return;
       }
 
-      // 3) Set poll back to INACTIVE + bump reset_version
-      const { error: pollUpdateErr } = await supabase
+      // Set poll back to inactive, kill countdown
+      await supabase
         .from('polls')
         .update({
           status: 'inactive',
           countdown_active: false,
-          countdown: 'none',
-          reset_version: newVersion,
         })
         .eq('id', pollId);
 
-      if (pollUpdateErr) {
-        console.error('❌ reset poll row error:', pollUpdateErr);
-        return;
-      }
-
-      // 4) Broadcast updated status + reset_version to walls / vote page
+      // Clear highlight on the wall
       await supabase.channel(`poll-${pollId}`).send({
         type: 'broadcast',
-        event: 'poll_update',
-        payload: {
-          id: pollId,
-          status: 'inactive',
-          countdown_active: false,
-          countdown: 'none',
-          reset_version: newVersion,
-        },
+        event: 'poll_reset',
+        payload: { id: pollId },
       });
 
-      // 5) Also clear winner highlight on the wall
-      await supabase.channel(`poll-${pollId}`).send({
-        type: 'broadcast',
-        event: 'highlight_winner',
-        payload: { option_id: null },
-      });
-
-      // local dashboard state: clear highlight badge
       setHighlightedPolls((prev) => ({ ...prev, [pollId]: false }));
+
+      // ⭐ Also reset duration timer to original value
+      const { data: pollRow } = await supabase
+        .from('polls')
+        .select('duration_minutes')
+        .eq('id', pollId)
+        .maybeSingle();
+
+      const durationSeconds = ((pollRow?.duration_minutes as number) || 0) * 60;
+
+      await supabase.channel(`poll-${pollId}`).send({
+        type: 'broadcast',
+        event: 'duration_reset',
+        payload: { seconds: durationSeconds },
+      });
 
       await refreshPolls();
     } catch (err) {

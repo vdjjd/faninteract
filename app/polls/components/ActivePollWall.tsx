@@ -21,6 +21,14 @@ export default function ActivePollWall({ poll, host }) {
   const LOGO_WIDTH_VW = 12;
 
   /* ------------------------------------------------------------- */
+  /* 🔧 DURATION TIMER CONTROLS                                   */
+  /* ------------------------------------------------------------- */
+  const TIMER_TOP_VH = 30;     // between logo & "Scan To Vote"
+  const TIMER_LEFT_VW = .5;
+  const TIMER_WIDTH_VW = 22.5;
+  const TIMER_SIZE_VW = 3.5;
+
+  /* ------------------------------------------------------------- */
   /* 🔧 "SCAN TO VOTE" TEXT CONTROLS                              */
   /* ------------------------------------------------------------- */
   const TEXT_TOP_VH = 64;
@@ -135,6 +143,96 @@ export default function ActivePollWall({ poll, host }) {
     return () => clearInterval(id);
   }, [highlightOptionId]);
 
+  /* ------------------------------------------------------------- */
+  /* ⏱ DURATION TIMER STATE                                       */
+  /* ------------------------------------------------------------- */
+  const [durationSecondsLeft, setDurationSecondsLeft] = useState<number | null>(
+    poll?.duration_minutes ? poll.duration_minutes * 60 : null
+  );
+  const [autoHighlightDone, setAutoHighlightDone] = useState(false);
+
+  // reset duration when poll/duration changes
+  useEffect(() => {
+    if (!poll?.duration_minutes) {
+      setDurationSecondsLeft(null);
+      setAutoHighlightDone(false);
+      return;
+    }
+    setDurationSecondsLeft(poll.duration_minutes * 60);
+    setAutoHighlightDone(false);
+  }, [poll?.id, poll?.duration_minutes]);
+
+  function formatDuration(seconds: number): string {
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+  }
+
+  // 🔥 auto-choose winner when timer hits 0
+  async function autoHighlightWinner() {
+    if (!poll?.id) return;
+    try {
+      const { data: opts, error } = await supabase
+        .from('poll_options')
+        .select('id,vote_count')
+        .eq('poll_id', poll.id);
+
+      if (error) {
+        console.error('❌ autoHighlightWinner load error:', error);
+        return;
+      }
+      if (!opts || opts.length === 0) return;
+
+      let winner = opts[0];
+      for (const o of opts) {
+        if ((o.vote_count || 0) > (winner.vote_count || 0)) {
+          winner = o;
+        }
+      }
+      if (!winner?.id) return;
+
+      // 👉 Make sure THIS wall shows the winner even if broadcast doesn't loop back
+      setHighlightOptionId(winner.id);
+
+      // And still broadcast so other walls/devices hear it
+      await supabase.channel(`poll-${poll.id}`).send({
+        type: 'broadcast',
+        event: 'highlight_winner',
+        payload: { option_id: winner.id },
+      });
+
+      setAutoHighlightDone(true);
+    } catch (err) {
+      console.error('❌ autoHighlightWinner error:', err);
+    }
+  }
+
+  // duration countdown
+  useEffect(() => {
+    if (!poll?.duration_minutes) return;
+    if (poll.status !== 'active') return;
+    if (durationSecondsLeft === null) return;
+
+    if (durationSecondsLeft <= 0) {
+      if (!autoHighlightDone) autoHighlightWinner();
+      return;
+    }
+
+    const intervalId = setInterval(() => {
+      setDurationSecondsLeft((prev) => {
+        if (prev === null) return prev;
+        if (prev <= 1) {
+          clearInterval(intervalId);
+          if (!autoHighlightDone) autoHighlightWinner();
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(intervalId);
+  }, [poll?.status, poll?.duration_minutes, durationSecondsLeft, autoHighlightDone]);
+
   // Listen for highlight_winner + reset events
   useEffect(() => {
     if (!poll?.id) return;
@@ -154,6 +252,13 @@ export default function ActivePollWall({ poll, host }) {
         { event: 'poll_reset' },
         () => {
           setHighlightOptionId(null);
+          setHighlightPhase(0);
+          setAutoHighlightDone(false);
+          if (poll?.duration_minutes) {
+            setDurationSecondsLeft(poll.duration_minutes * 60);
+          } else {
+            setDurationSecondsLeft(null);
+          }
         }
       )
       .subscribe();
@@ -161,7 +266,7 @@ export default function ActivePollWall({ poll, host }) {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [poll?.id]);
+  }, [poll?.id, poll?.duration_minutes]);
 
   /* LOGO URL */
   const displayLogo =
@@ -247,6 +352,30 @@ export default function ActivePollWall({ poll, host }) {
           }}
         />
       </div>
+
+      {/* ------------------- DURATION TIMER ---------------------- */}
+      {poll?.duration_minutes && durationSecondsLeft !== null && (
+        <div
+          style={{
+            position: 'absolute',
+            top: `${TIMER_TOP_VH}vh`,
+            left: `${TIMER_LEFT_VW}vw`,
+            width: `${TIMER_WIDTH_VW}vw`,
+            textAlign: 'center',
+            color: '#fff',
+            fontWeight: 900,
+            fontSize: `${TIMER_SIZE_VW}vw`,
+            textShadow: `
+              0 0 10px rgba(0,0,0,0.9),
+              0 0 22px rgba(0,0,0,0.85),
+              0 0 30px rgba(0,0,0,0.8)
+            `,
+            zIndex: 35,
+          }}
+        >
+          {formatDuration(durationSecondsLeft)}
+        </div>
+      )}
 
       {/* ------------------ FROSTED GLASS ------------------------ */}
       <div
@@ -397,7 +526,7 @@ export default function ActivePollWall({ poll, host }) {
                         width: '100%',
                         height: overlayHeight,
                         background: overlayBg,
-                        backdropFilter: isWinner ? 'none' : 'blur(4px)',
+                        backdropFilter: isWinner ? 'none' : 'blur(2px)',
                         transition:
                           'height 0.6s ease, background 0.4s ease, backdrop-filter 0.4s ease',
                         zIndex: 2,

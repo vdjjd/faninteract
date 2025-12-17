@@ -63,6 +63,7 @@ function buildGradient(start: string, end: string, pos: number, brightness: numb
 /* ----------------------------- */
 const DURATION_LABELS = [
   'none',
+  '2 min',
   '5 min',
   '10 min',
   '15 min',
@@ -82,6 +83,7 @@ function labelToMinutes(label: DurationLabel | string): number | null {
 function minutesToLabel(mins?: number | null): DurationLabel {
   if (mins == null) return 'none';
   const map: Record<number, DurationLabel> = {
+    2: '2 min',
     5: '5 min',
     10: '10 min',
     15: '15 min',
@@ -90,7 +92,7 @@ function minutesToLabel(mins?: number | null): DurationLabel {
     45: '45 min',
     60: '60 min',
   };
-  return map[mins] ?? '5 min';
+  return map[mins] ?? 'none';
 }
 
 /* ----------------------------- */
