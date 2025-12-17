@@ -43,7 +43,7 @@ export default function VotePage() {
   }, [pollId]);
 
   /* ---------------------------------------------------------
-     Load poll + options + HOST LOGO
+     Load poll + options + HOST LOGO (initial)
   --------------------------------------------------------- */
   useEffect(() => {
     if (!pollId) return;
@@ -83,12 +83,15 @@ export default function VotePage() {
 
   /* ---------------------------------------------------------
      Realtime poll updates
+     - DB row UPDATE (postgres_changes)
+     - Broadcasts: poll_status + poll_update
   --------------------------------------------------------- */
   useEffect(() => {
     if (!pollId) return;
 
     const channel = supabase
       .channel(`poll-${pollId}`)
+      // ✅ 1) DB row updates on "polls" table
       .on(
         "postgres_changes",
         {
@@ -99,6 +102,48 @@ export default function VotePage() {
         },
         (payload) => {
           setPoll(payload.new);
+        }
+      )
+      // ✅ 2) Broadcast-based status updates from dashboard
+      .on(
+        "broadcast",
+        { event: "poll_status" },
+        (payload: any) => {
+          const data = payload?.payload;
+          if (!data) return;
+
+          setPoll((prev: any) =>
+            prev
+              ? {
+                  ...prev,
+                  status: data.status ?? prev.status,
+                  countdown_active:
+                    data.countdown_active ?? prev.countdown_active,
+                  countdown: data.countdown ?? prev.countdown,
+                }
+              : prev
+          );
+        }
+      )
+      .on(
+        "broadcast",
+        { event: "poll_update" },
+        (payload: any) => {
+          const data = payload?.payload;
+          if (!data) return;
+
+          // In case some other place broadcasts status via `poll_update`
+          setPoll((prev: any) =>
+            prev
+              ? {
+                  ...prev,
+                  status: data.status ?? prev.status,
+                  countdown_active:
+                    data.countdown_active ?? prev.countdown_active,
+                  countdown: data.countdown ?? prev.countdown,
+                }
+              : prev
+          );
         }
       )
       .subscribe();
