@@ -99,7 +99,7 @@ export default function ActivePollWall({ poll, host }) {
 
     const { data } = await supabase
       .from('poll_options')
-      .select('*') // includes bar_color, gradient_start, gradient_end, use_gradient, image_url
+      .select('*') // id, bar_color, gradient_start, gradient_end, use_gradient, image_url
       .eq('poll_id', poll.id)
       .order('id', { ascending: true });
 
@@ -119,6 +119,49 @@ export default function ActivePollWall({ poll, host }) {
   const displayMode: 'standard' | 'picture' =
     (poll?.display_mode as 'standard' | 'picture') || 'standard';
   const isPictureMode = displayMode === 'picture';
+
+  /* ------------------------------------------------------------- */
+  /* 🥇 WINNER HIGHLIGHT STATE & REALTIME LISTENER                */
+  /* ------------------------------------------------------------- */
+  const [highlightOptionId, setHighlightOptionId] = useState<string | null>(null);
+  const [highlightPhase, setHighlightPhase] = useState(0);
+
+  // Flash loop while winner is highlighted
+  useEffect(() => {
+    if (!highlightOptionId) return;
+    const id = setInterval(() => {
+      setHighlightPhase((prev) => (prev + 1) % 2);
+    }, 550);
+    return () => clearInterval(id);
+  }, [highlightOptionId]);
+
+  // Listen for highlight_winner + reset events
+  useEffect(() => {
+    if (!poll?.id) return;
+
+    const channel = supabase
+      .channel(`poll-${poll.id}`)
+      .on(
+        'broadcast',
+        { event: 'highlight_winner' },
+        (payload: any) => {
+          const optionId = payload?.payload?.option_id ?? null;
+          setHighlightOptionId(optionId || null);
+        }
+      )
+      .on(
+        'broadcast',
+        { event: 'poll_reset' },
+        () => {
+          setHighlightOptionId(null);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [poll?.id]);
 
   /* LOGO URL */
   const displayLogo =
@@ -260,7 +303,12 @@ export default function ActivePollWall({ poll, host }) {
                 }
               }
 
-              // 🎨 per-option colors used in BOTH modes
+              const isWinner = !!highlightOptionId && opt.id === highlightOptionId;
+              const isDimmed =
+                !!highlightOptionId && opt.id !== highlightOptionId;
+              const phaseUp = isWinner && highlightPhase === 1;
+
+              // 🎨 Use per-option gradient for both modes
               const topColor =
                 opt.gradient_start ||
                 opt.bar_color ||
@@ -270,9 +318,35 @@ export default function ActivePollWall({ poll, host }) {
                 opt.bar_color ||
                 '#1e88e5';
 
+              /* ====================== PICTURE MODE ====================== */
               if (isPictureMode) {
-                // ---------------- PICTURE MODE CARD -----------------
                 const imageUrl = opt.image_url as string | null;
+
+                const cardTransform = isWinner
+                  ? phaseUp
+                    ? 'translateY(-1.8vh) scale(1.06)'
+                    : 'translateY(-1.2vh) scale(1.03)'
+                  : 'translateY(0) scale(1)';
+
+                // 🔥 Base glow for every card, using gradient
+                const baseCardShadow = `0 0 18px ${topColor}66, 0 0 32px ${bottomColor}44`;
+
+                // Stronger glow on winner
+                const cardShadow = isWinner
+                  ? phaseUp
+                    ? `0 0 40px ${topColor}, 0 0 80px ${bottomColor}`
+                    : `0 0 26px ${topColor}, 0 0 54px ${bottomColor}`
+                  : baseCardShadow;
+
+                // Translucent overlay rising from bottom, tinted
+                const overlayHeight = isWinner ? '0%' : `${barPct}%`;
+                const overlayBg = isWinner
+                  ? 'transparent'
+                  : isDimmed
+                  ? `linear-gradient(to top, ${bottomColor}EE, ${topColor}AA)`
+                  : `linear-gradient(to top, ${bottomColor}BB, ${topColor}88)`;
+
+                const cardFilter = isDimmed ? 'brightness(0.35)' : 'none';
 
                 return (
                   <div
@@ -288,37 +362,49 @@ export default function ActivePollWall({ poll, host }) {
                         : 'linear-gradient(to bottom, #444, #111)',
                       backgroundSize: 'cover',
                       backgroundPosition: 'center',
-                      boxShadow: `
-                        0 0 18px rgba(0,0,0,0.8),
-                        0 0 26px ${bottomColor}66
-                      `,
+                      boxShadow: cardShadow,
                       display: 'flex',
                       flexDirection: 'column',
                       justifyContent: 'flex-end',
+                      transform: cardTransform,
+                      transition:
+                        'transform 0.45s ease, box-shadow 0.45s ease, filter 0.4s ease',
+                      border: isWinner
+                        ? `3px solid ${topColor}`
+                        : '1px solid rgba(255,255,255,0.08)',
+                      filter: cardFilter,
                     }}
                   >
-                    {/* Translucent fill from bottom, tinted by gradient colors (lighter) */}
+                    {/* Dim overlay for losers */}
+                    {isDimmed && (
+                      <div
+                        style={{
+                          position: 'absolute',
+                          inset: 0,
+                          background: 'rgba(0,0,0,0.45)',
+                          pointerEvents: 'none',
+                          zIndex: 1,
+                        }}
+                      />
+                    )}
+
+                    {/* Translucent gradient fill from bottom */}
                     <div
                       style={{
                         position: 'absolute',
                         left: 0,
                         bottom: 0,
                         width: '100%',
-                        height: `${barPct}%`,
-                        background: `
-                          linear-gradient(
-                            to top,
-                            ${bottomColor}b3,
-                            ${topColor}33
-                          )
-                        `,
-                        backdropFilter: 'blur(2px)',
-                        WebkitBackdropFilter: 'blur(2px)',
-                        transition: 'height 0.6s ease',
+                        height: overlayHeight,
+                        background: overlayBg,
+                        backdropFilter: isWinner ? 'none' : 'blur(4px)',
+                        transition:
+                          'height 0.6s ease, background 0.4s ease, backdrop-filter 0.4s ease',
+                        zIndex: 2,
                       }}
                     />
 
-                    {/* Header row ~10px from top */}
+                    {/* Header row */}
                     <div
                       style={{
                         position: 'absolute',
@@ -331,8 +417,10 @@ export default function ActivePollWall({ poll, host }) {
                         color: '#fff',
                         fontWeight: 800,
                         fontSize: '1.1vw',
-                        textShadow: '0 0 8px rgba(0,0,0,0.9)',
-                        zIndex: 2,
+                        textShadow: isWinner
+                          ? `0 0 14px ${topColor}`
+                          : '0 0 8px rgba(0,0,0,0.9)',
+                        zIndex: 3,
                       }}
                     >
                       <span
@@ -345,16 +433,64 @@ export default function ActivePollWall({ poll, host }) {
                       >
                         {opt.option_text}
                       </span>
-                      <span>{votes}</span>
+                      <span
+                        style={{
+                          padding: isWinner ? '0.1em 0.6em' : '0.1em 0.4em',
+                          borderRadius: '999px',
+                          background: isWinner ? topColor : 'rgba(0,0,0,0.65)',
+                          color: isWinner ? '#000' : '#fff',
+                          boxShadow: isWinner
+                            ? phaseUp
+                              ? `0 0 24px ${bottomColor}`
+                              : `0 0 14px ${topColor}`
+                            : 'none',
+                          transition:
+                            'background 0.3s ease, box-shadow 0.3s ease, color 0.3s ease',
+                        }}
+                      >
+                        {votes}
+                      </span>
                     </div>
                   </div>
                 );
               }
 
-              // ---------------- STANDARD MODE BAR -------------------
-              const barBackground = opt.use_gradient
+              /* ====================== STANDARD MODE ====================== */
+              const baseBarBackground = opt.use_gradient
                 ? `linear-gradient(to bottom, ${topColor}, ${bottomColor})`
                 : topColor;
+
+              const barBackground = isDimmed
+                ? 'linear-gradient(to bottom, rgba(10,10,10,0.95), rgba(0,0,0,1))'
+                : baseBarBackground;
+
+              // 🔥 Base glow for EVERY bar, using its own gradient
+              const baseBarShadow = `0 0 16px ${topColor}66, 0 0 28px ${bottomColor}44`;
+              const dimBarShadow = '0 0 8px rgba(0,0,0,0.9)';
+
+              // Stronger pulsing glow for the winner
+              const winnerBarShadow = phaseUp
+                ? `0 0 28px ${topColor}, 0 0 60px ${bottomColor}`
+                : `0 0 20px ${topColor}, 0 0 40px ${bottomColor}`;
+
+              const barShadow = isWinner
+                ? winnerBarShadow
+                : isDimmed
+                ? dimBarShadow
+                : baseBarShadow;
+
+              const barTransform = isWinner
+                ? phaseUp
+                  ? 'translateY(-1.6vh) scale(1.06)'
+                  : 'translateY(-1.0vh) scale(1.03)'
+                : 'translateY(0) scale(1)';
+
+              const labelGlow = isWinner
+                ? `0 0 18px ${bottomColor}`
+                : '0 0 8px black';
+
+              const labelColor = isDimmed ? 'rgba(200,200,200,0.4)' : 'white';
+              const voteColor = isDimmed ? 'rgba(200,200,200,0.4)' : 'white';
 
               return (
                 <div
@@ -370,11 +506,13 @@ export default function ActivePollWall({ poll, host }) {
                   {/* vote count */}
                   <div
                     style={{
-                      color: 'white',
+                      color: voteColor,
                       fontWeight: '900',
                       fontSize: '1.4vw',
                       marginBottom: '0.4vh',
-                      textShadow: '0 0 10px black',
+                      textShadow: isWinner
+                        ? `0 0 16px ${topColor}`
+                        : '0 0 10px black',
                     }}
                   >
                     {votes}
@@ -387,9 +525,13 @@ export default function ActivePollWall({ poll, host }) {
                       height: `${barPct}%`,
                       background: barBackground,
                       borderRadius: '10px',
-                      boxShadow: '0 0 12px rgba(255,255,255,0.9)',
+                      boxShadow: barShadow,
+                      transform: barTransform,
+                      border: isWinner
+                        ? `3px solid ${topColor}`
+                        : '1px solid rgba(255,255,255,0.12)',
                       transition:
-                        'height 0.6s ease, background 0.3s ease',
+                        'height 0.6s ease, background 0.3s ease, transform 0.45s ease, box-shadow 0.45s ease, border 0.3s ease',
                     }}
                   />
 
@@ -397,11 +539,11 @@ export default function ActivePollWall({ poll, host }) {
                   <div
                     style={{
                       marginTop: '0.5vh',
-                      color: 'white',
-                      fontWeight: '700',
+                      color: labelColor,
+                      fontWeight: isWinner ? 900 : 700,
                       fontSize: '1.2vw',
                       textAlign: 'center',
-                      textShadow: '0 0 8px black',
+                      textShadow: labelGlow,
                     }}
                   >
                     {opt.option_text}

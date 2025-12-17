@@ -607,8 +607,15 @@ export default function OptionsModalPoll({
               {/* Picture mode: per-option image upload */}
               {displayMode === 'picture' && (
                 <div className="mt-1">
-                  <label className={cn('block text-xs mb-1')}>
-                    Option Image (background)
+                  <label
+                    className={cn(
+                      'flex items-center justify-between mb-1 text-[11px]'
+                    )}
+                  >
+                    <span>Option Image (Background)</span>
+                    <span className={cn('ml-2', 'text-[10px]', 'text-red-400', 'font-semibold')}>
+                      Best Resolution 900 x 1400 w/ 96 PPI
+                    </span>
                   </label>
                   <div className={cn('flex', 'items-center', 'gap-2')}>
                     <input

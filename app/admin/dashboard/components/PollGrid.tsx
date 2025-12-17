@@ -4,12 +4,9 @@ import { useEffect, useState, useRef } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 import { cn } from '@/lib/utils';
 
-/* ------------------------------------------------------------
-   PATCHED PROPS: now includes `polls`
------------------------------------------------------------- */
 interface PollGridProps {
   host: any;
-  polls: any[];                // ✅ Added
+  polls: any[];
   refreshPolls: () => Promise<void>;
   onOpenOptions: (poll: any) => void;
 }
@@ -18,12 +15,17 @@ export default function PollGrid({
   host,
   polls,
   refreshPolls,
-  onOpenOptions
+  onOpenOptions,
 }: PollGridProps) {
-
   const [localPolls, setLocalPolls] = useState<any[]>(polls || []);
   const [countdowns, setCountdowns] = useState<{ [key: string]: number }>({});
   const [voteCounts, setVoteCounts] = useState<{ [key: string]: number }>({});
+
+  // NEW: track which polls currently have highlight ON
+  const [highlightedPolls, setHighlightedPolls] = useState<{
+    [pollId: string]: boolean;
+  }>({});
+
   const timers = useRef<{ [key: string]: NodeJS.Timeout }>({});
   const refreshInterval = useRef<NodeJS.Timeout | null>(null);
 
@@ -61,7 +63,7 @@ export default function PollGrid({
       if (optsErr) console.error('❌ vote_count error:', optsErr);
 
       const counts: { [key: string]: number } = {};
-      optionRows?.forEach((o) => {
+      optionRows?.forEach((o: any) => {
         counts[o.poll_id] = (counts[o.poll_id] || 0) + (o.vote_count || 0);
       });
 
@@ -99,37 +101,43 @@ export default function PollGrid({
   }
 
   /* ------------------------------------------------------------
-     Start Countdown
+     Start / Stop Countdown
   ------------------------------------------------------------ */
   async function startCountdown(poll: any) {
     const secs = getCountdownSeconds(poll);
 
     if (secs === 0) {
-      await supabase.from('polls').update({
-        status: 'active',
-        countdown_active: false,
-        countdown: 'none'
-      }).eq('id', poll.id);
+      await supabase
+        .from('polls')
+        .update({
+          status: 'active',
+          countdown_active: false,
+          countdown: 'none',
+        })
+        .eq('id', poll.id);
 
       await supabase.channel(`poll-${poll.id}`).send({
         type: 'broadcast',
         event: 'poll_status',
-        payload: { id: poll.id, status: 'active', countdown_active: false }
+        payload: { id: poll.id, status: 'active', countdown_active: false },
       });
 
       await refreshPolls();
       return;
     }
 
-    await supabase.from('polls').update({
-      status: 'inactive',
-      countdown_active: true
-    }).eq('id', poll.id);
+    await supabase
+      .from('polls')
+      .update({
+        status: 'inactive',
+        countdown_active: true,
+      })
+      .eq('id', poll.id);
 
     await supabase.channel(`poll-${poll.id}`).send({
       type: 'broadcast',
       event: 'poll_status',
-      payload: { id: poll.id, status: 'inactive', countdown_active: true }
+      payload: { id: poll.id, status: 'inactive', countdown_active: true },
     });
 
     setCountdowns((prev) => ({ ...prev, [poll.id]: secs }));
@@ -141,16 +149,23 @@ export default function PollGrid({
         if (current <= 1) {
           clearInterval(timers.current[poll.id]);
 
-          supabase.from('polls').update({
-            status: 'active',
-            countdown_active: false,
-            countdown: 'none'
-          }).eq('id', poll.id);
+          supabase
+            .from('polls')
+            .update({
+              status: 'active',
+              countdown_active: false,
+              countdown: 'none',
+            })
+            .eq('id', poll.id);
 
           supabase.channel(`poll-${poll.id}`).send({
             type: 'broadcast',
             event: 'poll_status',
-            payload: { id: poll.id, status: 'active', countdown_active: false }
+            payload: {
+              id: poll.id,
+              status: 'active',
+              countdown_active: false,
+            },
           });
 
           return { ...prev, [poll.id]: 0 };
@@ -171,7 +186,8 @@ export default function PollGrid({
   }
 
   async function handleStatus(id: string, status: string) {
-    await supabase.from('polls')
+    await supabase
+      .from('polls')
       .update({
         status,
         ...(status !== 'active' && { countdown_active: false }),
@@ -181,12 +197,15 @@ export default function PollGrid({
     await supabase.channel(`poll-${id}`).send({
       type: 'broadcast',
       event: 'poll_status',
-      payload: { id, status }
+      payload: { id, status },
     });
 
     await refreshPolls();
   }
 
+  /* ------------------------------------------------------------
+     Delete Poll
+  ------------------------------------------------------------ */
   async function handleDelete(id: string) {
     setLocalPolls((prev) => prev.filter((p) => p.id !== id));
     await supabase.from('poll_options').delete().eq('poll_id', id);
@@ -194,10 +213,120 @@ export default function PollGrid({
     await refreshPolls();
   }
 
+  /* ------------------------------------------------------------
+     🚀 Launch Active Wall
+  ------------------------------------------------------------ */
   function handleLaunch(pollId: string) {
     const url = `${window.location.origin}/polls/${pollId}`;
-    const popup = window.open(url, '_blank', 'width=1280,height=800,resizable=yes');
+    const popup = window.open(
+      url,
+      '_blank',
+      'width=1280,height=800,resizable=yes'
+    );
     popup?.focus();
+  }
+
+  /* ------------------------------------------------------------
+     🥇 HIGHLIGHT WINNER (TOGGLE)
+     - If OFF → compute winner and highlight
+     - If ON  → send option_id: null to stop highlight
+  ------------------------------------------------------------ */
+  async function handleHighlightWinner(pollId: string) {
+    try {
+      const currentlyOn = !!highlightedPolls[pollId];
+
+      // 🔁 If it's already highlighted, clicking again turns it OFF
+      if (currentlyOn) {
+        await supabase.channel(`poll-${pollId}`).send({
+          type: 'broadcast',
+          event: 'highlight_winner',
+          payload: { option_id: null },
+        });
+
+        setHighlightedPolls((prev) => ({ ...prev, [pollId]: false }));
+        return;
+      }
+
+      // Otherwise, find winner and turn highlight ON
+      const { data: options, error } = await supabase
+        .from('poll_options')
+        .select('id,vote_count')
+        .eq('poll_id', pollId);
+
+      if (error) {
+        console.error('❌ highlightWinner load error:', error);
+        return;
+      }
+
+      if (!options || options.length === 0) {
+        alert('No options found for this poll.');
+        return;
+      }
+
+      let winner = options[0];
+      for (const opt of options) {
+        if ((opt.vote_count || 0) > (winner.vote_count || 0)) {
+          winner = opt;
+        }
+      }
+
+      if (!winner?.id) {
+        alert('Could not determine a winning option.');
+        return;
+      }
+
+      await supabase.channel(`poll-${pollId}`).send({
+        type: 'broadcast',
+        event: 'highlight_winner',
+        payload: {
+          option_id: winner.id,
+        },
+      });
+
+      setHighlightedPolls((prev) => ({ ...prev, [pollId]: true }));
+    } catch (err) {
+      console.error('❌ handleHighlightWinner error:', err);
+    }
+  }
+
+  /* ------------------------------------------------------------
+     🔄 RESET POLL
+  ------------------------------------------------------------ */
+  async function handleResetPoll(pollId: string) {
+    try {
+      // Zero out votes
+      const { error: resetErr } = await supabase
+        .from('poll_options')
+        .update({ vote_count: 0 })
+        .eq('poll_id', pollId);
+
+      if (resetErr) {
+        console.error('❌ reset poll_options error:', resetErr);
+        return;
+      }
+
+      // Set poll back to inactive, kill countdown
+      await supabase
+        .from('polls')
+        .update({
+          status: 'inactive',
+          countdown_active: false,
+        })
+        .eq('id', pollId);
+
+      // Clear highlight on the wall
+      await supabase.channel(`poll-${pollId}`).send({
+        type: 'broadcast',
+        event: 'poll_reset',
+        payload: { id: pollId },
+      });
+
+      setHighlightedPolls((prev) => ({ ...prev, [pollId]: false }));
+
+      await refreshPolls();
+    } catch (err) {
+      console.error('❌ handleResetPoll error:', err);
+    }
   }
 
   /* ------------------------------------------------------------
@@ -207,7 +336,11 @@ export default function PollGrid({
     <div className={cn('mt-10 w-full max-w-6xl')}>
       <h2 className={cn('text-xl font-semibold mb-3')}>📊 Live Polls</h2>
 
-      <div className={cn('grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5')}>
+      <div
+        className={cn(
+          'grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5'
+        )}
+      >
         {localPolls.length === 0 && (
           <p className={cn('text-gray-400 italic col-span-full')}>
             No polls created yet.
@@ -227,9 +360,17 @@ export default function PollGrid({
                 }
               : {
                   background:
-                    poll.background_value || 'linear-gradient(135deg,#0d47a1,#1976d2)',
+                    poll.background_value ||
+                    'linear-gradient(135deg,#0d47a1,#1976d2)',
                   filter: `brightness(${brightness}%)`,
                 };
+
+          const totalVotes = voteCounts[poll.id] ?? 0;
+          const countdownSeconds = countdowns[poll.id];
+          const hasCountdown =
+            poll.countdown_active || (countdownSeconds && countdownSeconds > 0);
+
+          const highlightOn = !!highlightedPolls[poll.id];
 
           return (
             <div
@@ -244,8 +385,14 @@ export default function PollGrid({
               )}
               style={bgStyle}
             >
+              {/* HEADER */}
               <div className="mb-3">
-                <h3 className={cn('font-bold text-lg mb-1 drop-shadow-[0_1px_2px_rgba(0,0,0,0.5)]')}>
+                <h3
+                  className={cn(
+                    'font-bold text-lg mb-1',
+                    'drop-shadow-[0_1px_2px_rgba(0,0,0,0.5)]'
+                  )}
+                >
                   {poll.host_title || poll.question || 'Untitled Poll'}
                 </h3>
 
@@ -257,7 +404,7 @@ export default function PollGrid({
                         ? 'text-lime-400'
                         : poll.status === 'closed'
                         ? 'text-rose-400'
-                        : 'text-orange-400'
+                        : 'text-orange-300'
                     }
                   >
                     {poll.status?.toUpperCase?.() || 'UNKNOWN'}
@@ -265,53 +412,109 @@ export default function PollGrid({
                 </p>
 
                 <p className={cn('text-sm opacity-80')}>
-                  <strong>Votes:</strong> {voteCounts[poll.id] ?? 0}
+                  <strong>Votes:</strong> {totalVotes}
                 </p>
+
+                {hasCountdown && (
+                  <p className={cn('text-xs mt-1 opacity-80')}>
+                    ⏱ Countdown:{' '}
+                    {poll.countdown_active
+                      ? `${countdownSeconds ?? getCountdownSeconds(poll)}s`
+                      : poll.countdown}
+                  </p>
+                )}
               </div>
 
-              <div className={cn('flex justify-center gap-2 mb-2')}>
+              {/* MAIN CONTROLS */}
+              <div
+                className={cn(
+                  'flex flex-wrap justify-center gap-2 mb-2 pt-2 border-t border-white/20'
+                )}
+              >
                 <button
                   onClick={() => startCountdown(poll)}
-                  className={cn('bg-green-600 hover:bg-green-700 px-2 py-1 rounded text-sm font-semibold')}
+                  className={cn(
+                    'bg-green-600 hover:bg-green-700 px-2 py-1 rounded text-sm font-semibold'
+                  )}
                 >
                   ▶️ Start
                 </button>
 
                 <button
                   onClick={() => stopCountdown(poll)}
-                  className={cn('bg-yellow-600 hover:bg-yellow-700 px-2 py-1 rounded text-sm font-semibold')}
+                  className={cn(
+                    'bg-yellow-600 hover:bg-yellow-700 px-2 py-1 rounded text-sm font-semibold'
+                  )}
                 >
                   ⏹ Stop
                 </button>
 
                 <button
                   onClick={() => handleStatus(poll.id, 'closed')}
-                  className={cn('bg-gray-600 hover:bg-gray-700 px-2 py-1 rounded text-sm font-semibold')}
+                  className={cn(
+                    'bg-gray-700 hover:bg-gray-800 px-2 py-1 rounded text-sm font-semibold'
+                  )}
                 >
                   🔒 Close
                 </button>
               </div>
 
-              <div className={cn('flex justify-center gap-2')}>
+              {/* WALL / OPTIONS ROW */}
+              <div className={cn('flex flex-wrap justify-center gap-2 mb-2')}>
                 <button
                   onClick={() => handleLaunch(poll.id)}
-                  className={cn('bg-blue-600 hover:bg-blue-700 px-2 py-1 rounded text-sm font-semibold')}
+                  className={cn(
+                    'bg-blue-600 hover:bg-blue-700 px-2 py-1 rounded text-sm font-semibold'
+                  )}
                 >
-                  🚀 Launch
+                  🚀 Launch Wall
                 </button>
 
                 <button
                   onClick={() => onOpenOptions(poll)}
-                  className={cn('bg-indigo-500 hover:bg-indigo-600 px-2 py-1 rounded text-sm font-semibold')}
+                  className={cn(
+                    'bg-indigo-500 hover:bg-indigo-600 px-2 py-1 rounded text-sm font-semibold'
+                  )}
                 >
                   ⚙ Options
                 </button>
               </div>
 
-              <div className={cn('flex justify-center mt-2')}>
+              {/* WINNER / RESET ROW */}
+              <div
+                className={cn(
+                  'flex flex-wrap justify-center gap-2 mb-2 border-t border-white/15 pt-2'
+                )}
+              >
+                <button
+                  onClick={() => handleHighlightWinner(poll.id)}
+                  className={cn(
+                    'px-2 py-1 rounded text-sm font-semibold',
+                    highlightOn
+                      ? 'bg-amber-700 hover:bg-amber-800'
+                      : 'bg-amber-500 hover:bg-amber-600'
+                  )}
+                >
+                  {highlightOn ? '🛑 Stop Highlight' : '🥇 Highlight Winner'}
+                </button>
+
+                <button
+                  onClick={() => handleResetPoll(poll.id)}
+                  className={cn(
+                    'bg-slate-800 hover:bg-slate-900 px-2 py-1 rounded text-sm font-semibold'
+                  )}
+                >
+                  🔄 Reset Poll
+                </button>
+              </div>
+
+              {/* DELETE */}
+              <div className={cn('flex justify-center mt-1')}>
                 <button
                   onClick={() => handleDelete(poll.id)}
-                  className={cn('bg-red-700 hover:bg-red-800 px-3 py-1 rounded text-sm font-semibold')}
+                  className={cn(
+                    'bg-red-700 hover:bg-red-800 px-3 py-1 rounded text-sm font-semibold'
+                  )}
                 >
                   ❌ Delete
                 </button>

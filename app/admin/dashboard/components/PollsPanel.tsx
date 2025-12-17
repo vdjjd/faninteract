@@ -96,6 +96,86 @@ export default function PollGrid({ host, refreshPolls, onOpenOptions }: PollGrid
     popup?.focus();
   }
 
+  // 🏆 Highlight winner: find highest vote_count & broadcast to wall
+  async function handleHighlightWinner(pollId: string) {
+    try {
+      const { data: opts, error } = await supabase
+        .from('poll_options')
+        .select('id, vote_count')
+        .eq('poll_id', pollId);
+
+      if (error) {
+        console.error('❌ Error loading poll options for highlight:', error);
+        alert('Error loading poll options.');
+        return;
+      }
+
+      if (!opts || opts.length === 0) {
+        alert('No options found for this poll.');
+        return;
+      }
+
+      // Find the option with the highest vote_count
+      let winner = opts[0];
+      for (const o of opts) {
+        const v = o.vote_count || 0;
+        const w = winner.vote_count || 0;
+        if (v > w) {
+          winner = o;
+        }
+      }
+
+      if (!winner?.id) {
+        alert('Could not determine a winner.');
+        return;
+      }
+
+      const channel = supabase.channel(`poll-${pollId}`);
+
+      await channel.send({
+        type: 'broadcast',
+        event: 'highlight_winner',
+        payload: {
+          option_id: winner.id,
+        },
+      });
+
+      // Optional: immediately remove channel after sending
+      supabase.removeChannel(channel);
+    } catch (err) {
+      console.error('❌ Highlight winner exception:', err);
+      alert('Error highlighting winner.');
+    }
+  }
+
+  // 🔄 Reset votes: set vote_count = 0 for all options in this poll
+  async function handleResetPoll(pollId: string) {
+    try {
+      const confirmReset = window.confirm(
+        'Reset all votes for this poll? This keeps all options and images, but sets all vote counts back to 0.'
+      );
+      if (!confirmReset) return;
+
+      const { error } = await supabase
+        .from('poll_options')
+        .update({ vote_count: 0 })
+        .eq('poll_id', pollId);
+
+      if (error) {
+        console.error('❌ Error resetting poll votes:', error);
+        alert('Error resetting poll votes.');
+        return;
+      }
+
+      // Active wall polls every 1.5s, so it will naturally pick up the zeros.
+      // Still nice to refresh dashboards.
+      delayedRefresh();
+    } catch (err) {
+      console.error('❌ Reset poll exception:', err);
+      alert('Error resetting poll votes.');
+    }
+  }
+
   /* ------------------------------------------------------------
      ✅ Render
   ------------------------------------------------------------ */
@@ -151,24 +231,91 @@ export default function PollGrid({ host, refreshPolls, onOpenOptions }: PollGrid
             </div>
 
             {/* Controls */}
-            <div className={cn('flex', 'flex-wrap', 'justify-center', 'gap-2', 'mt-auto', 'pt-2', 'border-t', 'border-white/10')}>
+            <div
+              className={cn(
+                'flex',
+                'flex-wrap',
+                'justify-center',
+                'gap-2',
+                'mt-auto',
+                'pt-2',
+                'border-t',
+                'border-white/10'
+              )}
+            >
               <button
                 onClick={() => handleLaunch(poll.id)}
-                className={cn('bg-blue-600', 'hover:bg-blue-700', 'px-2', 'py-1', 'rounded', 'text-sm', 'font-semibold')}
+                className={cn(
+                  'bg-blue-600',
+                  'hover:bg-blue-700',
+                  'px-2',
+                  'py-1',
+                  'rounded',
+                  'text-sm',
+                  'font-semibold'
+                )}
               >
                 🚀 Launch
               </button>
 
               <button
                 onClick={() => onOpenOptions(poll)}
-                className={cn('bg-indigo-500', 'hover:bg-indigo-600', 'px-2', 'py-1', 'rounded', 'text-sm', 'font-semibold')}
+                className={cn(
+                  'bg-indigo-500',
+                  'hover:bg-indigo-600',
+                  'px-2',
+                  'py-1',
+                  'rounded',
+                  'text-sm',
+                  'font-semibold'
+                )}
               >
                 ⚙ Options
               </button>
 
               <button
+                onClick={() => handleHighlightWinner(poll.id)}
+                className={cn(
+                  'bg-yellow-400',
+                  'hover:bg-yellow-300',
+                  'text-black',
+                  'px-2',
+                  'py-1',
+                  'rounded',
+                  'text-sm',
+                  'font-semibold',
+                  'shadow'
+                )}
+              >
+                🏆 Highlight Winner
+              </button>
+
+              <button
+                onClick={() => handleResetPoll(poll.id)}
+                className={cn(
+                  'bg-slate-600',
+                  'hover:bg-slate-500',
+                  'px-2',
+                  'py-1',
+                  'rounded',
+                  'text-sm',
+                  'font-semibold'
+                )}
+              >
+                🔄 Reset Votes
+              </button>
+
+              <button
                 onClick={() => handleDelete(poll.id)}
-                className={cn('bg-red-700', 'hover:bg-red-800', 'px-2', 'py-1', 'rounded', 'text-sm', 'font-semibold')}
+                className={cn(
+                  'bg-red-700',
+                  'hover:bg-red-800',
+                  'px-2',
+                  'py-1',
+                  'rounded',
+                  'text-sm',
+                  'font-semibold'
+                )}
               >
                 ❌ Delete
               </button>
