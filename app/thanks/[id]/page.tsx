@@ -79,7 +79,7 @@ export default function ThankYouPage() {
   }, []);
 
   /* ---------------------------------------------------------
-     Load host + background
+     Load host + background (PATCHED)
   --------------------------------------------------------- */
   useEffect(() => {
     if (!id) return;
@@ -99,13 +99,30 @@ export default function ThankYouPage() {
           ? "bb_games"
           : "fan_walls";
 
+      // ✅ PATCH: basketball does NOT have background_value
+      const select =
+        type === "basketball"
+          ? `
+              id,
+              host:host_id (
+                id,
+                branding_logo_url,
+                logo_url
+              )
+            `
+          : `
+              id,
+              background_value,
+              host:host_id (
+                id,
+                branding_logo_url,
+                logo_url
+              )
+            `;
+
       const { data } = await supabase
         .from(table)
-        .select(
-          `id,
-           background_value,
-           host:host_id ( id, branding_logo_url, logo_url )`
-        )
+        .select(select)
         .eq("id", id as string)
         .maybeSingle();
 
@@ -138,20 +155,21 @@ export default function ThankYouPage() {
     visitInfo?.loyaltyDisabled ? null : visitInfo?.badge ?? null;
 
   /* ---------------------------------------------------------
-     UI helpers
+     UI helpers (PATCHED)
   --------------------------------------------------------- */
   const bg =
-    data?.background_value?.includes("http")
+    type === "basketball"
+      ? "linear-gradient(135deg,#0a2540,#1b2b44,#000000)"
+      : data?.background_value?.includes("http")
       ? `url(${data.background_value})`
       : data?.background_value ||
         "linear-gradient(135deg,#0a2540,#1b2b44,#000000)";
 
+  // ✅ PATCH: safer logo fallback
   const logo =
-    data?.host?.branding_logo_url?.trim()
-      ? data.host.branding_logo_url
-      : data?.host?.logo_url?.trim()
-      ? data.host.logo_url
-      : "/faninteractlogo.png";
+    data?.host?.branding_logo_url?.trim() ||
+    data?.host?.logo_url?.trim() ||
+    "/faninteractlogo.png";
 
   const headline = visitInfo?.isReturning
     ? `Welcome back, ${profile?.first_name || "friend"}!`
@@ -239,7 +257,6 @@ export default function ThankYouPage() {
           {message}
         </p>
 
-        {/* BADGE (ONLY WHEN ENABLED) */}
         {badge && (
           <div
             style={{
