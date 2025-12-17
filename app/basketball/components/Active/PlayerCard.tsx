@@ -1,14 +1,34 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 
 /* ============================================================
-   REAL PLAYER CARD — MANUAL TUNING (SECOND PART ADDED)
+   SHOT PRESETS (PHASE 1 — PROCEDURAL)
 ============================================================ */
 
-/* =======================
-   🔧 FIRST-PHASE (ARC) CONTROLS
-======================= */
+type ShotPreset = {
+  xOffset: number;       // horizontal px offset at rim
+  arcMultiplier: number; // arc height modifier
+  net: boolean;          // net animation
+};
+
+const SHOT_PRESETS: Record<string, ShotPreset> = {
+  close_hit:        { xOffset: 0,   arcMultiplier: 1.0, net: true },
+
+  close_miss_left:  { xOffset: -22, arcMultiplier: 0.95, net: false },
+  close_miss_right: { xOffset: 22,  arcMultiplier: 0.95, net: false },
+  close_miss_long:  { xOffset: 0,   arcMultiplier: 1.25, net: false },
+
+  three_hit:        { xOffset: 0,   arcMultiplier: 1.35, net: true },
+
+  three_miss_left:  { xOffset: -32, arcMultiplier: 1.15, net: false },
+  three_miss_right: { xOffset: 32,  arcMultiplier: 1.15, net: false },
+  three_miss_close: { xOffset: 0,   arcMultiplier: 0.8,  net: false },
+};
+
+/* ============================================================
+   BASE CONSTANTS
+============================================================ */
 
 const RIM_X = 50;
 const RIM_Y = 28;
@@ -20,7 +40,7 @@ const BALL_RADIUS_COMPENSATION = 4;
 const BALL_START_SIZE = 80;
 const BALL_END_SCALE = 0.52;
 
-const ARC_PEAK_HEIGHT = 240;
+const BASE_ARC_PEAK = 240;
 
 // Net
 const NET_WIDTH = 45;
@@ -29,19 +49,15 @@ const NET_DROP_DISTANCE = 13;
 const NET_VERTICAL_OFFSET = 4;
 
 // Timing
-const SHOT_DURATION = 900; // arc
-const DEPTH_DURATION = 450; // second phase
+const SHOT_DURATION = 900;
+const DEPTH_DURATION = 450;
 const NET_TRIGGER_TIME = 460;
 
-/* =======================
-   🔧 SECOND-PHASE (DEPTH) CONTROLS
-======================= */
-
-// How far the ball should fall after reaching the rim
-const DEPTH_DROP_Y = 160;           // px downward movement after rim — **ADJUST ME**
-const DEPTH_FORWARD_SHIFT = -1;     // px horizontal shift (illusion of moving "into screen")
-const DEPTH_END_SCALE = .48;      // final scale — **ADJUST ME**
-const DEPTH_OPACITY_END = 100;       // final opacity — 0 = disappear
+// Depth
+const DEPTH_DROP_Y = 160;
+const DEPTH_FORWARD_SHIFT = -1;
+const DEPTH_END_SCALE = 0.48;
+const DEPTH_OPACITY_END = 100;
 
 /* ============================================================
    COMPONENT
@@ -63,22 +79,34 @@ export default function PlayerCard({
   const [shooting, setShooting] = useState(false);
   const [netActive, setNetActive] = useState(false);
 
+  const preset = useMemo<ShotPreset>(() => {
+    if (!animationName) return SHOT_PRESETS.close_hit;
+    return SHOT_PRESETS[animationName] ?? SHOT_PRESETS.close_hit;
+  }, [animationName]);
+
   useEffect(() => {
     if (!animationName) return;
 
     setShooting(true);
 
-    const netTimer = setTimeout(() => setNetActive(true), NET_TRIGGER_TIME);
+    if (preset.net) {
+      const netTimer = setTimeout(() => setNetActive(true), NET_TRIGGER_TIME);
+      return () => clearTimeout(netTimer);
+    }
+  }, [animationName, preset.net]);
+
+  useEffect(() => {
+    if (!animationName) return;
+
     const endTimer = setTimeout(() => {
       setShooting(false);
       setNetActive(false);
     }, SHOT_DURATION + DEPTH_DURATION);
 
-    return () => {
-      clearTimeout(netTimer);
-      clearTimeout(endTimer);
-    };
+    return () => clearTimeout(endTimer);
   }, [animationName]);
+
+  const arcPeak = BASE_ARC_PEAK * preset.arcMultiplier;
 
   return (
     <div
@@ -124,7 +152,7 @@ export default function PlayerCard({
         {score}
       </div>
 
-      {/* 🏀 BALL (2-phase animation) */}
+      {/* 🏀 BALL */}
       {shooting && (
         <img
           src="/ball.png"
@@ -136,12 +164,10 @@ export default function PlayerCard({
             width: BALL_START_SIZE,
             height: BALL_START_SIZE,
             transform: "translateX(-50%)",
-
             animation: `
               ballArc ${SHOT_DURATION}ms ease-out forwards,
               ballDepthFinish ${DEPTH_DURATION}ms ${SHOT_DURATION}ms ease-out forwards
             `,
-
             zIndex: 40,
             pointerEvents: "none",
           }}
@@ -174,10 +200,10 @@ export default function PlayerCard({
             bottom: ${BALL_START_BOTTOM}%;
           }
           60% {
-            transform: translate(-50%, -${ARC_PEAK_HEIGHT}%) scale(0.75);
+            transform: translate(-50%, -${arcPeak}%) scale(0.75);
           }
           100% {
-            left: ${RIM_X}%;
+            left: calc(${RIM_X}% + ${preset.xOffset}px);
             bottom: ${
               100 -
               RIM_Y +
@@ -188,7 +214,6 @@ export default function PlayerCard({
           }
         }
 
-        /* ✔ SECOND PART — FULLY MANUAL */
         @keyframes ballDepthFinish {
           0% {
             transform: translate(-50%, 0) scale(${BALL_END_SCALE});
