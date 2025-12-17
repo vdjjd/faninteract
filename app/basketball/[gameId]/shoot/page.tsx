@@ -50,11 +50,15 @@ export default function ShooterPage() {
   }, [gameId]);
 
   /* ============================================================
-     OPEN BROADCAST CHANNEL
+     OPEN BROADCAST CHANNEL  ✅ FIXED
   ============================================================ */
   useEffect(() => {
     const ch = supabase
-      .channel(`basketball-${gameId}`)
+      .channel(`basketball-${gameId}`, {
+        config: {
+          broadcast: { ack: true }, // 🔥 REQUIRED
+        },
+      })
       .subscribe((status) => {
         if (status === "SUBSCRIBED") {
           console.log("✅ Shooter channel connected");
@@ -76,11 +80,10 @@ export default function ShooterPage() {
     if (!channelRef.current) return;
     if (laneIndex === null) return;
 
-    // 🚫 Block ONLY while countdown > 0
+    // 🚫 Block while countdown running
     if (countdownValue !== null && countdownValue > 0) return;
 
     const now = Date.now();
-
     if (now - lastShotRef.current < COOLDOWN_MS) return;
     lastShotRef.current = now;
 

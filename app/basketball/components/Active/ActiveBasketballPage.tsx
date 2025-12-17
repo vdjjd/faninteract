@@ -6,8 +6,8 @@ import PlayerCard from "./PlayerCard";
 
 const LANES = 10;
 
-type ShotEvent = {
-  shotId: string;
+type LaneShot = {
+  id: string;
   animation: string;
 };
 
@@ -16,35 +16,43 @@ export default function ActiveBasketballPage({
 }: {
   gameId: string;
 }) {
-  const [animationByLane, setAnimationByLane] = useState<
-    Record<number, ShotEvent | null>
-  >({});
+  const [laneShots, setLaneShots] = useState<Record<number, LaneShot | null>>(
+    {}
+  );
 
+  /* ============================================================
+     LISTEN FOR SHOTS (EVENT-DRIVEN)
+  ============================================================ */
   useEffect(() => {
     const channel = supabase
       .channel(`basketball-${gameId}`)
-      .on(
-        "broadcast",
-        { event: "shot_fired" },
-        ({ payload }) => {
-          if (typeof payload?.lane_index !== "number") return;
+      .on("broadcast", { event: "shot_fired" }, ({ payload }) => {
+        console.log("🏀 WALL RECEIVED SHOT:", payload);
 
-          setAnimationByLane((prev) => ({
+        const lane = payload?.lane_index;
+        const animation = payload?.animation;
+
+        if (typeof lane !== "number" || !animation) return;
+
+        const shot: LaneShot = {
+          id: payload.shot_id ?? crypto.randomUUID(),
+          animation,
+        };
+
+        // 🔥 force React to see a NEW object every shot
+        setLaneShots((prev) => ({
+          ...prev,
+          [lane]: shot,
+        }));
+
+        // clear AFTER animation window
+        setTimeout(() => {
+          setLaneShots((prev) => ({
             ...prev,
-            [payload.lane_index]: {
-              shotId: payload.shot_id ?? crypto.randomUUID(),
-              animation: payload.animation ?? null,
-            },
+            [lane]: null,
           }));
-
-          setTimeout(() => {
-            setAnimationByLane((prev) => ({
-              ...prev,
-              [payload.lane_index]: null,
-            }));
-          }, 1400);
-        }
-      )
+        }, 1600);
+      })
       .subscribe();
 
     return () => {
@@ -52,26 +60,29 @@ export default function ActiveBasketballPage({
     };
   }, [gameId]);
 
+  /* ============================================================
+     RENDER
+  ============================================================ */
   return (
     <div
       style={{
         width: "100vw",
         height: "100vh",
+        background: "#050A18",
         display: "grid",
         gridTemplateColumns: "repeat(5, 1fr)",
         gridTemplateRows: "repeat(2, 1fr)",
         gap: 16,
         padding: 20,
-        background: "#050A18",
       }}
     >
       {Array.from({ length: LANES }).map((_, index) => (
         <PlayerCard
-          key={index}
+          key={`${index}-${laneShots[index]?.id ?? "idle"}`}
           index={index}
           borderColor="#444"
           score={0}
-          animationName={animationByLane[index]?.animation ?? null}
+          animationName={laneShots[index]?.animation ?? null}
         />
       ))}
     </div>
