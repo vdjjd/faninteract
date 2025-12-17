@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { useParams, useSearchParams } from "next/navigation";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useParams, useSearchParams, useRouter } from "next/navigation";
 import { getSupabaseClient } from "@/lib/supabaseClient";
 import { getOrCreateGuestDeviceId } from "@/lib/syncGuest";
 
@@ -49,8 +49,9 @@ async function recordVisit({
    Component
 --------------------------------------------------------- */
 export default function ThankYouPage() {
-  const { id } = useParams();
+  const { id: gameId } = useParams();
   const searchParams = useSearchParams();
+  const router = useRouter();
   const supabase = getSupabaseClient();
 
   const rawType = searchParams.get("type");
@@ -71,6 +72,9 @@ export default function ThankYouPage() {
   const [profile, setProfile] = useState<any>(null);
   const [visitInfo, setVisitInfo] = useState<any>(null);
 
+  const pollRef = useRef<NodeJS.Timeout | null>(null);
+  const wakeLockRef = useRef<any>(null);
+
   /* ---------------------------------------------------------
      Load guest profile
   --------------------------------------------------------- */
@@ -79,10 +83,10 @@ export default function ThankYouPage() {
   }, []);
 
   /* ---------------------------------------------------------
-     Load host + background (PATCHED)
+     Load host + background
   --------------------------------------------------------- */
   useEffect(() => {
-    if (!id) return;
+    if (!gameId) return;
 
     (async () => {
       if (type === "lead") {
@@ -99,7 +103,6 @@ export default function ThankYouPage() {
           ? "bb_games"
           : "fan_walls";
 
-      // ✅ PATCH: basketball does NOT have background_value
       const select =
         type === "basketball"
           ? `
@@ -123,15 +126,15 @@ export default function ThankYouPage() {
       const { data } = await supabase
         .from(table)
         .select(select)
-        .eq("id", id as string)
+        .eq("id", gameId as string)
         .maybeSingle();
 
       setData(data);
     })();
-  }, [id, type, supabase]);
+  }, [gameId, type, supabase]);
 
   /* ---------------------------------------------------------
-     Record visit (ALWAYS)
+     Record visit
   --------------------------------------------------------- */
   useEffect(() => {
     if (!profile || !data?.host?.id) return;
@@ -149,23 +152,89 @@ export default function ThankYouPage() {
   }, [profile, data?.host?.id]);
 
   /* ---------------------------------------------------------
-     Badge logic (STRICT)
+     Wake Lock (controller mode)
+  --------------------------------------------------------- */
+  useEffect(() => {
+    if (type !== "basketball") return;
+
+    async function lockScreen() {
+      try {
+        if ("wakeLock" in navigator) {
+          wakeLockRef.current = await (navigator as any).wakeLock.request("screen");
+        }
+      } catch {
+        // Safari / unsupported — ignore
+      }
+    }
+
+    lockScreen();
+
+    return () => {
+      if (wakeLockRef.current) {
+        wakeLockRef.current.release().catch(() => {});
+        wakeLockRef.current = null;
+      }
+    };
+  }, [type]);
+
+  /* ---------------------------------------------------------
+     Poll for approval → redirect to shooter
+  --------------------------------------------------------- */
+  useEffect(() => {
+    if (type !== "basketball" || !profile?.id || !gameId) return;
+
+    async function pollApproval() {
+      const { data: entry } = await supabase
+        .from("bb_game_entries")
+        .select("id")
+        .eq("game_id", gameId)
+        .eq("guest_profile_id", profile.id)
+        .eq("status", "approved")
+        .maybeSingle();
+
+      if (!entry) return;
+
+      const { data: player } = await supabase
+        .from("bb_game_players")
+        .select("id")
+        .eq("game_id", gameId)
+        .eq("guest_profile_id", profile.id)
+        .is("disconnected_at", null)
+        .maybeSingle();
+
+      if (!player) return;
+
+      localStorage.setItem("bb_player_id", player.id);
+
+      if (pollRef.current) clearInterval(pollRef.current);
+
+      router.replace(`/basketball/${gameId}/shoot`);
+    }
+
+    pollRef.current = setInterval(pollApproval, 2000);
+
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, [type, profile, gameId, supabase, router]);
+
+  /* ---------------------------------------------------------
+     Badge logic
   --------------------------------------------------------- */
   const badge =
     visitInfo?.loyaltyDisabled ? null : visitInfo?.badge ?? null;
 
   /* ---------------------------------------------------------
-     UI helpers (PATCHED)
+     UI helpers
   --------------------------------------------------------- */
   const bg =
     type === "basketball"
-      ? "linear-gradient(135deg,#0a2540,#1b2b44,#000000)"
+      ? `url(/newbackground.png)`
       : data?.background_value?.includes("http")
       ? `url(${data.background_value})`
       : data?.background_value ||
         "linear-gradient(135deg,#0a2540,#1b2b44,#000000)";
 
-  // ✅ PATCH: safer logo fallback
   const logo =
     data?.host?.branding_logo_url?.trim() ||
     data?.host?.logo_url?.trim() ||
@@ -178,7 +247,7 @@ export default function ThankYouPage() {
   const message = useMemo(() => {
     switch (type) {
       case "basketball":
-        return "Your basketball entry was submitted!";
+        return "You’re in! Get ready to play.";
       case "poll":
         return "Your vote has been recorded!";
       case "wheel":
@@ -210,8 +279,7 @@ export default function ThankYouPage() {
         style={{
           position: "absolute",
           inset: 0,
-          background: "rgba(0,0,0,0.55)",
-          backdropFilter: "blur(6px)",
+          background: "rgba(0,0,0,0.6)",
         }}
       />
 
@@ -223,8 +291,8 @@ export default function ThankYouPage() {
           width: "100%",
           padding: "42px 26px",
           borderRadius: 22,
-          background: "rgba(0,0,0,0.6)",
-          border: "1px solid rgba(255,255,255,0.1)",
+          background: "rgba(0,0,0,0.65)",
+          border: "1px solid rgba(255,255,255,0.15)",
           boxShadow: "0 0 35px rgba(0,0,0,0.7)",
         }}
       >
@@ -256,6 +324,40 @@ export default function ThankYouPage() {
         <p style={{ color: "#f3e8e0", marginBottom: 12 }}>
           {message}
         </p>
+
+        {/* WAITING STATE */}
+        {type === "basketball" && (
+          <>
+            <div
+              style={{
+                marginTop: 22,
+                fontSize: "1.4rem",
+                fontWeight: 900,
+                color: "#00ffd0",
+                textShadow:
+                  "0 0 10px rgba(0,255,208,0.9), 0 0 22px rgba(0,255,208,0.6)",
+                animation: "pulseGlow 1.6s ease-in-out infinite",
+              }}
+            >
+              Waiting for host approval…
+            </div>
+
+            <p
+              style={{
+                marginTop: 10,
+                fontSize: "0.9rem",
+                color: "#cbd5e1",
+                opacity: 0.85,
+              }}
+            >
+              Keep this screen open — it becomes your controller.
+              <br />
+              <span style={{ opacity: 0.7 }}>
+                (On Safari, please keep your screen awake manually.)
+              </span>
+            </p>
+          </>
+        )}
 
         {badge && (
           <div
@@ -302,8 +404,15 @@ export default function ThankYouPage() {
             </div>
           </div>
         )}
-        
       </div>
+
+      <style>{`
+        @keyframes pulseGlow {
+          0% { opacity: 0.6; }
+          50% { opacity: 1; }
+          100% { opacity: 0.6; }
+        }
+      `}</style>
     </div>
   );
 }
