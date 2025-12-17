@@ -43,7 +43,7 @@ export default function VotePage() {
   }, [pollId]);
 
   /* ---------------------------------------------------------
-     Load poll + options + HOST LOGO (initial)
+     Initial load: poll + options + HOST LOGO
   --------------------------------------------------------- */
   useEffect(() => {
     if (!pollId) return;
@@ -82,16 +82,14 @@ export default function VotePage() {
   }, [pollId]);
 
   /* ---------------------------------------------------------
-     Realtime poll updates
-     - DB row UPDATE (postgres_changes)
-     - Broadcasts: poll_status + poll_update
+     Realtime: DB updates + broadcasts from dashboard
   --------------------------------------------------------- */
   useEffect(() => {
     if (!pollId) return;
 
     const channel = supabase
       .channel(`poll-${pollId}`)
-      // ✅ 1) DB row updates on "polls" table
+      // 1) Postgres row changes on polls
       .on(
         "postgres_changes",
         {
@@ -104,14 +102,13 @@ export default function VotePage() {
           setPoll(payload.new);
         }
       )
-      // ✅ 2) Broadcast-based status updates from dashboard
+      // 2) Broadcast: poll_status
       .on(
         "broadcast",
         { event: "poll_status" },
         (payload: any) => {
           const data = payload?.payload;
           if (!data) return;
-
           setPoll((prev: any) =>
             prev
               ? {
@@ -125,14 +122,13 @@ export default function VotePage() {
           );
         }
       )
+      // 3) Broadcast: poll_update (in case we use that to push status)
       .on(
         "broadcast",
         { event: "poll_update" },
         (payload: any) => {
           const data = payload?.payload;
           if (!data) return;
-
-          // In case some other place broadcasts status via `poll_update`
           setPoll((prev: any) =>
             prev
               ? {
@@ -150,6 +146,46 @@ export default function VotePage() {
 
     return () => {
       supabase.removeChannel(channel);
+    };
+  }, [pollId]);
+
+  /* ---------------------------------------------------------
+     Fallback: poll status from DB every 2s
+     (safety net if realtime ever misses)
+  --------------------------------------------------------- */
+  useEffect(() => {
+    if (!pollId) return;
+    let cancelled = false;
+
+    async function refreshStatus() {
+      const { data } = await supabase
+        .from("polls")
+        .select("status,countdown,countdown_active")
+        .eq("id", pollId)
+        .maybeSingle();
+
+      if (!cancelled && data) {
+        setPoll((prev: any) =>
+          prev
+            ? {
+                ...prev,
+                status: data.status ?? prev.status,
+                countdown_active:
+                  data.countdown_active ?? prev.countdown_active,
+                countdown: data.countdown ?? prev.countdown,
+              }
+            : data
+        );
+      }
+    }
+
+    // initial check + interval
+    refreshStatus();
+    const id = setInterval(refreshStatus, 2000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(id);
     };
   }, [pollId]);
 
