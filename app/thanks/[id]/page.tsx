@@ -179,7 +179,6 @@ export default function ThankYouPage() {
     switch (type) {
       case "basketball":
         return "Your basketball entry was submitted!";
-        return "Keep This Page Open It becomes Your Controller!!";
       case "poll":
         return "Your vote has been recorded!";
       case "wheel":
@@ -303,21 +302,7 @@ export default function ThankYouPage() {
             </div>
           </div>
         )}
-
-        <button
-          onClick={() => window.close()}
-          style={{
-            width: "100%",
-            padding: "10px 16px",
-            borderRadius: 10,
-            background: "linear-gradient(90deg,#475569,#0f172a)",
-            color: "#fff",
-            fontWeight: 600,
-            marginTop: 22,
-          }}
-        >
-          Close
-        </button>
+        
       </div>
     </div>
   );
