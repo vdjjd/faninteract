@@ -173,12 +173,13 @@ export default function ThankYouPage() {
 
   const headline = visitInfo?.isReturning
     ? `Welcome back, ${profile?.first_name || "friend"}!`
-    : `Thank you, ${profile?.first_name || "friend"}!`;
+    : `Thank You, ${profile?.first_name || "friend"}!`;
 
   const message = useMemo(() => {
     switch (type) {
       case "basketball":
         return "Your basketball entry was submitted!";
+        return "Keep This Page Open It becomes Your Controller!!";
       case "poll":
         return "Your vote has been recorded!";
       case "wheel":
@@ -250,7 +251,7 @@ export default function ThankYouPage() {
             color: "transparent",
           }}
         >
-          🎉 {headline}
+          {headline}
         </h1>
 
         <p style={{ color: "#f3e8e0", marginBottom: 12 }}>
