@@ -19,30 +19,33 @@ export default function ShooterPage() {
   const [laneIndex, setLaneIndex] = useState<number | null>(null);
 
   /* ============================================================
-     LOAD OR RECOVER PLAYER
+     LOAD PLAYER
   ============================================================ */
   useEffect(() => {
     async function loadPlayer() {
       const storedId = localStorage.getItem("bb_player_id");
 
-      if (storedId) {
-        const { data } = await supabase
-          .from("bb_game_players")
-          .select("id, lane_index")
-          .eq("id", storedId)
-          .eq("game_id", gameId)
-          .is("disconnected_at", null)
-          .maybeSingle();
-
-        if (data) {
-          setPlayerId(data.id);
-          setLaneIndex(data.lane_index);
-          setStatus(`Ready — lane ${data.lane_index + 1}`);
-          return;
-        }
+      if (!storedId) {
+        setStatus("❌ Player not assigned");
+        return;
       }
 
-      setStatus("❌ Player not assigned");
+      const { data } = await supabase
+        .from("bb_game_players")
+        .select("id, lane_index")
+        .eq("id", storedId)
+        .eq("game_id", gameId)
+        .is("disconnected_at", null)
+        .maybeSingle();
+
+      if (!data) {
+        setStatus("❌ Player not assigned");
+        return;
+      }
+
+      setPlayerId(data.id);
+      setLaneIndex(data.lane_index);
+      setStatus(`Ready — lane ${data.lane_index + 1}`);
     }
 
     loadPlayer();
@@ -69,22 +72,27 @@ export default function ShooterPage() {
   }, [gameId]);
 
   /* ============================================================
-     FIRE SHOT (COOLDOWN ENFORCED)
+     SEND SHOT
   ============================================================ */
-  function fireShot(animation = "swish") {
+  function fireShot(animation: string) {
     if (!channelRef.current || laneIndex === null) return;
 
-    // 🚫 Pre-game / countdown lockout
+    // 🚫 Block during countdown
     if (countdownValue !== null && countdownValue > 0) return;
 
     const now = Date.now();
 
     // 🚫 Cooldown
     if (now - lastShotRef.current < COOLDOWN_MS) return;
-
     lastShotRef.current = now;
 
     const shotId = crypto.randomUUID();
+
+    console.log("📤 SHOOTER SENDING:", {
+      animation,
+      lane_index: laneIndex,
+      shot_id: shotId,
+    });
 
     channelRef.current.send({
       type: "broadcast",
@@ -92,7 +100,7 @@ export default function ShooterPage() {
       payload: {
         shot_id: shotId,
         lane_index: laneIndex,
-        animation, // dev-only override
+        animation,
         ts: now,
       },
     });
@@ -112,7 +120,7 @@ export default function ShooterPage() {
         flexDirection: "column",
         alignItems: "center",
         justifyContent: "center",
-        gap: 20,
+        gap: 18,
         touchAction: "none",
       }}
     >
@@ -138,38 +146,44 @@ export default function ShooterPage() {
         </div>
       )}
 
-      {/* MAIN SHOOT BUTTON */}
+      {/* MAIN SHOOT */}
       <button
-        onClick={() => fireShot("swish")}
-        style={{
-          padding: "26px 46px",
-          fontSize: "2.2rem",
-          fontWeight: 900,
-          borderRadius: 18,
-          background: "#ff6a00",
-          border: "none",
-          color: "black",
-          cursor: "pointer",
-          boxShadow: "0 0 30px rgba(255,120,0,0.8)",
-        }}
+        onClick={() => fireShot("close_hit")}
+        style={mainBtn()}
       >
         SHOOT
       </button>
 
       {/* DEV CONTROLS */}
-      <div style={{ display: "flex", gap: 12, marginTop: 20 }}>
+      <div style={{ display: "flex", gap: 12, marginTop: 14 }}>
         <button
-          onClick={() => fireShot("miss_left")}
+          onClick={() => fireShot("close_miss_left")}
           style={devBtn("#2563eb")}
         >
           MISS LEFT
         </button>
 
         <button
-          onClick={() => fireShot("miss_right")}
+          onClick={() => fireShot("close_miss_right")}
           style={devBtn("#dc2626")}
         >
           MISS RIGHT
+        </button>
+
+        <button
+          onClick={() => fireShot("close_miss_long")}
+          style={devBtn("#7c3aed")}
+        >
+          MISS LONG
+        </button>
+      </div>
+
+      <div style={{ display: "flex", gap: 12 }}>
+        <button
+          onClick={() => fireShot("three_hit")}
+          style={devBtn("#16a34a")}
+        >
+          3PT HIT
         </button>
       </div>
     </div>
@@ -177,8 +191,23 @@ export default function ShooterPage() {
 }
 
 /* ============================================================
-   DEV BUTTON STYLE
+   STYLES
 ============================================================ */
+
+function mainBtn() {
+  return {
+    padding: "26px 46px",
+    fontSize: "2.2rem",
+    fontWeight: 900,
+    borderRadius: 18,
+    background: "#ff6a00",
+    border: "none",
+    color: "black",
+    cursor: "pointer",
+    boxShadow: "0 0 30px rgba(255,120,0,0.8)",
+  };
+}
+
 function devBtn(bg: string) {
   return {
     padding: "12px 18px",
