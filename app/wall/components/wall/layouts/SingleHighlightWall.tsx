@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { QRCodeCanvas } from 'qrcode.react';
 import React from 'react';
@@ -57,7 +57,7 @@ const STYLE: Record<string, React.CSSProperties> = {
     color: '#fff',
     textAlign: 'center',
     maxWidth: '90%',
-    marginTop: '2.0vh',
+    marginTop: '2vh',
     fontWeight: 600,
     textShadow: `
       2px 2px 2px #000,
@@ -92,6 +92,22 @@ const STYLE: Record<string, React.CSSProperties> = {
 };
 
 /* ---------------------------------------------------- */
+/*      BADGE + VISIT CONTROL                            */
+/* ---------------------------------------------------- */
+
+const BADGE_CTRL = {
+  badge: {
+    bottom: '0vh',
+    right: '48vw',
+    size: 150, // 👈 container size (authoritative)
+  },
+  visits: {
+    bottom: '10.5vh',
+    right: '44vw',
+  },
+};
+
+/* ---------------------------------------------------- */
 /*      SingleHighlightWall                              */
 /* ---------------------------------------------------- */
 
@@ -103,12 +119,6 @@ export default function SingleHighlightWall({
 }: any) {
   const [livePosts, setLivePosts] = useState(posts || []);
   const [currentIndex, setCurrentIndex] = useState(0);
-
-  const BADGE_CTRL = {
-    bottom: '4vh',
-    right: '2vw',
-    size: 210,
-  };
 
   const title = event?.title || 'Fan Zone Wall';
 
@@ -262,18 +272,17 @@ export default function SingleHighlightWall({
         </div>
       </div>
 
-      {/* BADGE — OPTION A (TALLER + CONTAIN) */}
+      {/* BADGE (container authoritative) */}
       {current?.badge_icon_url && (
         <div
-          key={`badge-${current.id}`}
           style={{
             position: 'absolute',
-            bottom: BADGE_CTRL.bottom,
-            right: BADGE_CTRL.right,
-            width: `${BADGE_CTRL.size}px`,
-            height: `${Math.round(BADGE_CTRL.size * 1.2)}px`,
-            pointerEvents: 'none',
+            bottom: BADGE_CTRL.badge.bottom,
+            right: BADGE_CTRL.badge.right,
+            width: BADGE_CTRL.badge.size,
+            height: BADGE_CTRL.badge.size,
             zIndex: 20,
+            pointerEvents: 'none',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -281,18 +290,40 @@ export default function SingleHighlightWall({
         >
           <img
             src={current.badge_icon_url}
-            alt="Loyalty Badge"
+            alt="Badge"
             style={{
-              width: '100%',
-              height: '100%',
-              borderRadius: '999px',
-              objectFit: 'contain',
-              filter: 'drop-shadow(0 0 14px rgba(0,0,0,0.8))',
+              maxWidth: '100%',
+              maxHeight: '100%',
+              objectFit: 'contain', // 👈 image fits container
+              filter: 'drop-shadow(0 0 10px rgba(0,0,0,0.8))',
             }}
           />
+        </div>
+      )}
+
+      {/* VISIT COUNT */}
+      {typeof current?.visit_count === 'number' && (
+        <div
+          style={{
+            position: 'absolute',
+            bottom: BADGE_CTRL.visits.bottom,
+            right: BADGE_CTRL.visits.right,
+            zIndex: 21,
+            padding: '6px 14px',
+            borderRadius: '999px',
+            background: 'rgba(0,0,0,0.65)',
+            backdropFilter: 'blur(6px)',
+            color: '#fff',
+            fontWeight: 800,
+            fontSize: '1.1rem',
+            textShadow: '1px 1px 2px #000',
+            pointerEvents: 'none',
+            boxShadow: '0 0 10px rgba(0,0,0,0.6)',
+          }}
+        >
+          Visit #{current.visit_count}
         </div>
       )}
     </div>
   );
 }
-
