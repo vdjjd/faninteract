@@ -52,29 +52,16 @@ const STYLE: Record<string, React.CSSProperties> = {
     `,
   },
 
-  /* spacer to keep message clear */
   messageSpacer: {
     height: '10vh',
   },
 
-  badgeWrapper: {
-    position: 'absolute',
-    transform: 'translateY(-50%)',
-    pointerEvents: 'none',
-  },
-
-  visitWrapper: {
-    position: 'absolute',
-    transform: 'translateY(-50%)',
-    pointerEvents: 'none',
-  },
-
   badgeImage: {
-    width: 'clamp(135px, 7vw, 165px)',
-    height: 'clamp(135px, 7vw, 165px)',
+    width: '210px',
+    height: '210px',
     borderRadius: '999px',
     objectFit: 'cover',
-    filter: 'drop-shadow(0 0 14px rgba(0,0,0,0.7))',
+    filter: 'drop-shadow(0 0 14px rgba(0,0,0,0.8))',
   },
 
   visitText: {
@@ -142,8 +129,6 @@ const transitions: Record<string, any> = {
   },
 };
 
-const transitionKeys = Object.keys(transitions);
-
 const speedMap: Record<string, number> = {
   Slow: 12000,
   Medium: 8000,
@@ -177,17 +162,6 @@ export default function SingleHighlightWall({
 
   const brightness = event?.background_brightness ?? 100;
   const displayDuration = speedMap[event?.transition_speed || 'Medium'];
-
-  /* Badge + visit anchored to NAME row */
-  const BADGE_POSITION = {
-    top: '58%',   // aligns with nickname baseline
-    left: '72%',  // pushes right, away from text
-  };
-
-  const VISIT_POSITION = {
-    top: '66%',
-    left: '72%',
-  };
 
   useEffect(() => {
     setLivePosts(posts || []);
@@ -256,19 +230,39 @@ export default function SingleHighlightWall({
             overflow: 'hidden',
           }}
         >
-          <AnimatePresence mode="wait">
-            <motion.img
-              key={`${current?.id || 'blank'}-${currentIndex}`}
-              src={current?.photo_url || '/fallback.png'}
-              {...transitions['Fade In / Fade Out']}
-              style={{
-                width: '100%',
-                height: '100%',
-                objectFit: 'cover',
-                borderRadius: 18,
-              }}
-            />
-          </AnimatePresence>
+          <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+            <AnimatePresence mode="wait">
+              <motion.img
+                key={`${current?.id || 'blank'}-${currentIndex}`}
+                src={current?.photo_url || '/fallback.png'}
+                {...transitions['Fade In / Fade Out']}
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  objectFit: 'cover',
+                  borderRadius: 18,
+                }}
+              />
+            </AnimatePresence>
+
+            {/* BADGE — LOWER RIGHT */}
+            {current?.badge_icon_url && (
+              <div
+                style={{
+                  position: 'absolute',
+                  bottom: '18px',
+                  right: '18px',
+                  pointerEvents: 'none',
+                }}
+              >
+                <img
+                  src={current.badge_icon_url}
+                  alt="Loyalty Badge"
+                  style={STYLE.badgeImage}
+                />
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Right Panel */}
@@ -310,42 +304,13 @@ export default function SingleHighlightWall({
 
           <div style={STYLE.messageSpacer} />
 
-          {current?.visit_count != null && (
-            <div
-              style={{
-                ...STYLE.visitWrapper,
-                top: VISIT_POSITION.top,
-                left: VISIT_POSITION.left,
-              }}
-            >
-              <span style={STYLE.visitText}>
-                Visit #{current.visit_count}
-              </span>
-            </div>
-          )}
-
-          {current?.badge_icon_url && (
-            <div
-              style={{
-                ...STYLE.badgeWrapper,
-                top: BADGE_POSITION.top,
-                left: BADGE_POSITION.left,
-              }}
-            >
-              <img
-                src={current.badge_icon_url}
-                alt="Loyalty Badge"
-                style={STYLE.badgeImage}
-              />
-            </div>
-          )}
-
           <p style={STYLE.message}>
             {current?.message || 'Be the first to post!'}
           </p>
         </div>
       </div>
 
+      {/* QR Code */}
       <div style={STYLE.qrContainer}>
         <p style={STYLE.scanText}>Scan Me To Join</p>
         <div style={STYLE.qrWrapper}>
