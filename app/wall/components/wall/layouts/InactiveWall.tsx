@@ -106,9 +106,6 @@ export default function InactiveWall({ wall }) {
 
   if (!wall) return <div>Loading Wall…</div>;
 
-  /* ---------------------------------------------------------------------- */
-  /* RENDER                                                                  */
-  /* ---------------------------------------------------------------------- */
   return (
     <div
       style={{
@@ -196,25 +193,19 @@ export default function InactiveWall({ wall }) {
             marginLeft: '44%',
           }}
         >
-
-          {/* ─────────────────────────────────────────────── */}
-          {/* ⭐ LOGO CONTAINER (ADJUST SIZE HERE)             */}
-          {/* ─────────────────────────────────────────────── */}
+          {/* LOGO */}
           <div
             style={{
               position: 'absolute',
               top: '2%',
               left: '53%',
               transform: 'translateX(-50%)',
-              width: 'clamp(300px,27vw,400px)',   // ← WIDTH
-              height: 'clamp(300px,12vw,260px)',  // ← HEIGHT
-              border: '0px solid red',            // ← RED BORDER
-              borderRadius: '12px',
-              background: 'transparent',
+              width: 'clamp(300px,27vw,400px)',
+              height: 'clamp(300px,12vw,260px)',
               display: 'flex',
               justifyContent: 'center',
               alignItems: 'center',
-              overflow: 'hidden',                  // ← prevents overflow
+              overflow: 'hidden',
             }}
           >
             <img
@@ -222,7 +213,7 @@ export default function InactiveWall({ wall }) {
               style={{
                 width: '100%',
                 height: '100%',
-                objectFit: 'contain',              // ← OPTION B
+                objectFit: 'contain',
                 filter: 'drop-shadow(0 0 12px rgba(0,0,0,0.6))',
               }}
             />
@@ -242,17 +233,25 @@ export default function InactiveWall({ wall }) {
             }}
           />
 
-          {/* "Fan Zone Wall" */}
+          {/* FAN ZONE WALL — HARD ONE-LINE FIX */}
           <p
             style={{
               position: 'absolute',
               top: '56%',
               left: '53%',
               transform: 'translateX(-50%)',
+
               color: '#fff',
-              fontSize: 'clamp(2em,3.5vw,6rem)',
               fontWeight: 900,
               textAlign: 'center',
+
+              whiteSpace: 'nowrap',
+              maxWidth: '80%',
+              overflow: 'hidden',
+
+              fontSize: '4vw',
+              lineHeight: 1,
+
               textShadow: '0 0 14px rgba(0,0,0,0.6)',
             }}
           >
@@ -261,34 +260,27 @@ export default function InactiveWall({ wall }) {
 
           {/* Starting Soon */}
           <p
-  className="pulseSoon"
-  style={{
-    position: 'absolute',
-    top: '67%',
-    left: '53%',
-    transform: 'translateX(-50%)',
-    color: '#bcd9ff',
-    fontWeight: 700,
-    margin: 0,
-
-    /* 🔥 Keep ONE line — no wrapping */
-    whiteSpace: 'nowrap',
-
-    /* 🔥 Auto-scale smoothly */
-    fontSize: 'clamp(1.8rem, 3vw, 3.2rem)',
-
-    /* Optional outline so it's readable on all backgrounds */
-    textShadow: `
-      2px 2px 2px #000,
-      -2px 2px 2px #000,
-      2px -2px 2px #000,
-      -2px -2px 2px #000
-    `,
-  }}
->
-  Starting Soon!!
-</p>
-
+            className="pulseSoon"
+            style={{
+              position: 'absolute',
+              top: '67%',
+              left: '53%',
+              transform: 'translateX(-50%)',
+              color: '#bcd9ff',
+              fontWeight: 700,
+              margin: 0,
+              whiteSpace: 'nowrap',
+              fontSize: 'clamp(1.8rem, 3vw, 3.2rem)',
+              textShadow: `
+                2px 2px 2px #000,
+                -2px 2px 2px #000,
+                2px -2px 2px #000,
+                -2px -2px 2px #000
+              `,
+            }}
+          >
+            Starting Soon!!
+          </p>
 
           {/* Countdown */}
           <div
@@ -309,4 +301,3 @@ export default function InactiveWall({ wall }) {
     </div>
   );
 }
-
