@@ -1,399 +1,296 @@
 'use client';
 
-import { useEffect, useState, useMemo } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
 import { QRCodeCanvas } from 'qrcode.react';
-import React from 'react';
+import { useEffect, useState, useRef } from 'react';
 
-/* ---------------------------------------------------- */
-/*  STYLE CONTROL BLOCK                                  */
-/* ---------------------------------------------------- */
-
-const STYLE: Record<string, React.CSSProperties> = {
-  title: {
-    color: '#fff',
-    marginTop: '-9vh',
-    marginBottom: '-1vh',
-    fontWeight: 900,
-    fontSize: 'clamp(2.5rem,4vw,5rem)',
-    textShadow: `
-      2px 2px 2px #000,
-      -2px 2px 2px #000,
-      2px -2px 2px #000,
-      -2px -2px 2px #000
-    `,
-    filter: `
-      drop-shadow(0 0 25px rgba(255,255,255,0.6))
-      drop-shadow(0 0 40px rgba(255,255,255,0.3))
-    `,
-  },
-
-  greyBar: {
-    width: '90%',
-    height: '14px',
-    marginTop: '2vh',
-    marginBottom: '2vh',
-    marginLeft: '3.5%',
-    background: 'linear-gradient(to right, #000, #4444)',
-    borderRadius: '6px',
-  },
-
-  nickname: {
-    fontSize: 'clamp(3rem,4vw,5rem)',
-    fontWeight: 900,
-    color: '#fff',
-    textTransform: 'uppercase',
-    margin: 0,
-    textShadow: `
-      2px 2px 2px #000,
-      -2px 2px 2px #000,
-      2px -2px 2px #000,
-      -2px -2px 2px #000
-    `,
-  },
-
-  message: {
-    fontSize: 'clamp(4rem,1vw,2.4rem)',
-    color: '#fff',
-    textAlign: 'center',
-    maxWidth: '90%',
-    marginTop: '2.0vh',
-    fontWeight: 600,
-    textShadow: `
-      2px 2px 2px #000,
-      -2px 2px 2px #000,
-      2px -2px 2px #000,
-      -2px -2px 2px #000
-    `,
-  },
-
-  scanText: {
-    color: '#fff',
-    fontWeight: 700,
-    marginBottom: '0.6vh',
-    fontSize: 'clamp(1rem,1.4vw,1.4rem)',
-  },
-
-  qrWrapper: {
-    padding: '4px',
-    borderRadius: '20px',
-    background: 'rgba(255,255,255,0.10)',
-    boxShadow: '0 0 25px rgba(255,255,255,0.6), 0 0 40px rgba(255,255,255,0.3)',
-  },
-
-  qrContainer: {
-    position: 'absolute',
-    bottom: '4vh',
-    left: '2vw',
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-  },
-};
-
-/* ---------------------------------------------------- */
-/* TRANSITIONS (UNCHANGED)                               */
-/* ---------------------------------------------------- */
-
-const transitions: Record<string, any> = {
-  'Fade In / Fade Out': {
-    initial: { opacity: 0 },
-    animate: { opacity: 1 },
-    exit: { opacity: 0 },
-    transition: { duration: 0.8, ease: 'easeInOut' },
-  },
-
-  'Slide Up / Slide Out': {
-    initial: { opacity: 0, y: 100 },
-    animate: { opacity: 1, y: 0 },
-    exit: { opacity: 0, y: -100 },
-    transition: { duration: 0.9, ease: 'easeInOut' },
-  },
-
-  'Slide Down / Slide Out': {
-    initial: { opacity: 0, y: -100 },
-    animate: { opacity: 1, y: 0 },
-    exit: { opacity: 0, y: 100 },
-    transition: { duration: 0.9, ease: 'easeInOut' },
-  },
-
-  'Slide Left / Slide Right': {
-    initial: { opacity: 0, x: 120 },
-    animate: { opacity: 1, x: 0 },
-    exit: { opacity: 0, x: -120 },
-    transition: { duration: 0.9, ease: 'easeInOut' },
-  },
-
-  'Slide Right / Slide Left': {
-    initial: { opacity: 0, x: -120 },
-    animate: { opacity: 1, x: 0 },
-    exit: { opacity: 0, x: 120 },
-    transition: { duration: 0.9, ease: 'easeInOut' },
-  },
-
-  'Zoom In / Zoom Out': {
-    initial: { opacity: 0, scale: 0.8 },
-    animate: { opacity: 1, scale: 1 },
-    exit: { opacity: 0, scale: 1.15 },
-    transition: { duration: 0.9, ease: 'easeInOut' },
-  },
-
-  'Zoom Out / Zoom In': {
-    initial: { opacity: 0, scale: 0.7 },
-    animate: { opacity: 1, scale: 1 },
-    exit: { opacity: 0, scale: 0.7 },
-    transition: { duration: 0.9, ease: 'easeInOut' },
-  },
-
-  Flip: {
-    initial: { opacity: 0, rotateY: 90 },
-    animate: { opacity: 1, rotateY: 0 },
-    exit: { opacity: 0, rotateY: -90 },
-    transition: { duration: 0.9, ease: 'easeInOut' },
-  },
-
-  'Rotate In / Rotate Out': {
-    initial: { opacity: 0, rotate: -180 },
-    animate: { opacity: 1, rotate: 0 },
-    exit: { opacity: 0, rotate: 180 },
-    transition: { duration: 0.9, ease: 'easeInOut' },
-  },
-};
-
-const transitionKeys = Object.keys(transitions);
-
-const speedMap: Record<string, number> = {
-  Slow: 12000,
-  Medium: 8000,
-  Fast: 4000,
-};
-
-/* ---------------------------------------------------- */
-/*      SingleHighlightWall                              */
-/* ---------------------------------------------------- */
-
-export default function SingleHighlightWall({
-  event,
-  posts,
-  tickSubmissionDisplayed,
-  pauseFlag,
-}: any) {
-  const [livePosts, setLivePosts] = useState(posts || []);
-  const [currentIndex, setCurrentIndex] = useState(0);
-  const [randomTransition, setRandomTransition] = useState<string | null>(null);
-
-  /* 🔒 MANUAL CONTROLS (THE POINT OF THIS CHANGE) */
-  const BADGE_CTRL = {
-    bottom: '4vh', // mirror QR
-    right: '2vw',  // opposite side
-    size: 210,     // px
-  };
-
-  const MESSAGE_CTRL = {
-    y: 0, // px (+ down / - up)
-  };
-
-  const title = event?.title || 'Fan Zone Wall';
-
-  const logo =
-    event?.host?.branding_logo_url?.trim()
-      ? event.host.branding_logo_url
-      : '/faninteractlogo.png';
-
-  const bg =
-    event?.background_type === 'image'
-      ? `url(${event.background_value}) center/cover no-repeat`
-      : event?.background_value || 'linear-gradient(135deg,#1b2735,#090a0f)';
-
-  const brightness = event?.background_brightness ?? 100;
-  const transitionType = event?.post_transition || 'Fade In / Fade Out';
-  const displayDuration = speedMap[event?.transition_speed || 'Medium'];
+/* ---------- COUNTDOWN COMPONENT ---------- */
+function CountdownDisplay({ countdown, countdownActive }) {
+  const [timeLeft, setTimeLeft] = useState(0);
+  const [active, setActive] = useState(countdownActive);
 
   useEffect(() => {
-    setLivePosts(posts || []);
-    setCurrentIndex(0);
-  }, [posts]);
+    if (!countdown) return;
+    const [numStr] = countdown.split(' ');
+    const num = parseInt(numStr);
+    const mins = countdown.toLowerCase().includes('minute');
+    const secs = countdown.toLowerCase().includes('second');
+    const total = mins ? num * 60 : secs ? num : 0;
+
+    setTimeLeft(total);
+    setActive(!!countdownActive);
+  }, [countdown, countdownActive]);
 
   useEffect(() => {
-    if (!livePosts.length) return;
+    if (!active || timeLeft <= 0) return;
+    const timer = setInterval(() => setTimeLeft(t => (t > 1 ? t - 1 : 0)), 1000);
+    return () => clearInterval(timer);
+  }, [active, timeLeft]);
 
-    const cycle = () => {
-      if (pauseFlag.current) return;
+  if (!countdown || countdown === 'none') return null;
 
-      tickSubmissionDisplayed();
-      setCurrentIndex(p => (p + 1) % livePosts.length);
+  const m = Math.floor(timeLeft / 60);
+  const s = timeLeft % 60;
 
-      if (transitionType === 'Random') {
-        setRandomTransition(
-          transitionKeys[Math.floor(Math.random() * transitionKeys.length)]
-        );
+  return (
+    <div
+      style={{
+        fontSize: 'clamp(6rem,8vw,9rem)',
+        fontWeight: 900,
+        color: '#fff',
+        textShadow: '0 0 40px rgba(0,0,0,0.7)',
+      }}
+    >
+      {m}:{s.toString().padStart(2, '0')}
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* 🚀 INACTIVE WALL                                                           */
+/* -------------------------------------------------------------------------- */
+export default function InactiveWall({ wall }) {
+  const [bg, setBg] = useState(
+    'linear-gradient(to bottom right,#1b2735,#090a0f)'
+  );
+  const [brightness, setBrightness] = useState(wall?.background_brightness || 100);
+
+  const [wallState, setWallState] = useState({
+    countdown: '',
+    countdownActive: false,
+    title: '',
+  });
+
+  const updateTimeout = useRef(null);
+
+  /* 🌟 Pulse animation */
+  const PulseStyle = (
+    <style>{`
+      @keyframes pulseSoonGlow {
+        0%,100% { opacity:.7; text-shadow:0 0 14px rgba(255,255,255,0.3); }
+        50% { opacity:1; text-shadow:0 0 22px rgba(180,220,255,0.8); }
       }
-    };
+      .pulseSoon { animation:pulseSoonGlow 2.5s ease-in-out infinite; }
+    `}</style>
+  );
 
-    const interval = setInterval(cycle, displayDuration);
-    return () => clearInterval(interval);
-  }, [livePosts.length, displayDuration, transitionType, pauseFlag, tickSubmissionDisplayed]);
+  useEffect(() => {
+    if (!wall) return;
 
-  const effectiveTransition = useMemo(() => {
-    if (transitionType === 'Random') {
-      return transitions[randomTransition || 'Fade In / Fade Out'];
-    }
-    return transitions[transitionType] || transitions['Fade In / Fade Out'];
-  }, [transitionType, randomTransition]);
+    setWallState({
+      countdown: wall.countdown || '',
+      countdownActive: !!wall.countdown_active,
+      title: wall.title || '',
+    });
 
-  const current = livePosts[currentIndex] || null;
+    const value =
+      wall.background_type === 'image'
+        ? `url(${wall.background_value}) center/cover no-repeat`
+        : wall.background_value ||
+          'linear-gradient(to bottom right,#1b2735,#090a0f)';
+
+    setBg(value);
+    setBrightness(wall.background_brightness ?? 100);
+  }, [wall]);
 
   const origin =
     typeof window !== 'undefined'
       ? window.location.origin
       : 'https://faninteract.vercel.app';
 
+  const qrValue = `${origin}/guest/signup?wall=${wall?.id}`;
+
+  const displayLogo =
+    wall?.host?.branding_logo_url?.trim()
+      ? wall.host.branding_logo_url
+      : '/faninteractlogo.png';
+
+  if (!wall) return <div>Loading Wall…</div>;
+
   return (
     <div
       style={{
-        width: '100vw',
-        height: '100vh',
         background: bg,
         filter: `brightness(${brightness}%)`,
+        width: '100%',
+        height: '100vh',
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
-        justifyContent: 'center',
         overflow: 'hidden',
         position: 'relative',
+        paddingTop: '3vh',
       }}
     >
-      <h1 style={STYLE.title}>{title}</h1>
+      {PulseStyle}
 
+      {/* Title */}
+      <h1
+        style={{
+          color: '#fff',
+          fontSize: 'clamp(2.5rem,4vw,5rem)',
+          fontWeight: 900,
+          marginBottom: '1vh',
+          textShadow: `
+            2px 2px 2px #000,
+            -2px 2px 2px #000,
+            2px -2px 2px #000,
+            -2px -2px 2px #000
+          `,
+        }}
+      >
+        {wallState.title || 'Fan Zone Wall'}
+      </h1>
+
+      {/* Main Panel */}
       <div
         style={{
-          width: 'min(92vw,1800px)',
-          height: 'min(83vh,950px)',
+          width: '90vw',
+          height: '78vh',
+          maxWidth: '1800px',
+          aspectRatio: '16 / 9',
           background: 'rgba(255,255,255,0.08)',
           backdropFilter: 'blur(20px)',
-          borderRadius: 24,
           border: '1px solid rgba(255,255,255,0.15)',
+          borderRadius: 24,
           position: 'relative',
           overflow: 'hidden',
           display: 'flex',
         }}
       >
-        {/* Left Photo */}
+        {/* QR SECTION */}
         <div
           style={{
             position: 'absolute',
-            top: '4%',
-            left: '2%',
-            width: '46%',
-            height: '92%',
-            borderRadius: 18,
-            overflow: 'hidden',
+            top: '5%',
+            left: '3%',
+            width: '47%',
+            height: '90%',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
           }}
         >
-          <AnimatePresence mode="wait">
-            <motion.img
-              key={`${current?.id || 'blank'}-${currentIndex}`}
-              src={current?.photo_url || '/fallback.png'}
-              {...effectiveTransition}
-              style={{
-                width: '100%',
-                height: '100%',
-                objectFit: 'cover',
-                borderRadius: 18,
-              }}
-            />
-          </AnimatePresence>
+          <QRCodeCanvas
+            value={qrValue}
+            size={1000}
+            bgColor="#ffffff"
+            fgColor="#000000"
+            level="H"
+            style={{
+              width: '100%',
+              height: '100%',
+              objectFit: 'contain',
+              borderRadius: 18,
+            }}
+          />
         </div>
 
-        {/* Right Panel */}
+        {/* TEXT + LOGO SIDE */}
         <div
           style={{
-            flexGrow: 1,
-            marginLeft: '46%',
-            paddingTop: '4vh',
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
             position: 'relative',
+            flexGrow: 1,
+            marginLeft: '44%',
           }}
         >
+          {/* LOGO */}
           <div
             style={{
-              width: 'clamp(400px,28vw,380px)',
-              height: 'clamp(180px,18vw,260px)',
+              position: 'absolute',
+              top: '2%',
+              left: '53%',
+              transform: 'translateX(-50%)',
+              width: 'clamp(300px,27vw,400px)',
+              height: 'clamp(300px,12vw,260px)',
               display: 'flex',
-              alignItems: 'center',
               justifyContent: 'center',
-              padding: '6px',
+              alignItems: 'center',
+              overflow: 'hidden',
             }}
           >
             <img
-              src={logo}
+              src={displayLogo}
               style={{
                 width: '100%',
                 height: '100%',
                 objectFit: 'contain',
-                filter: 'drop-shadow(0 0 14px rgba(0,0,0,0.85))',
+                filter: 'drop-shadow(0 0 12px rgba(0,0,0,0.6))',
               }}
             />
           </div>
 
-          <div style={STYLE.greyBar} />
+          {/* Divider */}
+          <div
+            style={{
+              position: 'absolute',
+              top: '50%',
+              left: '53%',
+              transform: 'translateX(-50%)',
+              width: '75%',
+              height: '1.4vh',
+              borderRadius: 6,
+              background: 'linear-gradient(to right,#000,#444)',
+            }}
+          />
 
-          <p style={STYLE.nickname}>{current?.nickname || 'Guest'}</p>
-
+          {/* Fan Zone Wall — FIXED */}
           <p
             style={{
-              ...STYLE.message,
-              transform: `translateY(${MESSAGE_CTRL.y}px)`,
+              position: 'absolute',
+              top: '56%',
+              left: '53%',
+              transform: 'translateX(-50%)',
+              color: '#fff',
+              fontSize: 'clamp(2.2rem, 3vw, 5rem)',
+              fontWeight: 900,
+              textAlign: 'center',
+              whiteSpace: 'nowrap',
+              textShadow: '0 0 14px rgba(0,0,0,0.6)',
             }}
           >
-            {current?.message || 'Be the first to post!'}
+            Fan Zone Wall
           </p>
-        </div>
-      </div>
 
-      {/* QR CODE (unchanged) */}
-      <div style={STYLE.qrContainer}>
-        <p style={STYLE.scanText}>Scan Me To Join</p>
-        <div style={STYLE.qrWrapper}>
-          <QRCodeCanvas
-            value={`${origin}/guest/signup?wall=${event?.id}`}
-            size={210}
-            level="H"
-            bgColor="#fff"
-            fgColor="#000"
-            style={{ borderRadius: 12 }}
-          />
-        </div>
-      </div>
-
-      {/* BADGE — OPPOSITE SIDE OF QR (NEW, ISOLATED) */}
-      {current?.badge_icon_url && (
-        <div
-          style={{
-            position: 'absolute',
-            bottom: BADGE_CTRL.bottom,
-            right: BADGE_CTRL.right,
-            width: `${BADGE_CTRL.size}px`,
-            height: `${BADGE_CTRL.size}px`,
-            pointerEvents: 'none',
-            zIndex: 20,
-          }}
-        >
-          <img
-            src={current.badge_icon_url}
-            alt="Loyalty Badge"
+          {/* Starting Soon */}
+          <p
+            className="pulseSoon"
             style={{
-              width: '100%',
-              height: '100%',
-              borderRadius: '999px',
-              objectFit: 'cover',
-              filter: 'drop-shadow(0 0 14px rgba(0,0,0,0.8))',
+              position: 'absolute',
+              top: '69%',
+              left: '53%',
+              transform: 'translateX(-50%)',
+              color: '#bcd9ff',
+              fontWeight: 700,
+              margin: 0,
+              whiteSpace: 'nowrap',
+              fontSize: 'clamp(1.8rem, 3vw, 3.2rem)',
+              textShadow: `
+                2px 2px 2px #000,
+                -2px 2px 2px #000,
+                2px -2px 2px #000,
+                -2px -2px 2px #000
+              `,
             }}
-          />
+          >
+            Starting Soon!!
+          </p>
+
+          {/* Countdown */}
+          <div
+            style={{
+              position: 'absolute',
+              top: '73%',
+              left: '53%',
+              transform: 'translateX(-50%)',
+            }}
+          >
+            <CountdownDisplay
+              countdown={wallState.countdown}
+              countdownActive={wallState.countdownActive}
+            />
+          </div>
         </div>
-      )}
+      </div>
     </div>
   );
 }
