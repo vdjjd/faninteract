@@ -52,35 +52,35 @@ const STYLE: Record<string, React.CSSProperties> = {
     `,
   },
 
-  /* 🔽 ADDED: spacer to push message lower */
+  /* spacer to keep message clear */
   messageSpacer: {
     height: '10vh',
   },
 
   badgeWrapper: {
     position: 'absolute',
-    transform: 'translate(-50%, -50%)',
+    transform: 'translateY(-50%)',
     pointerEvents: 'none',
   },
 
   visitWrapper: {
     position: 'absolute',
-    transform: 'translate(-50%, -50%)',
+    transform: 'translateY(-50%)',
     pointerEvents: 'none',
   },
 
   badgeImage: {
-    width: 'clamp(135px, 7vw, 110px)',
-    height: 'clamp(65px, 8vw, 115px)',
+    width: 'clamp(135px, 7vw, 165px)',
+    height: 'clamp(135px, 7vw, 165px)',
     borderRadius: '999px',
     objectFit: 'cover',
-    filter: 'drop-shadow(0 0 12px rgba(0,0,0,0.65))',
+    filter: 'drop-shadow(0 0 14px rgba(0,0,0,0.7))',
   },
 
   visitText: {
     color: '#fff',
     fontWeight: 900,
-    fontSize: 'clamp(1rem, 0vw, 2.2rem)',
+    fontSize: 'clamp(1rem, 1.4vw, 2.2rem)',
     textShadow: `
       2px 2px 2px #000,
       -2px 2px 2px #000,
@@ -95,7 +95,7 @@ const STYLE: Record<string, React.CSSProperties> = {
     color: '#fff',
     textAlign: 'center',
     maxWidth: '90%',
-    marginTop: '2.0vh',
+    marginTop: '2vh',
     fontWeight: 600,
     textShadow: `
       2px 2px 2px #000,
@@ -142,6 +142,8 @@ const transitions: Record<string, any> = {
   },
 };
 
+const transitionKeys = Object.keys(transitions);
+
 const speedMap: Record<string, number> = {
   Slow: 12000,
   Medium: 8000,
@@ -176,8 +178,16 @@ export default function SingleHighlightWall({
   const brightness = event?.background_brightness ?? 100;
   const displayDuration = speedMap[event?.transition_speed || 'Medium'];
 
-  const BADGE_POSITION = { top: '55.5%', left: '20%' };
-  const VISIT_POSITION = { top: '64.5%', left: '20%' };
+  /* Badge + visit anchored to NAME row */
+  const BADGE_POSITION = {
+    top: '58%',   // aligns with nickname baseline
+    left: '72%',  // pushes right, away from text
+  };
+
+  const VISIT_POSITION = {
+    top: '66%',
+    left: '72%',
+  };
 
   useEffect(() => {
     setLivePosts(posts || []);
@@ -298,7 +308,6 @@ export default function SingleHighlightWall({
 
           <p style={STYLE.nickname}>{current?.nickname || 'Guest'}</p>
 
-          {/* 🔽 SPACER INSERTED */}
           <div style={STYLE.messageSpacer} />
 
           {current?.visit_count != null && (
