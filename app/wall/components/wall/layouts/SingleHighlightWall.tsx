@@ -52,43 +52,6 @@ const STYLE: Record<string, React.CSSProperties> = {
     `,
   },
 
-  /* Independent overlay wrappers (positioned inside Right Panel) */
-  badgeWrapper: {
-    position: 'absolute',
-    transform: 'translate(-50%, -50%)',
-    pointerEvents: 'none',
-  },
-
-  visitWrapper: {
-    position: 'absolute',
-    transform: 'translate(-50%, -50%)',
-    pointerEvents: 'none',
-  },
-
-  /* Badge that scales like the logo using clamp() */
-  /* ✅ CHANGED: fixed 210x210 to match QR size */
-  badgeImage: {
-    width: '210px',
-    height: '210px',
-    borderRadius: '999px',
-    objectFit: 'cover',
-    filter: 'drop-shadow(0 0 14px rgba(0,0,0,0.8))',
-  },
-
-  /* Visit count text that scales like the logo */
-  visitText: {
-    color: '#fff',
-    fontWeight: 900,
-    fontSize: 'clamp(1rem, 0vw, 2.2rem)',
-    textShadow: `
-      2px 2px 2px #000,
-      -2px 2px 2px #000,
-      2px -2px 2px #000,
-      -2px -2px 2px #000
-    `,
-    whiteSpace: 'nowrap',
-  },
-
   message: {
     fontSize: 'clamp(4rem,1vw,2.4rem)',
     color: '#fff',
@@ -102,11 +65,6 @@ const STYLE: Record<string, React.CSSProperties> = {
       2px -2px 2px #000,
       -2px -2px 2px #000
     `,
-  },
-
-  /* ✅ ADDED: optional spacer you already use to control message row */
-  messageSpacer: {
-    height: '10vh',
   },
 
   scanText: {
@@ -134,7 +92,7 @@ const STYLE: Record<string, React.CSSProperties> = {
 };
 
 /* ---------------------------------------------------- */
-/* TRANSITIONS                                           */
+/* TRANSITIONS (UNCHANGED)                               */
 /* ---------------------------------------------------- */
 
 const transitions: Record<string, any> = {
@@ -224,6 +182,17 @@ export default function SingleHighlightWall({
   const [currentIndex, setCurrentIndex] = useState(0);
   const [randomTransition, setRandomTransition] = useState<string | null>(null);
 
+  /* 🔒 MANUAL CONTROLS (THE POINT OF THIS CHANGE) */
+  const BADGE_CTRL = {
+    bottom: '4vh', // mirror QR
+    right: '2vw',  // opposite side
+    size: 210,     // px
+  };
+
+  const MESSAGE_CTRL = {
+    y: 0, // px (+ down / - up)
+  };
+
   const title = event?.title || 'Fan Zone Wall';
 
   const logo =
@@ -240,29 +209,11 @@ export default function SingleHighlightWall({
   const transitionType = event?.post_transition || 'Fade In / Fade Out';
   const displayDuration = speedMap[event?.transition_speed || 'Medium'];
 
-  /* ✅ ADDED: MANUAL NUDGES */
-  const BADGE_OFFSET = { x: 0, y: 0 };     // px: +x pushes left, +y pushes UP (because we use bottom/right)
-  const MESSAGE_OFFSET = { y: 0 };         // px: negative moves UP, positive moves DOWN
-
-  /* 🧭 MANUAL POSITION CONTROLS (edit these to move them) */
-  // percentages are relative to the Right Panel (which is position: relative)
-  const BADGE_POSITION = {
-    top: '55.5%',  // roughly aligned with name row
-    left: '20%', // right side of the name
-  };
-
-  const VISIT_POSITION = {
-    top: '64.5%',  // slightly below name row
-    left: '20%', // left side of the name
-  };
-
-  /* Reset posts when list changes */
   useEffect(() => {
     setLivePosts(posts || []);
     setCurrentIndex(0);
   }, [posts]);
 
-  /* Automatic rotation engine */
   useEffect(() => {
     if (!livePosts.length) return;
 
@@ -270,11 +221,12 @@ export default function SingleHighlightWall({
       if (pauseFlag.current) return;
 
       tickSubmissionDisplayed();
-      setCurrentIndex(prev => (prev + 1) % livePosts.length);
+      setCurrentIndex(p => (p + 1) % livePosts.length);
 
       if (transitionType === 'Random') {
-        const idx = Math.floor(Math.random() * transitionKeys.length);
-        setRandomTransition(transitionKeys[idx]);
+        setRandomTransition(
+          transitionKeys[Math.floor(Math.random() * transitionKeys.length)]
+        );
       }
     };
 
@@ -283,9 +235,9 @@ export default function SingleHighlightWall({
   }, [livePosts.length, displayDuration, transitionType, pauseFlag, tickSubmissionDisplayed]);
 
   const effectiveTransition = useMemo(() => {
-    if (transitionType === 'Random')
+    if (transitionType === 'Random') {
       return transitions[randomTransition || 'Fade In / Fade Out'];
-
+    }
     return transitions[transitionType] || transitions['Fade In / Fade Out'];
   }, [transitionType, randomTransition]);
 
@@ -296,9 +248,6 @@ export default function SingleHighlightWall({
       ? window.location.origin
       : 'https://faninteract.vercel.app';
 
-  /* ---------------------------------------------------- */
-  /* RENDER                                               */
-  /* ---------------------------------------------------- */
   return (
     <div
       style={{
@@ -341,40 +290,19 @@ export default function SingleHighlightWall({
             overflow: 'hidden',
           }}
         >
-          {/* ✅ ADDED: relative wrapper so badge can anchor inside photo */}
-          <div style={{ position: 'relative', width: '100%', height: '100%' }}>
-            <AnimatePresence mode="wait">
-              <motion.img
-                key={`${current?.id || 'blank'}-${currentIndex}`}
-                src={current?.photo_url || '/fallback.png'}
-                {...effectiveTransition}
-                style={{
-                  width: '100%',
-                  height: '100%',
-                  objectFit: 'cover',
-                  borderRadius: 18,
-                }}
-              />
-            </AnimatePresence>
-
-            {/* ✅ MOVED: Badge is now LOWER-RIGHT of the PHOTO box, with manual offsets */}
-            {current?.badge_icon_url && (
-              <div
-                style={{
-                  position: 'absolute',
-                  bottom: `calc(18px + ${BADGE_OFFSET.y}px)`,
-                  right: `calc(18px + ${BADGE_OFFSET.x}px)`,
-                  pointerEvents: 'none',
-                }}
-              >
-                <img
-                  src={current.badge_icon_url}
-                  alt="Loyalty Badge"
-                  style={STYLE.badgeImage}
-                />
-              </div>
-            )}
-          </div>
+          <AnimatePresence mode="wait">
+            <motion.img
+              key={`${current?.id || 'blank'}-${currentIndex}`}
+              src={current?.photo_url || '/fallback.png'}
+              {...effectiveTransition}
+              style={{
+                width: '100%',
+                height: '100%',
+                objectFit: 'cover',
+                borderRadius: 18,
+              }}
+            />
+          </AnimatePresence>
         </div>
 
         {/* Right Panel */}
@@ -386,10 +314,9 @@ export default function SingleHighlightWall({
             display: 'flex',
             flexDirection: 'column',
             alignItems: 'center',
-            position: 'relative', // needed for absolute badge/visit positioning
+            position: 'relative',
           }}
         >
-          {/* Logo */}
           <div
             style={{
               width: 'clamp(400px,28vw,380px)',
@@ -397,9 +324,6 @@ export default function SingleHighlightWall({
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              borderRadius: 12,
-              background: 'transparent',
-              overflow: 'hidden',
               padding: '6px',
             }}
           >
@@ -416,34 +340,12 @@ export default function SingleHighlightWall({
 
           <div style={STYLE.greyBar} />
 
-          {/* Name stays in normal flow */}
           <p style={STYLE.nickname}>{current?.nickname || 'Guest'}</p>
 
-          {/* ✅ Keep your spacer (you can tune height in STYLE.messageSpacer) */}
-          <div style={STYLE.messageSpacer} />
-
-          {/* Independent Visit Count (left of name area) */}
-          {current?.visit_count != null && (
-            <div
-              style={{
-                ...STYLE.visitWrapper,
-                top: VISIT_POSITION.top,
-                left: VISIT_POSITION.left,
-              }}
-            >
-              <span style={STYLE.visitText}>
-                Visit #{current.visit_count}
-              </span>
-            </div>
-          )}
-
-          {/* ❌ REMOVED FROM HERE: old badge block so it does NOT duplicate */}
-
-          {/* Message */}
           <p
             style={{
               ...STYLE.message,
-              transform: `translateY(${MESSAGE_OFFSET.y}px)`,
+              transform: `translateY(${MESSAGE_CTRL.y}px)`,
             }}
           >
             {current?.message || 'Be the first to post!'}
@@ -451,10 +353,9 @@ export default function SingleHighlightWall({
         </div>
       </div>
 
-      {/* QR Code */}
+      {/* QR CODE (unchanged) */}
       <div style={STYLE.qrContainer}>
         <p style={STYLE.scanText}>Scan Me To Join</p>
-
         <div style={STYLE.qrWrapper}>
           <QRCodeCanvas
             value={`${origin}/guest/signup?wall=${event?.id}`}
@@ -466,6 +367,34 @@ export default function SingleHighlightWall({
           />
         </div>
       </div>
+
+      {/* BADGE — OPPOSITE SIDE OF QR (NEW, ISOLATED) */}
+      {current?.badge_icon_url && (
+        <div
+          style={{
+            position: 'absolute',
+            bottom: BADGE_CTRL.bottom,
+            right: BADGE_CTRL.right,
+            width: `${BADGE_CTRL.size}px`,
+            height: `${BADGE_CTRL.size}px`,
+            pointerEvents: 'none',
+            zIndex: 20,
+          }}
+        >
+          <img
+            src={current.badge_icon_url}
+            alt="Loyalty Badge"
+            style={{
+              width: '100%',
+              height: '100%',
+              borderRadius: '999px',
+              objectFit: 'cover',
+              filter: 'drop-shadow(0 0 14px rgba(0,0,0,0.8))',
+            }}
+          />
+        </div>
+      )}
     </div>
   );
 }
+
