@@ -92,83 +92,6 @@ const STYLE: Record<string, React.CSSProperties> = {
 };
 
 /* ---------------------------------------------------- */
-/* TRANSITIONS (UNCHANGED)                               */
-/* ---------------------------------------------------- */
-
-const transitions: Record<string, any> = {
-  'Fade In / Fade Out': {
-    initial: { opacity: 0 },
-    animate: { opacity: 1 },
-    exit: { opacity: 0 },
-    transition: { duration: 0.8, ease: 'easeInOut' },
-  },
-
-  'Slide Up / Slide Out': {
-    initial: { opacity: 0, y: 100 },
-    animate: { opacity: 1, y: 0 },
-    exit: { opacity: 0, y: -100 },
-    transition: { duration: 0.9, ease: 'easeInOut' },
-  },
-
-  'Slide Down / Slide Out': {
-    initial: { opacity: 0, y: -100 },
-    animate: { opacity: 1, y: 0 },
-    exit: { opacity: 0, y: 100 },
-    transition: { duration: 0.9, ease: 'easeInOut' },
-  },
-
-  'Slide Left / Slide Right': {
-    initial: { opacity: 0, x: 120 },
-    animate: { opacity: 1, x: 0 },
-    exit: { opacity: 0, x: -120 },
-    transition: { duration: 0.9, ease: 'easeInOut' },
-  },
-
-  'Slide Right / Slide Left': {
-    initial: { opacity: 0, x: -120 },
-    animate: { opacity: 1, x: 0 },
-    exit: { opacity: 0, x: 120 },
-    transition: { duration: 0.9, ease: 'easeInOut' },
-  },
-
-  'Zoom In / Zoom Out': {
-    initial: { opacity: 0, scale: 0.8 },
-    animate: { opacity: 1, scale: 1 },
-    exit: { opacity: 0, scale: 1.15 },
-    transition: { duration: 0.9, ease: 'easeInOut' },
-  },
-
-  'Zoom Out / Zoom In': {
-    initial: { opacity: 0, scale: 0.7 },
-    animate: { opacity: 1, scale: 1 },
-    exit: { opacity: 0, scale: 0.7 },
-    transition: { duration: 0.9, ease: 'easeInOut' },
-  },
-
-  Flip: {
-    initial: { opacity: 0, rotateY: 90 },
-    animate: { opacity: 1, rotateY: 0 },
-    exit: { opacity: 0, rotateY: -90 },
-    transition: { duration: 0.9, ease: 'easeInOut' },
-  },
-
-  'Rotate In / Rotate Out': {
-    initial: { opacity: 0, rotate: -180 },
-    animate: { opacity: 1, rotate: 0 },
-    exit: { opacity: 0, rotate: 180 },
-    transition: { duration: 0.9, ease: 'easeInOut' },
-  },
-};
-
-const transitionKeys = Object.keys(transitions);
-
-const speedMap: Record<string, number> = {
-  Slow: 12000,
-  Medium: 8000,
-  Fast: 4000,
-};
-
-/* ---------------------------------------------------- */
 /*      SingleHighlightWall                              */
 /* ---------------------------------------------------- */
 
@@ -180,17 +103,11 @@ export default function SingleHighlightWall({
 }: any) {
   const [livePosts, setLivePosts] = useState(posts || []);
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [randomTransition, setRandomTransition] = useState<string | null>(null);
 
-  /* 🔒 MANUAL CONTROLS (THE POINT OF THIS CHANGE) */
   const BADGE_CTRL = {
-    bottom: '4vh', // mirror QR
-    right: '2vw',  // opposite side
-    size: 210,     // px
-  };
-
-  const MESSAGE_CTRL = {
-    y: 0, // px (+ down / - up)
+    bottom: '4vh',
+    right: '2vw',
+    size: 210,
   };
 
   const title = event?.title || 'Fan Zone Wall';
@@ -206,8 +123,6 @@ export default function SingleHighlightWall({
       : event?.background_value || 'linear-gradient(135deg,#1b2735,#090a0f)';
 
   const brightness = event?.background_brightness ?? 100;
-  const transitionType = event?.post_transition || 'Fade In / Fade Out';
-  const displayDuration = speedMap[event?.transition_speed || 'Medium'];
 
   useEffect(() => {
     setLivePosts(posts || []);
@@ -217,29 +132,14 @@ export default function SingleHighlightWall({
   useEffect(() => {
     if (!livePosts.length) return;
 
-    const cycle = () => {
+    const interval = setInterval(() => {
       if (pauseFlag.current) return;
-
       tickSubmissionDisplayed();
-      setCurrentIndex(p => (p + 1) % livePosts.length);
+      setCurrentIndex(i => (i + 1) % livePosts.length);
+    }, 8000);
 
-      if (transitionType === 'Random') {
-        setRandomTransition(
-          transitionKeys[Math.floor(Math.random() * transitionKeys.length)]
-        );
-      }
-    };
-
-    const interval = setInterval(cycle, displayDuration);
     return () => clearInterval(interval);
-  }, [livePosts.length, displayDuration, transitionType, pauseFlag, tickSubmissionDisplayed]);
-
-  const effectiveTransition = useMemo(() => {
-    if (transitionType === 'Random') {
-      return transitions[randomTransition || 'Fade In / Fade Out'];
-    }
-    return transitions[transitionType] || transitions['Fade In / Fade Out'];
-  }, [transitionType, randomTransition]);
+  }, [livePosts.length, pauseFlag, tickSubmissionDisplayed]);
 
   const current = livePosts[currentIndex] || null;
 
@@ -294,7 +194,10 @@ export default function SingleHighlightWall({
             <motion.img
               key={`${current?.id || 'blank'}-${currentIndex}`}
               src={current?.photo_url || '/fallback.png'}
-              {...effectiveTransition}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.8 }}
               style={{
                 width: '100%',
                 height: '100%',
@@ -324,7 +227,6 @@ export default function SingleHighlightWall({
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              padding: '6px',
             }}
           >
             <img
@@ -341,19 +243,11 @@ export default function SingleHighlightWall({
           <div style={STYLE.greyBar} />
 
           <p style={STYLE.nickname}>{current?.nickname || 'Guest'}</p>
-
-          <p
-            style={{
-              ...STYLE.message,
-              transform: `translateY(${MESSAGE_CTRL.y}px)`,
-            }}
-          >
-            {current?.message || 'Be the first to post!'}
-          </p>
+          <p style={STYLE.message}>{current?.message || ''}</p>
         </div>
       </div>
 
-      {/* QR CODE (unchanged) */}
+      {/* QR */}
       <div style={STYLE.qrContainer}>
         <p style={STYLE.scanText}>Scan Me To Join</p>
         <div style={STYLE.qrWrapper}>
@@ -368,17 +262,21 @@ export default function SingleHighlightWall({
         </div>
       </div>
 
-      {/* BADGE — OPPOSITE SIDE OF QR (NEW, ISOLATED) */}
+      {/* BADGE — OPTION A (TALLER + CONTAIN) */}
       {current?.badge_icon_url && (
         <div
+          key={`badge-${current.id}`}
           style={{
             position: 'absolute',
             bottom: BADGE_CTRL.bottom,
             right: BADGE_CTRL.right,
             width: `${BADGE_CTRL.size}px`,
-            height: `${BADGE_CTRL.size}px`,
+            height: `${Math.round(BADGE_CTRL.size * 1.2)}px`,
             pointerEvents: 'none',
             zIndex: 20,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
           }}
         >
           <img
@@ -388,7 +286,7 @@ export default function SingleHighlightWall({
               width: '100%',
               height: '100%',
               borderRadius: '999px',
-              objectFit: 'cover',
+              objectFit: 'contain',
               filter: 'drop-shadow(0 0 14px rgba(0,0,0,0.8))',
             }}
           />
