@@ -93,7 +93,7 @@ const STYLE: Record<string, React.CSSProperties> = {
     color: '#fff',
     textAlign: 'center',
     maxWidth: '90%',
-    marginTop: '1.2vh',
+    marginTop: '1.4vh',
     fontWeight: 600,
     textShadow: `
       2px 2px 2px #000,
