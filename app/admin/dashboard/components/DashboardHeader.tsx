@@ -10,8 +10,6 @@ interface DashboardHeaderProps {
   onCreateTriviaGame: () => void;
   onCreateNewAd: () => void;
   onCreateSlideShow: () => void;
-
-  // ⭐ NEW CALLBACK
   onCreateBasketballGame: () => void;
 }
 
@@ -84,7 +82,7 @@ export default function DashboardHeader({
           🎡 New Prize Wheel
         </button>
 
-        {/* ⭐ NEW BASKETBALL BUTTON */}
+        {/* Basketball */}
         <button
           onClick={onCreateBasketballGame}
           className={cn(btn, "bg-orange-600 hover:bg-orange-700")}
@@ -92,18 +90,15 @@ export default function DashboardHeader({
           🏀 New Basketball Game
         </button>
 
-        {/* Trivia (restored) */}
+        {/* ✅ TRIVIA — ENABLED */}
         <button
-          disabled
-          className={cn(
-            btn,
-            "bg-gray-400 opacity-60 cursor-not-allowed"
-          )}
+          onClick={onCreateTriviaGame}
+          className={cn(btn, "bg-emerald-600 hover:bg-emerald-700")}
         >
           🧠 New Trivia Game
         </button>
 
-        {/* Slide Show Wall */}
+        {/* Slide Show */}
         <button
           onClick={onCreateSlideShow}
           className={cn(btn, "bg-pink-600 hover:bg-pink-700")}

@@ -32,6 +32,8 @@ import HostProfilePanel from "@/components/HostProfilePanel";
 import CreateNewAdModal from "@/components/CreateNewAdModal";
 import AdBuilderModal from "@/components/AdBuilderModal";
 
+import TriviaModerationModal from "@/components/TriviaModerationModal"; // ✅ NEW
+
 import { cn } from "@/lib/utils";
 
 const supabase = getSupabaseClient();
@@ -64,14 +66,20 @@ export default function DashboardPage() {
   const [selectedPoll, setSelectedPoll] = useState<any | null>(null);
   const [selectedSlideshow, setSelectedSlideshow] = useState<any | null>(null);
 
-  // ⭐ NEW — Basketball options modal
-  const [selectedBasketballGame, setSelectedBasketballGame] = useState<any | null>(null);
-  const [isBasketballOptionsOpen, setBasketballOptionsOpen] = useState(false);
+  // ⭐ Basketball options modal
+  const [selectedBasketballGame, setSelectedBasketballGame] =
+    useState<any | null>(null);
+  const [isBasketballOptionsOpen, setBasketballOptionsOpen] =
+    useState(false);
 
   // Ads Builder
   const [isCreateAdModalOpen, setCreateAdModalOpen] = useState(false);
   const [builderAdId, setBuilderAdId] = useState<string | null>(null);
   const [showBuilderModal, setShowBuilderModal] = useState(false);
+
+  // ✅ NEW: which trivia is being moderated?
+  const [selectedTriviaForModeration, setSelectedTriviaForModeration] =
+    useState<any | null>(null);
 
   const loadedRef = useRef(false);
 
@@ -84,7 +92,9 @@ export default function DashboardPage() {
 
     async function load() {
       try {
-        const { data: { user } } = await supabase.auth.getUser();
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
         if (!user) throw new Error("No authenticated user");
 
         let { data: hostRow } = await supabase
@@ -126,27 +136,32 @@ export default function DashboardPage() {
           ] = await Promise.all([
             getFanWallsByHost(hostRow.id),
 
-            supabase.from("prize_wheels")
+            supabase
+              .from("prize_wheels")
               .select("*")
               .eq("host_id", hostRow.id)
               .order("created_at", { ascending: false }),
 
-            supabase.from("polls")
+            supabase
+              .from("polls")
               .select("*")
               .eq("host_id", hostRow.id)
               .order("created_at", { ascending: false }),
 
-            supabase.from("trivia_cards")
+            supabase
+              .from("trivia_cards")
               .select("*")
               .eq("host_id", hostRow.id)
               .order("created_at", { ascending: false }),
 
-            supabase.from("slide_shows")
+            supabase
+              .from("slide_shows")
               .select("*")
               .eq("host_id", hostRow.id)
               .order("created_at", { ascending: false }),
 
-            supabase.from("bb_games")
+            supabase
+              .from("bb_games")
               .select("*")
               .eq("host_id", hostRow.id)
               .order("created_at", { ascending: false }),
@@ -159,7 +174,6 @@ export default function DashboardPage() {
           setSlideshows(slideshowsData.data || []);
           setBasketballGames(basketballData.data || []);
         }
-
       } catch (err: any) {
         console.error("❌ Dashboard load error:", err.message || err);
       } finally {
@@ -230,29 +244,35 @@ export default function DashboardPage() {
   }
 
   /* ---------------------------------------------- */
-  /* TRIVIA CREATION */
+  /* TRIVIA CREATION — AI GENERATED                 */
   /* ---------------------------------------------- */
   async function handleGenerateTrivia(payload: any) {
-    const { data, error } = await supabase
-      .from("trivia_cards")
-      .insert({
-        host_id: payload.hostId,
-        public_name: payload.publicName,
-        private_name: payload.privateName,
-        topic_prompt: payload.topicPrompt,
-        num_questions: payload.numQuestions,
-        difficulty: payload.difficulty,
-        num_rounds: payload.numRounds,
-        same_topic_for_all_rounds: payload.sameTopicForAllRounds,
-        round_topics: payload.roundTopics,
-        created_at: new Date().toISOString(),
-      })
-      .select()
-      .single();
+    try {
+      console.log("🚀 Generating trivia via AI", payload);
 
-    if (!error) {
+      const res = await fetch("/trivia/ai-generate", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const json = await res.json();
+
+      if (!res.ok || !json.success) {
+        console.error("❌ Trivia generation failed:", json);
+        alert("Trivia generation failed. Check server logs.");
+        return;
+      }
+
+      console.log("✅ Trivia generated:", json.triviaId);
+
       await refreshTrivia();
       setTriviaModalOpen(false);
+    } catch (err) {
+      console.error("❌ Trivia generation threw:", err);
+      alert("Trivia generation crashed. Check console/server logs.");
     }
   }
 
@@ -261,7 +281,11 @@ export default function DashboardPage() {
   /* ---------------------------------------------- */
   if (loading)
     return (
-      <div className={cn("flex items-center justify-center h-screen bg-black text-white")}>
+      <div
+        className={cn(
+          "flex items-center justify-center h-screen bg-black text-white"
+        )}
+      >
         <p>Loading Dashboard…</p>
       </div>
     );
@@ -270,8 +294,11 @@ export default function DashboardPage() {
   /* RENDER DASHBOARD */
   /* ---------------------------------------------- */
   return (
-    <div className={cn("min-h-screen bg-[#0b111d] text-white flex flex-col items-center p-8")}>
-
+    <div
+      className={cn(
+        "min-h-screen bg-[#0b111d] text-white flex flex-col items_center p-8"
+      ).replace("items_center", "items-center")}
+    >
       <div className={cn("w-full flex items-center justify-between mb-6")}>
         <h1 className={cn("text-3xl font-semibold")}>Host Dashboard</h1>
         <HostProfilePanel host={host} setHost={setHost} />
@@ -288,14 +315,17 @@ export default function DashboardPage() {
         onCreateBasketballGame={() => setBasketballModalOpen(true)}
       />
 
+      {/* ---------------- TRIVIA GRID ---------------- */}
       <TriviaGrid
         trivia={triviaList}
         host={host}
         refreshTrivia={refreshTrivia}
         onOpenOptions={() => {}}
+        // ✅ Hook moderation handler
+        onOpenModeration={(t) => setSelectedTriviaForModeration(t)}
       />
 
-      <div className={cn("w-full max-w-6xl mt-10")}>
+      <div className={cn("w_full max-w-6xl mt-10").replace("w_full", "w-full")}>
         <SlideshowGrid
           slideshows={slideshows}
           host={host}
@@ -441,10 +471,7 @@ export default function DashboardPage() {
 
       {/* ---------------- ADS MODAL ---------------- */}
       {isAdsModalOpen && (
-        <AdsManagerModal
-          host={host}
-          onClose={() => setAdsModalOpen(false)}
-        />
+        <AdsManagerModal host={host} onClose={() => setAdsModalOpen(false)} />
       )}
 
       {/* ---------------- AD CREATOR → BUILDER ---------------- */}
@@ -467,6 +494,13 @@ export default function DashboardPage() {
         />
       )}
 
+      {/* ---------------- TRIVIA MODERATION MODAL ---------------- */}
+      {selectedTriviaForModeration && (
+        <TriviaModerationModal
+          triviaId={selectedTriviaForModeration.id}
+          onClose={() => setSelectedTriviaForModeration(null)}
+        />
+      )}
     </div>
   );
 }

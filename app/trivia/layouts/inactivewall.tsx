@@ -1,32 +1,55 @@
 "use client";
 
 import { QRCodeCanvas } from "qrcode.react";
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState } from "react";
+
+/* ---------- TYPES ---------- */
+interface TriviaInactiveWallProps {
+  trivia: any;
+}
+
+/* ---------- FULLSCREEN ---------- */
+function toggleFullscreen() {
+  if (!document.fullscreenElement) {
+    document.documentElement.requestFullscreen().catch(() => {});
+  } else {
+    document.exitFullscreen().catch(() => {});
+  }
+}
 
 /* ---------- COUNTDOWN COMPONENT ---------- */
-function CountdownDisplay({ countdown, countdownActive }) {
+function CountdownDisplay({
+  countdown,
+  countdownActive,
+}: {
+  countdown: string;
+  countdownActive: boolean;
+}) {
   const [timeLeft, setTimeLeft] = useState(0);
-  const [active, setActive] = useState(countdownActive);
+  const [active, setActive] = useState(false);
 
   useEffect(() => {
-    if (!countdown) return;
-    const [numStr] = countdown.split(" ");
-    const num = parseInt(numStr);
-    const mins = countdown.toLowerCase().includes("minute");
-    const secs = countdown.toLowerCase().includes("second");
-    const total = mins ? num * 60 : secs ? num : 0;
+    // Default to 10 seconds if not provided
+    const value =
+      countdown && countdown !== "none" ? countdown : "10 seconds";
+
+    const [numStr] = value.split(" ");
+    const num = parseInt(numStr, 10);
+    const total = isNaN(num) ? 10 : num;
 
     setTimeLeft(total);
-    setActive(!!countdownActive);
+    setActive(countdownActive);
   }, [countdown, countdownActive]);
 
   useEffect(() => {
     if (!active || timeLeft <= 0) return;
-    const timer = setInterval(() => setTimeLeft(t => (t > 1 ? t - 1 : 0)), 1000);
+
+    const timer = setInterval(() => {
+      setTimeLeft((t) => (t > 0 ? t - 1 : 0));
+    }, 1000);
+
     return () => clearInterval(timer);
   }, [active, timeLeft]);
-
-  if (!countdown || countdown === "none") return null;
 
   const m = Math.floor(timeLeft / 60);
   const s = timeLeft % 60;
@@ -46,10 +69,12 @@ function CountdownDisplay({ countdown, countdownActive }) {
 }
 
 /* -------------------------------------------------------------------------- */
-/* 🎮 TRIVIA INACTIVE WALL                                                    */
+/* 🎮 TRIVIA INACTIVE WALL                                                     */
 /* -------------------------------------------------------------------------- */
 
-export default function TriviaInactiveWall({ trivia }) {
+export default function TriviaInactiveWall({
+  trivia,
+}: TriviaInactiveWallProps) {
   const [bg, setBg] = useState(
     "linear-gradient(to bottom right,#1b2735,#090a0f)"
   );
@@ -58,12 +83,10 @@ export default function TriviaInactiveWall({ trivia }) {
   );
 
   const [wallState, setWallState] = useState({
-    countdown: "",
+    countdown: "10 seconds",
     countdownActive: false,
     title: "",
   });
-
-  const updateTimeout = useRef(null);
 
   /* 🌟 Pulse animation */
   const PulseStyle = (
@@ -80,8 +103,11 @@ export default function TriviaInactiveWall({ trivia }) {
     if (!trivia) return;
 
     setWallState({
-      countdown: trivia.countdown || "",
-      countdownActive: !!trivia.countdown_active,
+      countdown: trivia.countdown || "10 seconds",
+
+      // 🔑 THIS IS THE FIX — countdown only listens to countdown_active
+      countdownActive: trivia.countdown_active === true,
+
       title: trivia.title || "",
     });
 
@@ -102,10 +128,11 @@ export default function TriviaInactiveWall({ trivia }) {
 
   const qrValue = `${origin}/trivia/${trivia?.id}/join`;
 
+  /* ✅ LOGO PRIORITY (NO CHANGE) */
   const displayLogo =
-    trivia?.host?.branding_logo_url?.trim()
-      ? trivia.host.branding_logo_url
-      : "/faninteractlogo.png";
+    trivia?.host?.branding_logo_url?.trim() ||
+    trivia?.host?.logo_url?.trim() ||
+    "/faninteractlogo.png";
 
   if (!trivia) return <div>Loading Trivia…</div>;
 
@@ -176,15 +203,8 @@ export default function TriviaInactiveWall({ trivia }) {
           <QRCodeCanvas
             value={qrValue}
             size={1000}
-            bgColor="#ffffff"
-            fgColor="#000000"
             level="H"
-            style={{
-              width: "100%",
-              height: "100%",
-              objectFit: "contain",
-              borderRadius: 18,
-            }}
+            style={{ width: "100%", height: "100%" }}
           />
         </div>
 
@@ -222,7 +242,7 @@ export default function TriviaInactiveWall({ trivia }) {
             />
           </div>
 
-          {/* DIVIDER */}
+          {/* GREY DIVIDER — UNTOUCHED */}
           <div
             style={{
               position: "absolute",
@@ -236,7 +256,7 @@ export default function TriviaInactiveWall({ trivia }) {
             }}
           />
 
-          {/* MAIN TEXT: Trivia Game */}
+          {/* MAIN TEXT */}
           <p
             style={{
               position: "absolute",
@@ -286,6 +306,29 @@ export default function TriviaInactiveWall({ trivia }) {
             />
           </div>
         </div>
+      </div>
+
+      {/* FULLSCREEN BUTTON */}
+      <div
+        onClick={toggleFullscreen}
+        style={{
+          position: "fixed",
+          bottom: 28,
+          right: 28,
+          width: 42,
+          height: 42,
+          borderRadius: 12,
+          background: "rgba(255,255,255,0.08)",
+          border: "1px solid rgba(255,255,255,0.2)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          cursor: "pointer",
+          opacity: 0.45,
+          zIndex: 999999,
+        }}
+      >
+        ⛶
       </div>
     </div>
   );

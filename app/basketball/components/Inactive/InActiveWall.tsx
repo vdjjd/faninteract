@@ -17,6 +17,15 @@ export default function InactiveWall({ game }: { game: any }) {
   const [showStartingSoon, setShowStartingSoon] = useState(true);
 
   /* ---------------------------------------------------------
+     LOGO MANUAL TUNING CONTROLS
+     (Adjust THESE only)
+  --------------------------------------------------------- */
+  const LOGO_LEFT = "53%"; // horizontal position
+  const LOGO_TOP = "15%"; // vertical position (keep < 50%)
+  const LOGO_WIDTH = "clamp(240px, 24vw, 420px)";
+  const LOGO_MAX_HEIGHT = "clamp(120px, 16vh, 240px)";
+
+  /* ---------------------------------------------------------
      LOAD HOST LOGO
   --------------------------------------------------------- */
   useEffect(() => {
@@ -33,7 +42,7 @@ export default function InactiveWall({ game }: { game: any }) {
   }, [game?.host_id]);
 
   /* ---------------------------------------------------------
-     REALTIME SUBSCRIPTION — reacts instantly to DB changes
+     REALTIME SUBSCRIPTION
   --------------------------------------------------------- */
   useEffect(() => {
     if (!game?.id) return;
@@ -49,16 +58,12 @@ export default function InactiveWall({ game }: { game: any }) {
           filter: `id=eq.${game.id}`,
         },
         (payload) => {
-          const updated = payload.new as any; // 👈 FIXED typing here
+          const updated = payload.new as any;
 
-          console.log("📡 LIVE WALL UPDATE", updated);
-
-          // Sync brightness
           if (updated.background_brightness !== undefined) {
             setBrightness(updated.background_brightness);
           }
 
-          // When wall becomes active or countdown starts → hide "Starting Soon"
           if (updated.wall_active === true || updated.game_running === true) {
             setShowStartingSoon(false);
           }
@@ -74,7 +79,7 @@ export default function InactiveWall({ game }: { game: any }) {
   }, [game?.id]);
 
   /* ---------------------------------------------------------
-     LISTEN FOR DASHBOARD start_countdown → hide "Starting Soon"
+     DASHBOARD MESSAGE LISTENER
   --------------------------------------------------------- */
   useEffect(() => {
     function handleMsg(e: MessageEvent) {
@@ -87,7 +92,7 @@ export default function InactiveWall({ game }: { game: any }) {
   }, []);
 
   /* ---------------------------------------------------------
-     QR CODE VALUES
+     QR CODE
   --------------------------------------------------------- */
   const origin =
     typeof window !== "undefined"
@@ -97,7 +102,7 @@ export default function InactiveWall({ game }: { game: any }) {
   const qrValue = `${origin}/guest/signup?basketball=${game.id}`;
 
   /* ---------------------------------------------------------
-     HOST LOGO CHOOSER
+     HOST LOGO PICKER
   --------------------------------------------------------- */
   const displayLogo =
     hostData?.branding_logo_url?.trim()
@@ -112,7 +117,7 @@ export default function InactiveWall({ game }: { game: any }) {
       : document.exitFullscreen();
 
   /* ---------------------------------------------------------
-     RENDER UI
+     RENDER
   --------------------------------------------------------- */
   return (
     <div
@@ -161,7 +166,7 @@ export default function InactiveWall({ game }: { game: any }) {
           overflow: "hidden",
         }}
       >
-        {/* LEFT QR CODE */}
+        {/* LEFT QR */}
         <div
           style={{
             position: "absolute",
@@ -188,22 +193,32 @@ export default function InactiveWall({ game }: { game: any }) {
           />
         </div>
 
-        {/* RIGHT CONTENT AREA */}
+        {/* RIGHT CONTENT */}
         <div style={{ flexGrow: 1, marginLeft: "44%", position: "relative" }}>
           {/* HOST LOGO */}
           <div
             style={{
               position: "absolute",
-              top: "2%",
-              left: "53%",
+              left: LOGO_LEFT,
+              top: LOGO_TOP,
               transform: "translateX(-50%)",
-              width: "clamp(300px,27vw,400px)",
-              height: "clamp(300px,12vw,260px)",
+
+              width: LOGO_WIDTH,
+              maxHeight: LOGO_MAX_HEIGHT,
+
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              pointerEvents: "none",
             }}
           >
             <img
               src={displayLogo}
-              style={{ width: "100%", height: "100%", objectFit: "contain" }}
+              style={{
+                width: "90%",
+                height: "90%",
+                objectFit: "contain",
+              }}
             />
           </div>
 
@@ -238,7 +253,7 @@ export default function InactiveWall({ game }: { game: any }) {
             Basketball Battle
           </p>
 
-          {/* STARTING SOON (auto hides when countdown starts) */}
+          {/* STARTING SOON */}
           {showStartingSoon && (
             <p
               style={{
@@ -256,7 +271,6 @@ export default function InactiveWall({ game }: { game: any }) {
             </p>
           )}
 
-          {/* Pulse animation */}
           <style>{`
             @keyframes pulse {
               0%,100% { opacity: .7 }
@@ -266,7 +280,7 @@ export default function InactiveWall({ game }: { game: any }) {
         </div>
       </div>
 
-      {/* FULLSCREEN BUTTON */}
+      {/* FULLSCREEN */}
       <div
         onClick={toggleFullscreen}
         style={{

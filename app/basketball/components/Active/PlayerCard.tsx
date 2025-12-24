@@ -9,6 +9,23 @@ type PlayerCardProps = {
   animationName?: string | null;
 };
 
+/* ============================================================
+   CONFIG (LOCK THESE)
+============================================================ */
+
+const LANES = 10;
+const CENTER_LANE = (LANES - 1) / 2;
+const LANE_SPACING = 42;
+
+const BALL_START_BOTTOM = "14%";
+
+// Measured from your image
+const HOOP_Y = -245;
+
+/* ============================================================
+   PLAYER CARD
+============================================================ */
+
 export default function PlayerCard({
   index,
   borderColor,
@@ -21,53 +38,60 @@ export default function PlayerCard({
 
   useEffect(() => {
     if (!animationName || !ballRef.current) return;
-
-    cancelAnimationFrame(rafRef.current!);
-
-    const isHit = animationName.includes("hit");
-    const missLeft = animationName.includes("left");
-    const missRight = animationName.includes("right");
-    const missLong = animationName.includes("long");
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
 
     const ball = ballRef.current;
     const start = performance.now();
+    const duration = 900;
+
+    // Lane horizontal offset (ONLY X bias)
+    const laneOffsetX = (index - CENTER_LANE) * LANE_SPACING;
 
     setShooting(true);
 
     function animate(now: number) {
-      const t = Math.min((now - start) / 900, 1);
+      const t = Math.min((now - start) / duration, 1);
 
-      const arc = -4 * 260 * (t - 0.5) ** 2 + 260;
+      /* ------------------------------------------------------------
+         PURE VERTICAL ARC (NO BIAS EVER)
+      ------------------------------------------------------------ */
+      const arcHeight = 320;
+      const arc = -4 * arcHeight * (t - 0.5) ** 2 + arcHeight;
 
-      let x = 0;
-      let y = arc;
-      let scale = 1 - t * 0.5;
+      const y = -arc;
 
-      if (t === 1) {
-        if (isHit) {
-          y = 160;
-          scale = 0.42;
-        } else {
-          y = 70;
-          scale = 0.46;
-          if (missLeft) x = -90;
-          if (missRight) x = 90;
-          if (missLong) y = 120;
-        }
+      /* ------------------------------------------------------------
+         PURE HORIZONTAL DRIFT (LINEAR, STABLE)
+      ------------------------------------------------------------ */
+      const x = laneOffsetX * t;
+
+      /* ------------------------------------------------------------
+         SCALE NEAR HOOP ONLY
+      ------------------------------------------------------------ */
+      let scale = 1;
+      if (t > 0.7) {
+        const sT = (t - 0.7) / 0.3;
+        scale = 1 - sT * 0.55;
       }
 
       ball.style.transform = `
-        translate(calc(-50% + ${x}px), ${-y}px)
+        translate(${x}px, ${y}px)
         scale(${scale})
       `;
 
-      if (t < 1) rafRef.current = requestAnimationFrame(animate);
-      else setShooting(false);
+      if (t < 1) {
+        rafRef.current = requestAnimationFrame(animate);
+      } else {
+        setShooting(false);
+      }
     }
 
     rafRef.current = requestAnimationFrame(animate);
-    return () => cancelAnimationFrame(rafRef.current!);
-  }, [animationName]);
+
+    return () => {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    };
+  }, [animationName, index]);
 
   return (
     <div
@@ -81,27 +105,52 @@ export default function PlayerCard({
         overflow: "hidden",
       }}
     >
-      <div style={{ position: "absolute", top: 8, left: 10, fontWeight: 800 }}>
+      {/* PLAYER LABEL */}
+      <div
+        style={{
+          position: "absolute",
+          top: 10,
+          left: 12,
+          fontWeight: 900,
+          fontSize: 18,
+          color: "#fff",
+          textShadow: "1px 1px 2px #000",
+        }}
+      >
         P{index + 1}
       </div>
 
-      <div style={{ position: "absolute", top: 8, right: 10, fontSize: 32 }}>
+      {/* SCORE */}
+      <div
+        style={{
+          position: "absolute",
+          top: 10,
+          right: 12,
+          fontSize: 34,
+          fontWeight: 900,
+          color: "#fff",
+          textShadow: "2px 2px 4px #000",
+        }}
+      >
         {score}
       </div>
 
-      {shooting && (
-        <img
-          ref={ballRef}
-          src="/ball.png"
-          style={{
-            position: "absolute",
-            left: "50%",
-            bottom: "72%",
-            width: 90,
-            pointerEvents: "none",
-          }}
-        />
-      )}
+      {/* BALL */}
+      <img
+        ref={ballRef}
+        src="/ball.png"
+        alt="Basketball"
+        style={{
+          position: "absolute",
+          left: "50%",
+          bottom: BALL_START_BOTTOM,
+          width: 90,
+          transform: "translateX(-50%)",
+          pointerEvents: "none",
+          zIndex: 5,
+          opacity: shooting ? 1 : 0,
+        }}
+      />
     </div>
   );
 }
