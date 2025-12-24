@@ -133,9 +133,7 @@ export default function TriviaJoinPage() {
     return new Blob([buffer], { type: mime });
   }
 
-  /* Simple crop export – we're already compressing on input.
-     If you want to hard-apply `croppedAreaPixels`, we can wire
-     that in later. */
+  /* Simple crop export – we're already compressing on input. */
   async function uploadImage() {
     if (!imageSrc || !profile?.id) return null;
 
@@ -195,7 +193,7 @@ export default function TriviaJoinPage() {
     setJoining(true);
 
     try {
-      // 1️⃣ Find trivia session (ANY status – waiting, countdown, playing, etc.)
+      // 1️⃣ Find trivia session for this card (ANY status)
       const { data: session, error: sessionErr } = await supabase
         .from("trivia_sessions")
         .select("id,status")
@@ -208,7 +206,12 @@ export default function TriviaJoinPage() {
         return;
       }
 
+      // 🔴 IMPORTANT:
+      // If a session exists at ALL (waiting / not started / running / whatever),
+      // we let the player join and place them in the moderation pool.
       if (!session) {
+        // If you truly want guests to join even before host opens a session,
+        // you could auto-create a "waiting" session here.
         setJoinError(
           "This trivia game hasn't been opened by the host yet. Ask them to open the game, then try again."
         );
@@ -226,7 +229,7 @@ export default function TriviaJoinPage() {
         "Guest";
 
       // 2️⃣ Check if player already exists for this session
-      const { data: existingPlayer, error: existingErr } = await supabase
+      const { data: existingPlayer } = await supabase
         .from("trivia_players")
         .select("id")
         .eq("session_id", session.id)
@@ -256,7 +259,7 @@ export default function TriviaJoinPage() {
             guest_id: profile.id,
             display_name: displayName,
             photo_url: photoUrl,
-            status: "pending", // always go through moderation
+            status: "pending", // ALWAYS moderation
           });
 
         if (insertErr) {
@@ -266,7 +269,7 @@ export default function TriviaJoinPage() {
         }
       }
 
-      // 3️⃣ Send them to the shared Thank You / Waiting page (trivia mode)
+      // 3️⃣ Send them to THANK YOU / WAITING page (Trivia mode)
       router.push(`/thankyou/${triviaId}?type=trivia`);
     } finally {
       setJoining(false);
