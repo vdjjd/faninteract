@@ -43,6 +43,8 @@ export default function TriviaModerationModal({
     null
   );
   const [selectedPhoto, setSelectedPhoto] = useState<string | null>(null);
+
+  // ✅ We will now track whatever the "current" session is (waiting OR running)
   const [sessionId, setSessionId] = useState<string | null>(null);
 
   const rt = useRealtimeChannel();
@@ -53,26 +55,30 @@ export default function TriviaModerationModal({
   }
 
   /* --------------------------------------------------------- */
-  /* Load current running session + players                    */
-/* --------------------------------------------------------- */
+  /* Load latest session + players (no dependence on Play)     */
+  /* --------------------------------------------------------- */
   async function loadAll() {
     setLoading(true);
 
-    // 1️⃣ Find the running session for this trivia card
+    // 1️⃣ Find the MOST RECENT session for this trivia card (any status)
     const { data: session, error: sessionErr } = await supabase
       .from("trivia_sessions")
-      .select("id,status")
+      .select("id,status,created_at")
       .eq("trivia_card_id", triviaId)
-      .eq("status", "running")
+      .order("created_at", { ascending: false })
+      .limit(1)
       .maybeSingle();
 
     if (sessionErr) {
       console.error("❌ trivia_sessions fetch error:", sessionErr);
+      setSessionId(null);
+      setEntries([]);
       setLoading(false);
       return;
     }
 
     if (!session) {
+      // No one has joined yet → no session
       setSessionId(null);
       setEntries([]);
       setLoading(false);
@@ -81,7 +87,7 @@ export default function TriviaModerationModal({
 
     setSessionId(session.id);
 
-    // 2️⃣ Load players for this session
+    // 2️⃣ Load players for this session (pending / approved / rejected)
     const { data, error } = await supabase
       .from("trivia_players")
       .select("*, guest_profiles(*)")
@@ -90,6 +96,8 @@ export default function TriviaModerationModal({
 
     if (!error && data) {
       setEntries(data as any);
+    } else if (error) {
+      console.error("❌ trivia_players fetch error:", error);
     }
 
     setLoading(false);
@@ -97,7 +105,7 @@ export default function TriviaModerationModal({
 
   /* --------------------------------------------------------- */
   /* Approve / Reject / Delete                                 */
-/* --------------------------------------------------------- */
+  /* --------------------------------------------------------- */
 
   async function handleApprove(id: string) {
     await supabase
@@ -151,13 +159,16 @@ export default function TriviaModerationModal({
   }
 
   /* --------------------------------------------------------- */
-  /* Realtime sync                                             */
-/* --------------------------------------------------------- */
+  /* Initial load                                              */
+  /* --------------------------------------------------------- */
   useEffect(() => {
     loadAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [triviaId]);
 
+  /* --------------------------------------------------------- */
+  /* Realtime sync for that session                            */
+  /* --------------------------------------------------------- */
   useEffect(() => {
     if (!sessionId) return;
 
@@ -253,8 +264,8 @@ export default function TriviaModerationModal({
         {loading ? (
           <p className="text-center">Loading…</p>
         ) : !sessionId ? (
-          <p className={cn('text-center', 'text-gray-300')}>
-            No running trivia session found for this game.
+          <p className={cn("text-center", "text-gray-300")}>
+            No players have joined this trivia yet.
           </p>
         ) : (
           <>
@@ -472,7 +483,7 @@ function Section({
                   </p>
                 </div>
 
-                {/* APPROVE / REJECT */}
+                {/* APPROVE / REJECT or DELETE */}
                 {!showDelete ? (
                   <div
                     className={cn(
