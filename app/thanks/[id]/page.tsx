@@ -60,6 +60,7 @@ export default function ThankYouPage() {
 
   let detectedType =
     path.includes("/basketball/") ? "basketball" :
+    path.includes("/trivia/") ? "trivia" :
     path.includes("/polls/") ? "poll" :
     path.includes("/prizewheel/") ? "wheel" :
     path.includes("/wall/") ? "wall" :
@@ -74,6 +75,12 @@ export default function ThankYouPage() {
 
   const pollRef = useRef<NodeJS.Timeout | null>(null);
   const wakeLockRef = useRef<any>(null);
+
+  // Trivia state
+  const [triviaPhase, setTriviaPhase] =
+    useState<"waiting" | "countdown" | "playing">("waiting");
+  const [countdownStartedAt, setCountdownStartedAt] =
+    useState<string | null>(null);
 
   /* ---------------------------------------------------------
      Load guest profile
@@ -101,6 +108,8 @@ export default function ThankYouPage() {
           ? "prize_wheels"
           : type === "basketball"
           ? "bb_games"
+          : type === "trivia"
+          ? "trivia_cards"
           : "fan_walls";
 
       const select =
@@ -178,7 +187,7 @@ export default function ThankYouPage() {
   }, [type]);
 
   /* ---------------------------------------------------------
-     Poll for approval → redirect to shooter
+     Basketball: Poll for approval → redirect to shooter
   --------------------------------------------------------- */
   useEffect(() => {
     if (type !== "basketball" || !profile?.id || !gameId) return;
@@ -219,6 +228,72 @@ export default function ThankYouPage() {
   }, [type, profile, gameId, supabase, router]);
 
   /* ---------------------------------------------------------
+     Trivia: Load initial session + subscribe for state changes
+  --------------------------------------------------------- */
+  useEffect(() => {
+    if (type !== "trivia" || !gameId) return;
+
+    let mounted = true;
+
+    async function loadInitialSession() {
+      const { data: session } = await supabase
+        .from("trivia_sessions")
+        .select("status,countdown_started_at")
+        .eq("trivia_card_id", gameId as string)
+        .maybeSingle();
+
+      if (!mounted || !session) return;
+
+      if (session.status === "countdown") {
+        setTriviaPhase("countdown");
+        setCountdownStartedAt(session.countdown_started_at);
+      } else if (session.status === "playing") {
+        setTriviaPhase("playing");
+        router.replace(`/trivia/${gameId}/question/0`);
+      } else {
+        setTriviaPhase("waiting");
+      }
+    }
+
+    loadInitialSession();
+
+    const channel = supabase
+      .channel(`trivia-session-${gameId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "trivia_sessions",
+          filter: `trivia_card_id=eq.${gameId}`,
+        },
+        (payload) => {
+          const status = payload.new.status;
+
+          if (status === "countdown") {
+            setTriviaPhase("countdown");
+            setCountdownStartedAt(payload.new.countdown_started_at);
+          }
+
+          if (status === "playing") {
+            setTriviaPhase("playing");
+            router.replace(`/trivia/${gameId}/question/0`);
+          }
+
+          if (status === "waiting") {
+            setTriviaPhase("waiting");
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      mounted = false;
+      supabase.removeChannel(channel);
+    };
+  }, [type, gameId, supabase, router]);
+
+  /* ---------------------------------------------------------
      Badge logic
   --------------------------------------------------------- */
   const badge =
@@ -252,10 +327,40 @@ export default function ThankYouPage() {
         return "Your vote has been recorded!";
       case "wheel":
         return "You're in! Watch for your chance…";
+      case "trivia":
+        return "You’re in! Get ready for the trivia game.";
       default:
         return "Your submission was received!";
     }
-  }, [type]);
+  }, [type, profile?.first_name]);
+
+  /* ---------------------------------------------------------
+     Trivia countdown full-screen (black) override
+  --------------------------------------------------------- */
+  if (type === "trivia" && triviaPhase === "countdown") {
+    const start = countdownStartedAt
+      ? new Date(countdownStartedAt).getTime()
+      : Date.now();
+    const elapsed = Math.floor((Date.now() - start) / 1000);
+    const secondsLeft = Math.max(0, 10 - elapsed);
+
+    return (
+      <div
+        style={{
+          minHeight: "100vh",
+          background: "black",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          color: "#fff",
+          fontSize: "5rem",
+          fontWeight: 900,
+        }}
+      >
+        {secondsLeft}
+      </div>
+    );
+  }
 
   /* ---------------------------------------------------------
      Render
@@ -325,7 +430,7 @@ export default function ThankYouPage() {
           {message}
         </p>
 
-        {/* WAITING STATE */}
+        {/* WAITING STATE FOR BASKETBALL */}
         {type === "basketball" && (
           <>
             <div
@@ -355,6 +460,36 @@ export default function ThankYouPage() {
               <span style={{ opacity: 0.7 }}>
                 (On Safari, please keep your screen awake manually.)
               </span>
+            </p>
+          </>
+        )}
+
+        {/* WAITING STATE FOR TRIVIA */}
+        {type === "trivia" && triviaPhase === "waiting" && (
+          <>
+            <div
+              style={{
+                marginTop: 22,
+                fontSize: "1.4rem",
+                fontWeight: 900,
+                color: "#38bdf8",
+                textShadow: "0 0 12px rgba(56,189,248,0.8)",
+              }}
+            >
+              Waiting for the game to begin…
+            </div>
+
+            <p
+              style={{
+                marginTop: 10,
+                fontSize: "0.9rem",
+                color: "#cbd5e1",
+                opacity: 0.85,
+              }}
+            >
+              Keep this screen open.
+              <br />
+              The countdown and first question will appear automatically.
             </p>
           </>
         )}

@@ -133,9 +133,9 @@ export default function TriviaJoinPage() {
     return new Blob([buffer], { type: mime });
   }
 
-  /* Simple crop export – we’re already compressing on input,
-     so here we’ll upload the full dataURL. If you want to
-     hard-apply `croppedAreaPixels`, we can wire that in later. */
+  /* Simple crop export – we're already compressing on input.
+     If you want to hard-apply `croppedAreaPixels`, we can wire
+     that in later. */
   async function uploadImage() {
     if (!imageSrc || !profile?.id) return null;
 
@@ -195,12 +195,11 @@ export default function TriviaJoinPage() {
     setJoining(true);
 
     try {
-      // 1️⃣ Find running trivia session
+      // 1️⃣ Find trivia session (ANY status – waiting, countdown, playing, etc.)
       const { data: session, error: sessionErr } = await supabase
         .from("trivia_sessions")
         .select("id,status")
         .eq("trivia_card_id", triviaId)
-        .eq("status", "running")
         .maybeSingle();
 
       if (sessionErr) {
@@ -211,21 +210,12 @@ export default function TriviaJoinPage() {
 
       if (!session) {
         setJoinError(
-          "This trivia game isn't live yet. Ask your host to press Play, then try again."
+          "This trivia game hasn't been opened by the host yet. Ask them to open the game, then try again."
         );
         return;
       }
 
-      // 2️⃣ Check if player already exists for this session
-      const { data: existingPlayer, error: existingErr } = await supabase
-        .from("trivia_players")
-        .select("*")
-        .eq("session_id", session.id)
-        .eq("guest_id", profile.id)
-        .maybeSingle();
-
       let photoUrl: string | null = null;
-
       if (requireSelfie && imageSrc) {
         photoUrl = await uploadImage();
       }
@@ -235,14 +225,21 @@ export default function TriviaJoinPage() {
         profile.nickname ||
         "Guest";
 
+      // 2️⃣ Check if player already exists for this session
+      const { data: existingPlayer, error: existingErr } = await supabase
+        .from("trivia_players")
+        .select("id")
+        .eq("session_id", session.id)
+        .eq("guest_id", profile.id)
+        .maybeSingle();
+
       if (existingPlayer) {
-        // 3️⃣ Update existing player selfie/status
         const { error: updateErr } = await supabase
           .from("trivia_players")
           .update({
             display_name: displayName,
-            photo_url: photoUrl ?? existingPlayer.photo_url,
-            status: "pending", // moderation will flip to approved
+            photo_url: photoUrl,
+            status: "pending", // moderation pool
           })
           .eq("id", existingPlayer.id);
 
@@ -252,7 +249,6 @@ export default function TriviaJoinPage() {
           return;
         }
       } else {
-        // 4️⃣ Insert new trivia_players row
         const { error: insertErr } = await supabase
           .from("trivia_players")
           .insert({
@@ -260,7 +256,7 @@ export default function TriviaJoinPage() {
             guest_id: profile.id,
             display_name: displayName,
             photo_url: photoUrl,
-            status: "pending", // will go through moderation
+            status: "pending", // always go through moderation
           });
 
         if (insertErr) {
@@ -270,8 +266,8 @@ export default function TriviaJoinPage() {
         }
       }
 
-      // 5️⃣ Send them to the trivia "button" page
-      router.push(`/trivia/${triviaId}/play`);
+      // 3️⃣ Send them to the shared Thank You / Waiting page (trivia mode)
+      router.push(`/thankyou/${triviaId}?type=trivia`);
     } finally {
       setJoining(false);
     }
