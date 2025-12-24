@@ -67,7 +67,13 @@ export default function ThankYouPage() {
     "lead";
 
   if (rawType) detectedType = rawType.toLowerCase();
-  const type = detectedType;
+  const type = detectedType as
+    | "basketball"
+    | "trivia"
+    | "poll"
+    | "wheel"
+    | "wall"
+    | "lead";
 
   const [data, setData] = useState<any>(null);
   const [profile, setProfile] = useState<any>(null);
@@ -80,7 +86,10 @@ export default function ThankYouPage() {
   const [triviaPhase, setTriviaPhase] =
     useState<"waiting" | "countdown" | "playing">("waiting");
   const [countdownStartedAt, setCountdownStartedAt] =
-    useState<string | null>(null);
+    useState<number | null>(null);
+
+  // For ticking countdown
+  const [now, setNow] = useState<number>(() => Date.now());
 
   /* ---------------------------------------------------------
      Load guest profile
@@ -161,7 +170,7 @@ export default function ThankYouPage() {
   }, [profile, data?.host?.id]);
 
   /* ---------------------------------------------------------
-     Wake Lock (controller mode)
+     Wake Lock (basketball controller mode)
   --------------------------------------------------------- */
   useEffect(() => {
     if (type !== "basketball") return;
@@ -228,26 +237,27 @@ export default function ThankYouPage() {
   }, [type, profile, gameId, supabase, router]);
 
   /* ---------------------------------------------------------
-     Trivia: Load initial session + subscribe for state changes
+     Trivia: watch trivia_cards for countdown / running state
+     (This matches your dashboard: status + countdown_active)
   --------------------------------------------------------- */
   useEffect(() => {
     if (type !== "trivia" || !gameId) return;
 
     let mounted = true;
 
-    async function loadInitialSession() {
-      const { data: session } = await supabase
-        .from("trivia_sessions")
-        .select("status,countdown_started_at")
-        .eq("trivia_card_id", gameId as string)
+    async function loadInitialCard() {
+      const { data: card, error } = await supabase
+        .from("trivia_cards")
+        .select("status,countdown_active")
+        .eq("id", gameId as string)
         .maybeSingle();
 
-      if (!mounted || !session) return;
+      if (!mounted || !card || error) return;
 
-      if (session.status === "countdown") {
+      if (card.countdown_active) {
         setTriviaPhase("countdown");
-        setCountdownStartedAt(session.countdown_started_at);
-      } else if (session.status === "playing") {
+        setCountdownStartedAt(Date.now());
+      } else if (card.status === "running") {
         setTriviaPhase("playing");
         router.replace(`/trivia/${gameId}/question/0`);
       } else {
@@ -255,34 +265,40 @@ export default function ThankYouPage() {
       }
     }
 
-    loadInitialSession();
+    loadInitialCard();
 
     const channel = supabase
-      .channel(`trivia-session-${gameId}`)
+      .channel(`trivia-card-${gameId}`)
       .on(
         "postgres_changes",
         {
           event: "UPDATE",
           schema: "public",
-          table: "trivia_sessions",
-          filter: `trivia_card_id=eq.${gameId}`,
+          table: "trivia_cards",
+          filter: `id=eq.${gameId}`,
         },
         (payload) => {
-          const status = payload.new.status;
+          const card = payload.new as any;
 
-          if (status === "countdown") {
-            setTriviaPhase("countdown");
-            setCountdownStartedAt(payload.new.countdown_started_at);
+          if (card.countdown_active) {
+            // Entering countdown
+            setTriviaPhase((prev) => {
+              if (prev !== "countdown") {
+                setCountdownStartedAt(Date.now());
+              }
+              return "countdown";
+            });
+            return;
           }
 
-          if (status === "playing") {
+          if (card.status === "running") {
             setTriviaPhase("playing");
             router.replace(`/trivia/${gameId}/question/0`);
+            return;
           }
 
-          if (status === "waiting") {
-            setTriviaPhase("waiting");
-          }
+          // Any other state => waiting
+          setTriviaPhase("waiting");
         }
       )
       .subscribe();
@@ -292,6 +308,23 @@ export default function ThankYouPage() {
       supabase.removeChannel(channel);
     };
   }, [type, gameId, supabase, router]);
+
+  /* ---------------------------------------------------------
+     Trivia countdown ticking (black screen)
+  --------------------------------------------------------- */
+  useEffect(() => {
+    if (type !== "trivia") return;
+    if (triviaPhase !== "countdown") return;
+    if (!countdownStartedAt) return;
+
+    const id = setInterval(() => {
+      setNow(Date.now());
+    }, 250);
+
+    return () => {
+      clearInterval(id);
+    };
+  }, [type, triviaPhase, countdownStartedAt]);
 
   /* ---------------------------------------------------------
      Badge logic
@@ -337,11 +370,8 @@ export default function ThankYouPage() {
   /* ---------------------------------------------------------
      Trivia countdown full-screen (black) override
   --------------------------------------------------------- */
-  if (type === "trivia" && triviaPhase === "countdown") {
-    const start = countdownStartedAt
-      ? new Date(countdownStartedAt).getTime()
-      : Date.now();
-    const elapsed = Math.floor((Date.now() - start) / 1000);
+  if (type === "trivia" && triviaPhase === "countdown" && countdownStartedAt) {
+    const elapsed = Math.floor((now - countdownStartedAt) / 1000);
     const secondsLeft = Math.max(0, 10 - elapsed);
 
     return (
@@ -363,7 +393,7 @@ export default function ThankYouPage() {
   }
 
   /* ---------------------------------------------------------
-     Render
+     Render normal Thank You / Waiting view
   --------------------------------------------------------- */
   return (
     <div

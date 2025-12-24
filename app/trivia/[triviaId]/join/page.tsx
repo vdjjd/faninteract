@@ -133,7 +133,7 @@ export default function TriviaJoinPage() {
     return new Blob([buffer], { type: mime });
   }
 
-  /* Simple crop export – we're already compressing on input. */
+  /* Upload selfie (already compressed client-side) */
   async function uploadImage() {
     if (!imageSrc || !profile?.id) return null;
 
@@ -157,7 +157,7 @@ export default function TriviaJoinPage() {
   }
 
   /* -------------------------------------------------- */
-  /* JOIN TRIVIA → INSERT trivia_players                */
+  /* JOIN TRIVIA → ENSURE SESSION + INSERT trivia_players */
   /* -------------------------------------------------- */
   async function handleJoinTrivia(e: any) {
     e.preventDefault();
@@ -193,11 +193,13 @@ export default function TriviaJoinPage() {
     setJoining(true);
 
     try {
-      // 1️⃣ Find trivia session for this card (ANY status)
-      const { data: session, error: sessionErr } = await supabase
+      // 1️⃣ Ensure there is a trivia_session for this card
+      const { data: existingSession, error: sessionErr } = await supabase
         .from("trivia_sessions")
         .select("id,status")
         .eq("trivia_card_id", triviaId)
+        .order("created_at", { ascending: false })
+        .limit(1)
         .maybeSingle();
 
       if (sessionErr) {
@@ -206,16 +208,26 @@ export default function TriviaJoinPage() {
         return;
       }
 
-      // 🔴 IMPORTANT:
-      // If a session exists at ALL (waiting / not started / running / whatever),
-      // we let the player join and place them in the moderation pool.
-      if (!session) {
-        // If you truly want guests to join even before host opens a session,
-        // you could auto-create a "waiting" session here.
-        setJoinError(
-          "This trivia game hasn't been opened by the host yet. Ask them to open the game, then try again."
-        );
-        return;
+      let sessionId: string | null = existingSession?.id ?? null;
+
+      // If no session yet, create a "waiting" one so guests can join
+      if (!sessionId) {
+        const { data: newSession, error: insertSessionErr } = await supabase
+          .from("trivia_sessions")
+          .insert({
+            trivia_card_id: triviaId,
+            status: "waiting",
+          })
+          .select("id")
+          .single();
+
+        if (insertSessionErr || !newSession) {
+          console.error("❌ trivia_sessions create error:", insertSessionErr);
+          setJoinError("Could not join the game. Please try again.");
+          return;
+        }
+
+        sessionId = newSession.id;
       }
 
       let photoUrl: string | null = null;
@@ -232,7 +244,7 @@ export default function TriviaJoinPage() {
       const { data: existingPlayer } = await supabase
         .from("trivia_players")
         .select("id")
-        .eq("session_id", session.id)
+        .eq("session_id", sessionId)
         .eq("guest_id", profile.id)
         .maybeSingle();
 
@@ -255,11 +267,11 @@ export default function TriviaJoinPage() {
         const { error: insertErr } = await supabase
           .from("trivia_players")
           .insert({
-            session_id: session.id,
+            session_id: sessionId,
             guest_id: profile.id,
             display_name: displayName,
             photo_url: photoUrl,
-            status: "pending", // ALWAYS moderation
+            status: "pending", // ALWAYS moderation first
           });
 
         if (insertErr) {
@@ -269,7 +281,7 @@ export default function TriviaJoinPage() {
         }
       }
 
-      // 3️⃣ Send them to THANK YOU / WAITING page (Trivia mode)
+      // 3️⃣ Send them to THANK YOU / WAITING PAGE in trivia mode
       router.push(`/thankyou/${triviaId}?type=trivia`);
     } finally {
       setJoining(false);
