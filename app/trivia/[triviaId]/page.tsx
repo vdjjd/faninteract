@@ -22,11 +22,13 @@ const supabase = getSupabaseClient();
 
 export default function TriviaJoinPage() {
   const router = useRouter();
-  const params = useParams();
+  const params = useParams() as any;
 
-  const triviaId = Array.isArray(params.triviaId)
-    ? params.triviaId[0]
-    : (params.triviaId as string);
+  // 🔑 Support both /trivia/join/[triviaId] and /trivia/[id]/join
+  const rawParam = params.triviaId ?? params.id;
+  const triviaId: string | undefined = Array.isArray(rawParam)
+    ? rawParam[0]
+    : rawParam;
 
   const [trivia, setTrivia] = useState<any>(null);
   const [profile, setProfile] = useState<any>(null);
@@ -50,7 +52,9 @@ export default function TriviaJoinPage() {
   useEffect(() => {
     const p = getStoredGuestProfile();
     if (!p) {
-      router.replace(`/guest/signup?trivia=${triviaId}`);
+      if (triviaId) {
+        router.replace(`/guest/signup?trivia=${triviaId}`);
+      }
       return;
     }
     setProfile(p);
@@ -60,7 +64,10 @@ export default function TriviaJoinPage() {
   /* LOAD TRIVIA CONFIG (TITLE / BG / LOGO / SELFIE)    */
   /* -------------------------------------------------- */
   useEffect(() => {
-    if (!triviaId) return;
+    if (!triviaId) {
+      console.error("❌ No triviaId found in route params:", params);
+      return;
+    }
 
     async function loadTrivia() {
       setLoadingTrivia(true);
@@ -90,7 +97,7 @@ export default function TriviaJoinPage() {
     }
 
     loadTrivia();
-  }, [triviaId]);
+  }, [triviaId, params]);
 
   /* -------------------------------------------------- */
   /* CAMERA + FILE HANDLING                             */
@@ -166,12 +173,15 @@ export default function TriviaJoinPage() {
 
     if (!profile?.id) {
       setJoinError("Missing guest profile. Please sign up again.");
-      router.replace(`/guest/signup?trivia=${triviaId}`);
+      if (triviaId) {
+        router.replace(`/guest/signup?trivia=${triviaId}`);
+      }
       return;
     }
 
     if (!triviaId) {
       setJoinError("Invalid trivia link.");
+      console.error("❌ handleJoinTrivia called with no triviaId");
       return;
     }
 
@@ -288,11 +298,30 @@ export default function TriviaJoinPage() {
       }
 
       // 3️⃣ Send them to THANK YOU / WAITING PAGE in trivia mode
-      // 🔥 FIXED: route matches app/thanks/[id]/page.tsx
-      router.push(`/thanks/${triviaId}?type=trivia`);
+      const target = `/thanks/${triviaId}?type=trivia`;
+      console.log("✅ Trivia join success, redirecting to:", target);
+      router.push(target);
     } finally {
       setJoining(false);
     }
+  }
+
+  // If no triviaId at all, there's nothing to do
+  if (!triviaId) {
+    return (
+      <div
+        style={{
+          minHeight: "100vh",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          color: "#fff",
+          background: "#020617",
+        }}
+      >
+        <div>Invalid trivia link. (No triviaId in route.)</div>
+      </div>
+    );
   }
 
   if (!profile || loadingTrivia) return null;
