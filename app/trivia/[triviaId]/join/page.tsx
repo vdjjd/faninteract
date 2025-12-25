@@ -282,7 +282,7 @@ export default function TriviaJoinPage() {
       }
 
       // 3️⃣ Send them to THANK YOU / WAITING PAGE in trivia mode
-      router.push(`/thankyou/${triviaId}?type=trivia`);
+      router.push(`/thanks/${triviaId}?type=trivia`);
     } finally {
       setJoining(false);
     }
