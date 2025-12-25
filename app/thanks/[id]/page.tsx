@@ -100,16 +100,68 @@ export default function ThankYouPage() {
 
   /* ---------------------------------------------------------
      Load host + background
+     ✅ Trivia uses explicit hosts fetch so logo + loyalty work
+     ✅ Poll / wheel / basketball / wall keep original behavior
   --------------------------------------------------------- */
   useEffect(() => {
     if (!gameId) return;
 
     (async () => {
+      console.log("[THANKS] type:", type, "gameId:", gameId);
+
+      // No host for lead capture
       if (type === "lead") {
         setData({ background_value: null, host: null });
         return;
       }
 
+      // 🔹 SPECIAL CASE: TRIVIA ONLY
+      if (type === "trivia") {
+        const { data: triviaRow, error: triviaErr } = await supabase
+          .from("trivia_cards")
+          .select("id, background_value, host_id")
+          .eq("id", gameId as string)
+          .maybeSingle();
+
+        if (triviaErr) {
+          console.error("❌ trivia_cards fetch error (thanks):", triviaErr);
+          setData(null);
+          return;
+        }
+
+        if (!triviaRow) {
+          console.warn("⚠️ No trivia_cards row found for id", gameId);
+          setData(null);
+          return;
+        }
+
+        let host: any = null;
+
+        if (triviaRow.host_id) {
+          const { data: hostRow, error: hostErr } = await supabase
+            .from("hosts")
+            .select("id, venue_name, branding_logo_url, logo_url")
+            .eq("id", triviaRow.host_id)
+            .maybeSingle();
+
+          if (hostErr) {
+            console.error("❌ hosts fetch error (thanks):", hostErr);
+          } else {
+            host = hostRow;
+          }
+        }
+
+        const combined = { ...triviaRow, host };
+        console.log("[THANKS trivia] combined data:", combined);
+        setData(combined);
+        return;
+      }
+
+      // 🔹 EVERYTHING ELSE:
+      //     poll → polls
+      //     wheel → prize_wheels
+      //     basketball → bb_games
+      //     wall → fan_walls
       const table =
         type === "poll"
           ? "polls"
@@ -117,8 +169,6 @@ export default function ThankYouPage() {
           ? "prize_wheels"
           : type === "basketball"
           ? "bb_games"
-          : type === "trivia"
-          ? "trivia_cards"
           : "fan_walls";
 
       const select =
@@ -141,18 +191,25 @@ export default function ThankYouPage() {
               )
             `;
 
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from(table)
         .select(select)
         .eq("id", gameId as string)
         .maybeSingle();
 
+      if (error) {
+        console.error(`❌ ${table} fetch error (thanks):`, error);
+        setData(null);
+        return;
+      }
+
+      console.log("[THANKS generic]", { type, table, data });
       setData(data);
     })();
   }, [gameId, type, supabase]);
 
   /* ---------------------------------------------------------
-     Record visit
+     Record visit (for loyalty badges)
   --------------------------------------------------------- */
   useEffect(() => {
     if (!profile || !data?.host?.id) return;
@@ -238,7 +295,6 @@ export default function ThankYouPage() {
 
   /* ---------------------------------------------------------
      Trivia: watch trivia_cards for countdown / running state
-     (This matches your dashboard: status + countdown_active)
   --------------------------------------------------------- */
   useEffect(() => {
     if (type !== "trivia" || !gameId) return;
