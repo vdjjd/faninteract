@@ -73,9 +73,10 @@ export default function TriviaGrid({
   }
 
   /* ------------------------------------------------------------
-     Launch trivia popup window
+     Launch trivia popup window (HOST WALL ROUTER)
   ------------------------------------------------------------ */
   function handleLaunch(triviaId: string) {
+    // 🔑 Launch the router page at /trivia/:triviaId
     const url = `${window.location.origin}/trivia/${triviaId}`;
     const popup = window.open(url, "_blank", "width=1280,height=800");
     popup?.focus();

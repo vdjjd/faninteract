@@ -64,12 +64,52 @@ MANDATORY CHARACTERISTICS:
 }
 
 /**
- * Safety: AI never controls correctness
+ * Safety: AI never controls correctness bounds
  */
 function normalizeCorrectIndex(index: any): number {
   if (typeof index !== "number") return Math.floor(Math.random() * 4);
   if (index < 0 || index > 3) return Math.floor(Math.random() * 4);
   return index;
+}
+
+/**
+ * Shuffle options but KEEP the same correct answer,
+ * just move it to a random position.
+ */
+function shuffleQuestionOptions(q: {
+  question: string;
+  options: string[];
+  correct_index: number;
+}) {
+  // If options are not exactly 4, just normalize and return as-is
+  if (!Array.isArray(q.options) || q.options.length !== 4) {
+    return {
+      ...q,
+      correct_index: normalizeCorrectIndex(q.correct_index),
+    };
+  }
+
+  const originalOptions = q.options;
+  const originalCorrectIndex = normalizeCorrectIndex(q.correct_index);
+
+  // Fisher–Yates shuffle on indices [0,1,2,3]
+  const indices = [0, 1, 2, 3];
+  for (let i = indices.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [indices[i], indices[j]] = [indices[j], indices[i]];
+  }
+
+  // Build new options array with shuffled indices
+  const newOptions = indices.map((idx) => originalOptions[idx]);
+
+  // Find where the original correct option ended up
+  const newCorrectIndex = indices.indexOf(originalCorrectIndex);
+
+  return {
+    ...q,
+    options: newOptions,
+    correct_index: newCorrectIndex,
+  };
 }
 
 /**
@@ -203,29 +243,32 @@ Return ONLY valid JSON:
 
     if (triviaErr) throw triviaErr;
 
-    // Insert questions
+    // Insert questions (with shuffled options)
     for (const round of parsed.rounds) {
-      for (const q of round.questions) {
-        const safeCorrectIndex = normalizeCorrectIndex(q.correct_index);
+      for (const rawQ of round.questions) {
+        const shuffledQ = shuffleQuestionOptions(rawQ);
+        const safeCorrectIndex = normalizeCorrectIndex(
+          shuffledQ.correct_index
+        );
 
-        const { error } = await supabase
-          .from("trivia_questions")
-          .insert({
-            trivia_card_id: triviaCard.id,
-            round_number: round.round_number,
-            question_text: q.question,
-            options: q.options,
-            correct_index: safeCorrectIndex,
-            difficulty,
-            category: round.topic,
-          });
+        // Optional: uncomment while testing to verify distribution
+        // console.log("Q:", shuffledQ.question, "correct_index:", safeCorrectIndex);
+
+        const { error } = await supabase.from("trivia_questions").insert({
+          trivia_card_id: triviaCard.id,
+          round_number: round.round_number,
+          question_text: shuffledQ.question,
+          options: shuffledQ.options,
+          correct_index: safeCorrectIndex,
+          difficulty,
+          category: round.topic,
+        });
 
         if (error) throw error;
       }
     }
 
     return NextResponse.json({ success: true, triviaId: triviaCard.id });
-
   } catch (err: any) {
     console.error("❌ TRIVIA GENERATION FAILED:", err);
     return NextResponse.json(
