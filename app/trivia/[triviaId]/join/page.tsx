@@ -35,7 +35,7 @@ export default function TriviaJoinPage() {
   const [joining, setJoining] = useState(false);
   const [joinError, setJoinError] = useState("");
 
-  // 🔑 track the trivia_players row + waiting state
+  // Track the trivia_players row + waiting state
   const [playerId, setPlayerId] = useState<string | null>(null);
   const [waitingApproval, setWaitingApproval] = useState(false);
 
@@ -198,7 +198,7 @@ export default function TriviaJoinPage() {
     setJoining(true);
 
     try {
-      // 1️⃣ Find the MOST RECENT session for this card (any status)
+      // 1️⃣ Find MOST RECENT session for this card (any status)
       const { data: session, error: sessionErr } = await supabase
         .from("trivia_sessions")
         .select("id,status,created_at")
@@ -215,7 +215,7 @@ export default function TriviaJoinPage() {
 
       let sessionId: string;
 
-      // 2️⃣ If no session yet, or latest is finished → create a new "waiting" session
+      // 2️⃣ If no session, or last is finished → create a new "waiting" session
       if (!session || session.status === "finished") {
         const { data: newSession, error: newSessionErr } = await supabase
           .from("trivia_sessions")
@@ -237,7 +237,7 @@ export default function TriviaJoinPage() {
 
         sessionId = newSession.id;
       } else {
-        // use the most recent existing session
+        // Otherwise use the latest existing session
         sessionId = session.id;
       }
 
@@ -306,9 +306,12 @@ export default function TriviaJoinPage() {
       if (newPlayerId) {
         setPlayerId(newPlayerId);
         setWaitingApproval(true);
-        console.log("🔍 Waiting for approval on trivia_players id:", newPlayerId);
+        console.log(
+          "🔍 Waiting for approval on trivia_players id:",
+          newPlayerId
+        );
       }
-      // ✅ We stay on this page and wait for moderation via realtime below.
+      // We stay here and wait for moderation.
     } finally {
       setJoining(false);
     }
@@ -316,14 +319,14 @@ export default function TriviaJoinPage() {
 
   /* -------------------------------------------------- */
   /* WATCH THIS trivia_player FOR APPROVAL / REJECT      */
+  /*   POLLING ONLY (no realtime)                       */
   /* -------------------------------------------------- */
   useEffect(() => {
     if (!playerId || !triviaId) return;
 
     let cancelled = false;
 
-    // One-shot check in case status was already changed
-    (async () => {
+    const checkStatus = async () => {
       const { data, error } = await supabase
         .from("trivia_players")
         .select("status")
@@ -331,47 +334,29 @@ export default function TriviaJoinPage() {
         .maybeSingle();
 
       if (error) {
-        console.error("❌ trivia_players initial status check error:", error);
+        console.error("❌ Poll trivia_players error:", error);
         return;
       }
 
       if (!data || cancelled) return;
+
       if (data.status === "approved") {
+        console.log("✅ Player approved (polling), redirecting…");
         router.replace(`/thanks/${triviaId}?type=trivia`);
       } else if (data.status === "rejected") {
+        console.log("🚫 Player rejected (polling)");
         setJoinError("Sorry, the host rejected your entry.");
         setWaitingApproval(false);
       }
-    })();
+    };
 
-    // Realtime subscription for ongoing changes
-    const channel = supabase
-      .channel(`trivia-player-${playerId}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "UPDATE",
-          schema: "public",
-          table: "trivia_players",
-          filter: `id=eq.${playerId}`,
-        },
-        (payload) => {
-          const row = payload.new as any;
-          if (!row || cancelled) return;
+    // initial check + interval
+    checkStatus();
+    const intervalId = setInterval(checkStatus, 2000);
 
-          if (row.status === "approved") {
-            router.replace(`/thanks/${triviaId}?type=trivia`);
-          } else if (row.status === "rejected") {
-            setJoinError("Sorry, the host rejected your entry.");
-            setWaitingApproval(false);
-          }
-        }
-      )
-      .subscribe();
-
-  return () => {
+    return () => {
       cancelled = true;
-      supabase.removeChannel(channel);
+      clearInterval(intervalId);
     };
   }, [playerId, triviaId, router]);
 
