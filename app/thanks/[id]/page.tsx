@@ -110,6 +110,7 @@ export default function ThankYouPage() {
 
   /* ---------------------------------------------------------
      Load host + background (with FK-based join)
+     ⚠️ This is where trivia must get host_id for loyalty
   --------------------------------------------------------- */
   useEffect(() => {
     if (!gameId) return;
@@ -131,11 +132,12 @@ export default function ThankYouPage() {
           ? "trivia_cards"
           : "fan_walls";
 
-      // Thanks to FK (host_id -> hosts.id) we can join via host:host_id
+      // Include host_id explicitly for all types using host_id FK
       const select =
         type === "basketball"
           ? `
               id,
+              host_id,
               host:host_id (
                 id,
                 branding_logo_url,
@@ -144,6 +146,7 @@ export default function ThankYouPage() {
             `
           : `
               id,
+              host_id,
               background_value,
               host:host_id (
                 id,
@@ -164,12 +167,23 @@ export default function ThankYouPage() {
         return;
       }
 
+      if (!data) {
+        setData(null);
+        return;
+      }
+
+      // Just in case host join fails, we still have host_id
+      if (!("host" in data) || !data.host) {
+        console.log("⚠️ No host join in thanks page, raw row:", data);
+      }
+
       setData(data);
     })();
   }, [gameId, type, supabase]);
 
   /* ---------------------------------------------------------
      Record visit (loyalty / badge)
+     Runs for trivia too, as long as profile + host.id exist
   --------------------------------------------------------- */
   useEffect(() => {
     if (!profile || !data?.host?.id) return;
@@ -182,6 +196,7 @@ export default function ThankYouPage() {
       host_id: data.host.id,
     }).then((res) => {
       if (!res) return;
+      console.log("🎖️ Loyalty visitInfo:", res);
       setVisitInfo(res);
     });
   }, [profile, data?.host?.id]);
@@ -278,8 +293,7 @@ export default function ThankYouPage() {
         setCountdownStartedAt(Date.now());
       } else if (card.status === "running") {
         setTriviaPhase("playing");
-        // ✅ Send them straight to the phone UI
-        router.replace(`/trivia/userinterface?game=${gameId}`);
+        router.replace(`/trivia/${gameId}/question/0`);
       } else {
         setTriviaPhase("waiting");
       }
@@ -313,8 +327,7 @@ export default function ThankYouPage() {
 
           if (card.status === "running") {
             setTriviaPhase("playing");
-            // ✅ When trivia actually starts, go to phone Q&A UI
-            router.replace(`/trivia/userinterface?game=${gameId}`);
+            router.replace(`/trivia/${gameId}/question/0`);
             return;
           }
 
