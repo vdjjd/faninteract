@@ -278,7 +278,8 @@ export default function ThankYouPage() {
         setCountdownStartedAt(Date.now());
       } else if (card.status === "running") {
         setTriviaPhase("playing");
-        router.replace(`/trivia/${gameId}/question/0`);
+        // ✅ Send them straight to the phone UI
+        router.replace(`/trivia/userinterface?game=${gameId}`);
       } else {
         setTriviaPhase("waiting");
       }
@@ -312,7 +313,8 @@ export default function ThankYouPage() {
 
           if (card.status === "running") {
             setTriviaPhase("playing");
-            router.replace(`/trivia/${gameId}/question/0`);
+            // ✅ When trivia actually starts, go to phone Q&A UI
+            router.replace(`/trivia/userinterface?game=${gameId}`);
             return;
           }
 
