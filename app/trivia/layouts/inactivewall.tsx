@@ -1,7 +1,7 @@
 "use client";
 
 import { QRCodeCanvas } from "qrcode.react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 /* ---------- TYPES ---------- */
 interface TriviaInactiveWallProps {
@@ -17,42 +17,62 @@ function toggleFullscreen() {
   }
 }
 
-/* ---------- COUNTDOWN COMPONENT ---------- */
+/* ---------- COUNTDOWN COMPONENT (DB-synced) ---------- */
 function CountdownDisplay({
   countdown,
   countdownActive,
+  countdownStartedAt,
 }: {
   countdown: string;
   countdownActive: boolean;
+  countdownStartedAt?: string | null;
 }) {
-  const [timeLeft, setTimeLeft] = useState(0);
-  const [active, setActive] = useState(false);
+  const [now, setNow] = useState<number>(() => Date.now());
 
-  useEffect(() => {
-    // Default to 10 seconds if not provided
+  // Parse "10 seconds" → 10
+  const totalSeconds = useMemo(() => {
     const value =
       countdown && countdown !== "none" ? countdown : "10 seconds";
 
     const [numStr] = value.split(" ");
     const num = parseInt(numStr, 10);
-    const total = isNaN(num) ? 10 : num;
-
-    setTimeLeft(total);
-    setActive(countdownActive);
-  }, [countdown, countdownActive]);
+    return isNaN(num) ? 10 : num;
+  }, [countdown]);
 
   useEffect(() => {
-    if (!active || timeLeft <= 0) return;
+    if (!countdownActive || !countdownStartedAt) return;
 
-    const timer = setInterval(() => {
-      setTimeLeft((t) => (t > 0 ? t - 1 : 0));
-    }, 1000);
+    const id = setInterval(() => {
+      setNow(Date.now());
+    }, 250);
 
-    return () => clearInterval(timer);
-  }, [active, timeLeft]);
+    return () => clearInterval(id);
+  }, [countdownActive, countdownStartedAt]);
 
-  const m = Math.floor(timeLeft / 60);
-  const s = timeLeft % 60;
+  if (!countdownActive || !countdownStartedAt) {
+    // Not in countdown yet → show full time as a static value
+    const mFull = Math.floor(totalSeconds / 60);
+    const sFull = totalSeconds % 60;
+    return (
+      <div
+        style={{
+          fontSize: "clamp(6rem,8vw,9rem)",
+          fontWeight: 900,
+          color: "#fff",
+          textShadow: "0 0 40px rgba(0,0,0,0.7)",
+        }}
+      >
+        {mFull}:{sFull.toString().padStart(2, "0")}
+      </div>
+    );
+  }
+
+  const startMs = new Date(countdownStartedAt).getTime();
+  const elapsed = Math.max(0, (now - startMs) / 1000);
+  const remaining = Math.max(0, totalSeconds - elapsed);
+
+  const m = Math.floor(remaining / 60);
+  const s = Math.floor(remaining % 60);
 
   return (
     <div
@@ -85,6 +105,7 @@ export default function TriviaInactiveWall({
   const [wallState, setWallState] = useState({
     countdown: "10 seconds",
     countdownActive: false,
+    countdownStartedAt: null as string | null,
     title: "",
   });
 
@@ -104,10 +125,10 @@ export default function TriviaInactiveWall({
 
     setWallState({
       countdown: trivia.countdown || "10 seconds",
-
-      // 🔑 THIS IS THE FIX — countdown only listens to countdown_active
+      // 🔑 listen to countdown_active
       countdownActive: trivia.countdown_active === true,
-
+      // 🔑 shared start time from DB
+      countdownStartedAt: trivia.countdown_started_at || null,
       title: trivia.title || "",
     });
 
@@ -128,7 +149,7 @@ export default function TriviaInactiveWall({
 
   const qrValue = `${origin}/trivia/${trivia?.id}/join`;
 
-  /* ✅ LOGO PRIORITY (NO CHANGE) */
+  /* ✅ LOGO PRIORITY */
   const displayLogo =
     trivia?.host?.branding_logo_url?.trim() ||
     trivia?.host?.logo_url?.trim() ||
@@ -303,6 +324,7 @@ export default function TriviaInactiveWall({
             <CountdownDisplay
               countdown={wallState.countdown}
               countdownActive={wallState.countdownActive}
+              countdownStartedAt={wallState.countdownStartedAt}
             />
           </div>
         </div>

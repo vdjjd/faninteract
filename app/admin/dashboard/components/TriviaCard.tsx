@@ -191,16 +191,23 @@ export default function TriviaCard({
   }
 
   /* ------------------------------------------------------------
-     ▶️ PLAY TRIVIA
+     ▶️ PLAY TRIVIA (single source of truth for countdown)
   ------------------------------------------------------------ */
   async function handlePlayTrivia() {
     if (trivia.countdown_active || trivia.status === "running") return;
 
+    const nowIso = new Date().toISOString();
+
+    // 1️⃣ Start countdown + store when it started
     await supabase
       .from("trivia_cards")
-      .update({ countdown_active: true })
+      .update({
+        countdown_active: true,
+        countdown_started_at: nowIso,
+      })
       .eq("id", trivia.id);
 
+    // 2️⃣ After 10s → flip to running, stop countdown, ensure a session exists
     setTimeout(async () => {
       await supabase
         .from("trivia_cards")

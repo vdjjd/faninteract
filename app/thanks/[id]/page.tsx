@@ -95,7 +95,7 @@ export default function ThankYouPage() {
   // Trivia state
   const [triviaPhase, setTriviaPhase] =
     useState<"waiting" | "countdown" | "playing">("waiting");
-  const [countdownStartedAt, setCountdownStartedAt] =
+  const [countdownStartedAtMs, setCountdownStartedAtMs] =
     useState<number | null>(null);
 
   // For ticking countdown
@@ -267,35 +267,59 @@ export default function ThankYouPage() {
 
   /* ---------------------------------------------------------
      Trivia: watch trivia_cards for countdown / running state
-     (matches dashboard: status + countdown_active)
+     (Realtime + polling, using countdown_started_at)
   --------------------------------------------------------- */
   useEffect(() => {
     if (type !== "trivia" || !gameId) return;
 
     let mounted = true;
 
+    function applyCardState(card: {
+      status: string;
+      countdown_active: boolean;
+      countdown_started_at?: string | null;
+    }) {
+      // Countdown ON
+      if (card.countdown_active) {
+        setTriviaPhase("countdown");
+
+        if (card.countdown_started_at) {
+          setCountdownStartedAtMs(
+            new Date(card.countdown_started_at).getTime()
+          );
+        } else {
+          // Fallback if somehow missing
+          setCountdownStartedAtMs(Date.now());
+        }
+        return;
+      }
+
+      // Game RUNNING → go to trivia user interface
+      if (card.status === "running") {
+        setTriviaPhase("playing");
+        router.replace(`/trivia/userinterface?game=${gameId}`);
+        return;
+      }
+
+      // Any other state → waiting
+      setTriviaPhase("waiting");
+      setCountdownStartedAtMs(null);
+    }
+
     async function loadInitialCard() {
       const { data: card, error } = await supabase
         .from("trivia_cards")
-        .select("status,countdown_active")
+        .select("status,countdown_active,countdown_started_at")
         .eq("id", gameId as string)
         .maybeSingle();
 
       if (!mounted || !card || error) return;
-
-      if (card.countdown_active) {
-        setTriviaPhase("countdown");
-        setCountdownStartedAt(Date.now());
-      } else if (card.status === "running") {
-        setTriviaPhase("playing");
-        router.replace(`/trivia/userinterface?game=${gameId}`);
-      } else {
-        setTriviaPhase("waiting");
-      }
+      applyCardState(card as any);
     }
 
     loadInitialCard();
 
+    // 🔔 Realtime subscription
     const channel = supabase
       .channel(`trivia-card-${gameId}`)
       .on(
@@ -307,35 +331,45 @@ export default function ThankYouPage() {
           filter: `id=eq.${gameId}`,
         },
         (payload) => {
-          console.log("🔔 trivia_cards update on thanks:", payload.new);
+          if (!mounted) return;
           const card = payload.new as any;
-
-          if (card.countdown_active) {
-            // Entering countdown
-            setTriviaPhase((prev) => {
-              if (prev !== "countdown") {
-                setCountdownStartedAt(Date.now());
-              }
-              return "countdown";
-            });
-            return;
-          }
-
-          if (card.status === "running") {
-            setTriviaPhase("playing");
-            router.replace(`/trivia/userinterface?game=${gameId}`);
-            return;
-          }
-
-          // Any other state => waiting
-          setTriviaPhase("waiting");
+          console.log("🔔 trivia_cards update on thanks:", card);
+          applyCardState(card);
         }
       )
       .subscribe();
 
+    // ⏱ Polling fallback: check every 1s
+    let prevCountdownActive: boolean | null = null;
+    let prevStatus: string | null = null;
+
+    const pollId = setInterval(async () => {
+      if (!mounted) return;
+
+      const { data: card, error } = await supabase
+        .from("trivia_cards")
+        .select("status,countdown_active,countdown_started_at")
+        .eq("id", gameId as string)
+        .maybeSingle();
+
+      if (!card || error) return;
+
+      const changedCountdown =
+        card.countdown_active !== prevCountdownActive;
+      const changedStatus = card.status !== prevStatus;
+
+      prevCountdownActive = card.countdown_active;
+      prevStatus = card.status;
+
+      if (changedCountdown || changedStatus) {
+        applyCardState(card as any);
+      }
+    }, 1000);
+
     return () => {
       mounted = false;
       supabase.removeChannel(channel);
+      clearInterval(pollId);
     };
   }, [type, gameId, supabase, router]);
 
@@ -345,7 +379,7 @@ export default function ThankYouPage() {
   useEffect(() => {
     if (type !== "trivia") return;
     if (triviaPhase !== "countdown") return;
-    if (!countdownStartedAt) return;
+    if (!countdownStartedAtMs) return;
 
     const id = setInterval(() => {
       setNow(Date.now());
@@ -354,7 +388,7 @@ export default function ThankYouPage() {
     return () => {
       clearInterval(id);
     };
-  }, [type, triviaPhase, countdownStartedAt]);
+  }, [type, triviaPhase, countdownStartedAtMs]);
 
   /* ---------------------------------------------------------
      Badge logic
@@ -375,7 +409,6 @@ export default function ThankYouPage() {
       : data?.background_value ||
         "linear-gradient(135deg,#0a2540,#1b2b44,#000000)";
 
-  // 🔥 Pull logo from host table, fallback to FanInteract
   const logo =
     data?.host?.branding_logo_url?.trim() ||
     data?.host?.logo_url?.trim() ||
@@ -402,10 +435,16 @@ export default function ThankYouPage() {
 
   /* ---------------------------------------------------------
      Trivia countdown full-screen (black) override
+     (single source of truth for timer)
   --------------------------------------------------------- */
-  if (type === "trivia" && triviaPhase === "countdown" && countdownStartedAt) {
-    const elapsed = Math.floor((now - countdownStartedAt) / 1000);
-    const secondsLeft = Math.max(0, 10 - elapsed); // matches 10s dashboard countdown
+  if (
+    type === "trivia" &&
+    triviaPhase === "countdown" &&
+    countdownStartedAtMs
+  ) {
+    // Fixed 10-second pre-game countdown (same as dashboard)
+    const elapsed = Math.floor((now - countdownStartedAtMs) / 1000);
+    const secondsLeft = Math.max(0, 10 - elapsed);
 
     return (
       <div
