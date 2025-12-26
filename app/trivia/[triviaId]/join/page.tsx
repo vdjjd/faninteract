@@ -35,7 +35,7 @@ export default function TriviaJoinPage() {
   const [joining, setJoining] = useState(false);
   const [joinError, setJoinError] = useState("");
 
-  // 🔑 Track the trivia_players row + waiting state
+  // 🔑 track the trivia_players row + waiting state
   const [playerId, setPlayerId] = useState<string | null>(null);
   const [waitingApproval, setWaitingApproval] = useState(false);
 
@@ -198,11 +198,13 @@ export default function TriviaJoinPage() {
     setJoining(true);
 
     try {
-      // 1️⃣ Find trivia session for this card (ANY status)
+      // 1️⃣ Find the MOST RECENT session for this card (any status)
       const { data: session, error: sessionErr } = await supabase
         .from("trivia_sessions")
-        .select("id,status")
+        .select("id,status,created_at")
         .eq("trivia_card_id", triviaId)
+        .order("created_at", { ascending: false })
+        .limit(1)
         .maybeSingle();
 
       if (sessionErr) {
@@ -211,13 +213,35 @@ export default function TriviaJoinPage() {
         return;
       }
 
-      if (!session) {
-        setJoinError(
-          "This trivia game hasn't been opened by the host yet. Ask them to open the game, then try again."
-        );
-        return;
+      let sessionId: string;
+
+      // 2️⃣ If no session yet, or latest is finished → create a new "waiting" session
+      if (!session || session.status === "finished") {
+        const { data: newSession, error: newSessionErr } = await supabase
+          .from("trivia_sessions")
+          .insert({
+            trivia_card_id: triviaId,
+            status: "waiting",
+          })
+          .select("id")
+          .single();
+
+        if (newSessionErr || !newSession) {
+          console.error(
+            "❌ trivia_sessions create error:",
+            newSessionErr
+          );
+          setJoinError("Could not join the game. Please try again.");
+          return;
+        }
+
+        sessionId = newSession.id;
+      } else {
+        // use the most recent existing session
+        sessionId = session.id;
       }
 
+      // 3️⃣ Upload selfie (if required)
       let photoUrl: string | null = null;
       if (requireSelfie && imageSrc) {
         photoUrl = await uploadImage();
@@ -228,11 +252,11 @@ export default function TriviaJoinPage() {
         profile.nickname ||
         "Guest";
 
-      // 2️⃣ Check if player already exists for this session
+      // 4️⃣ Check if player already exists for THIS session
       const { data: existingPlayer } = await supabase
         .from("trivia_players")
         .select("id")
-        .eq("session_id", session.id)
+        .eq("session_id", sessionId)
         .eq("guest_id", profile.id)
         .maybeSingle();
 
@@ -261,7 +285,7 @@ export default function TriviaJoinPage() {
         const { data: inserted, error: insertErr } = await supabase
           .from("trivia_players")
           .insert({
-            session_id: session.id,
+            session_id: sessionId,
             guest_id: profile.id,
             display_name: displayName,
             photo_url: photoUrl,
@@ -284,8 +308,7 @@ export default function TriviaJoinPage() {
         setWaitingApproval(true);
         console.log("🔍 Waiting for approval on trivia_players id:", newPlayerId);
       }
-      // NOTE: we DO NOT redirect here.
-      // We wait for moderation approval via realtime + polling below.
+      // ✅ We stay on this page and wait for moderation via realtime below.
     } finally {
       setJoining(false);
     }
@@ -293,16 +316,14 @@ export default function TriviaJoinPage() {
 
   /* -------------------------------------------------- */
   /* WATCH THIS trivia_player FOR APPROVAL / REJECT      */
-  /*   1) Realtime subscription                          */
-  /*   2) Polling fallback every 2s                      */
   /* -------------------------------------------------- */
   useEffect(() => {
     if (!playerId || !triviaId) return;
 
     let cancelled = false;
 
-    // 🔁 Polling fallback
-    const poll = async () => {
+    // One-shot check in case status was already changed
+    (async () => {
       const { data, error } = await supabase
         .from("trivia_players")
         .select("status")
@@ -310,28 +331,20 @@ export default function TriviaJoinPage() {
         .maybeSingle();
 
       if (error) {
-        console.error("❌ Poll trivia_players error:", error);
+        console.error("❌ trivia_players initial status check error:", error);
         return;
       }
 
       if (!data || cancelled) return;
-
       if (data.status === "approved") {
-        console.log("✅ Player approved via polling, redirecting…");
         router.replace(`/thanks/${triviaId}?type=trivia`);
       } else if (data.status === "rejected") {
-        console.log("🚫 Player rejected via polling");
         setJoinError("Sorry, the host rejected your entry.");
         setWaitingApproval(false);
       }
-    };
+    })();
 
-    // Initial one-shot check
-    poll();
-
-    const intervalId = setInterval(poll, 2000);
-
-    // ✅ Realtime subscription as primary path
+    // Realtime subscription for ongoing changes
     const channel = supabase
       .channel(`trivia-player-${playerId}`)
       .on(
@@ -346,13 +359,9 @@ export default function TriviaJoinPage() {
           const row = payload.new as any;
           if (!row || cancelled) return;
 
-          console.log("📡 Realtime update on trivia_players:", row.status);
-
           if (row.status === "approved") {
-            console.log("✅ Player approved via realtime, redirecting…");
             router.replace(`/thanks/${triviaId}?type=trivia`);
           } else if (row.status === "rejected") {
-            console.log("🚫 Player rejected via realtime");
             setJoinError("Sorry, the host rejected your entry.");
             setWaitingApproval(false);
           }
@@ -360,9 +369,8 @@ export default function TriviaJoinPage() {
       )
       .subscribe();
 
-    return () => {
+  return () => {
       cancelled = true;
-      clearInterval(intervalId);
       supabase.removeChannel(channel);
     };
   }, [playerId, triviaId, router]);
