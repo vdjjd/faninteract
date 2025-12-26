@@ -35,6 +35,10 @@ export default function TriviaJoinPage() {
   const [joining, setJoining] = useState(false);
   const [joinError, setJoinError] = useState("");
 
+  // 🔑 NEW: track the trivia_players row + waiting state
+  const [playerId, setPlayerId] = useState<string | null>(null);
+  const [waitingApproval, setWaitingApproval] = useState(false);
+
   /* Image / crop state (selfie) */
   const [imageSrc, setImageSrc] = useState<string | null>(null);
   const [crop, setCrop] = useState({ x: 0, y: 0 });
@@ -43,10 +47,6 @@ export default function TriviaJoinPage() {
 
   const [errorMsg, setErrorMsg] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
-
-  // ✅ NEW: waiting for host approval state
-  const [waitingApproval, setWaitingApproval] = useState(false);
-  const [playerId, setPlayerId] = useState<string | null>(null);
 
   /* -------------------------------------------------- */
   /* LOAD PROFILE OR REDIRECT TO SIGNUP                 */
@@ -162,13 +162,12 @@ export default function TriviaJoinPage() {
 
   /* -------------------------------------------------- */
   /* JOIN TRIVIA → INSERT trivia_players                */
+  /*   Now: stay here & wait for moderation             */
   /* -------------------------------------------------- */
   async function handleJoinTrivia(e: any) {
     e.preventDefault();
     setJoinError("");
     setErrorMsg("");
-    setWaitingApproval(false);
-    setPlayerId(null);
 
     if (!profile?.id) {
       setJoinError("Missing guest profile. Please sign up again.");
@@ -199,13 +198,11 @@ export default function TriviaJoinPage() {
     setJoining(true);
 
     try {
-      // 1️⃣ Find the MOST RECENT session for this card (any status)
+      // 1️⃣ Find trivia session for this card (ANY status)
       const { data: session, error: sessionErr } = await supabase
         .from("trivia_sessions")
-        .select("id,status,created_at")
+        .select("id,status")
         .eq("trivia_card_id", triviaId)
-        .order("created_at", { ascending: false })
-        .limit(1)
         .maybeSingle();
 
       if (sessionErr) {
@@ -234,28 +231,34 @@ export default function TriviaJoinPage() {
       // 2️⃣ Check if player already exists for this session
       const { data: existingPlayer } = await supabase
         .from("trivia_players")
-        .select("id,status")
+        .select("id")
         .eq("session_id", session.id)
         .eq("guest_id", profile.id)
         .maybeSingle();
 
+      let newPlayerId: string | null = null;
+
       if (existingPlayer) {
-        const { error: updateErr } = await supabase
+        const { data: updated, error: updateErr } = await supabase
           .from("trivia_players")
           .update({
             display_name: displayName,
             photo_url: photoUrl,
-            status: "pending", // reset to pending for re-moderation
+            status: "pending", // back into moderation
           })
-          .eq("id", existingPlayer.id);
+          .eq("id", existingPlayer.id)
+          .select("id")
+          .maybeSingle();
 
         if (updateErr) {
           console.error("❌ trivia_players update error:", updateErr);
           setJoinError("Could not update your info. Please try again.");
           return;
         }
+
+        newPlayerId = updated?.id || existingPlayer.id;
       } else {
-        const { error: insertErr } = await supabase
+        const { data: inserted, error: insertErr } = await supabase
           .from("trivia_players")
           .insert({
             session_id: session.id,
@@ -263,83 +266,90 @@ export default function TriviaJoinPage() {
             display_name: displayName,
             photo_url: photoUrl,
             status: "pending", // ALWAYS moderation
-          });
+          })
+          .select("id")
+          .maybeSingle();
 
         if (insertErr) {
           console.error("❌ trivia_players insert error:", insertErr);
           setJoinError("Could not join the game. Please try again.");
           return;
         }
+
+        newPlayerId = inserted?.id ?? null;
       }
 
-      // 3️⃣ Reload the player row to get id + status
-      const { data: playerRow, error: playerErr } = await supabase
-        .from("trivia_players")
-        .select("id,status")
-        .eq("session_id", session.id)
-        .eq("guest_id", profile.id)
-        .maybeSingle();
-
-      if (playerErr || !playerRow) {
-        console.error("❌ trivia_players refetch error:", playerErr);
-        setJoinError("Could not confirm your join. Please try again.");
-        return;
+      if (newPlayerId) {
+        setPlayerId(newPlayerId);
+        setWaitingApproval(true);
       }
-
-      // If they're already approved somehow, go straight to Thank You
-      if (playerRow.status === "approved") {
-        router.replace(`/thankyou/${triviaId}?type=trivia`);
-        return;
-      }
-
-      // Otherwise, wait on this page until host approves
-      setPlayerId(playerRow.id);
-      setWaitingApproval(true);
+      // 🔥 NOTE: we DO NOT redirect here anymore.
+      // We wait for moderation approval via realtime below.
     } finally {
       setJoining(false);
     }
   }
 
   /* -------------------------------------------------- */
-  /* POLL FOR HOST APPROVAL                             */
+  /* WATCH THIS trivia_player FOR APPROVAL / REJECT      */
   /* -------------------------------------------------- */
   useEffect(() => {
-    if (!waitingApproval || !playerId) return;
+    if (!playerId || !triviaId) return;
 
     let cancelled = false;
 
-    const interval = setInterval(async () => {
-      const { data, error } = await supabase
+    // One-shot check in case status was already changed
+    (async () => {
+      const { data } = await supabase
         .from("trivia_players")
         .select("status")
         .eq("id", playerId)
         .maybeSingle();
 
-      if (cancelled || error || !data) return;
-
+      if (!data || cancelled) return;
       if (data.status === "approved") {
-        clearInterval(interval);
-        if (cancelled) return;
-        router.replace(`/thankyou/${triviaId}?type=trivia`);
+        router.replace(`/thanks/${triviaId}?type=trivia`);
       } else if (data.status === "rejected") {
-        clearInterval(interval);
-        if (cancelled) return;
-        setJoinError(
-          "The host did not approve this photo. You can change your selfie and try again."
-        );
+        setJoinError("Sorry, the host rejected your entry.");
         setWaitingApproval(false);
       }
-    }, 2000);
+    })();
+
+    // Realtime subscription for ongoing changes
+    const channel = supabase
+      .channel(`trivia-player-${playerId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "trivia_players",
+          filter: `id=eq.${playerId}`,
+        },
+        (payload) => {
+          const row = payload.new as any;
+          if (!row || cancelled) return;
+
+          if (row.status === "approved") {
+            router.replace(`/thanks/${triviaId}?type=trivia`);
+          } else if (row.status === "rejected") {
+            setJoinError("Sorry, the host rejected your entry.");
+            setWaitingApproval(false);
+          }
+        }
+      )
+      .subscribe();
 
     return () => {
       cancelled = true;
-      clearInterval(interval);
+      supabase.removeChannel(channel);
     };
-  }, [waitingApproval, playerId, router, triviaId]);
+  }, [playerId, triviaId, router]);
 
   /* -------------------------------------------------- */
-  /* RENDER                                              */
+  /* RENDER JOIN UI                                     */
   /* -------------------------------------------------- */
+
   if (!profile || loadingTrivia) return null;
 
   const bg =
@@ -503,23 +513,9 @@ export default function TriviaJoinPage() {
           </div>
         )}
 
-        {waitingApproval && (
-          <div
-            style={{
-              color: "#38bdf8",
-              fontSize: 14,
-              marginBottom: 10,
-              fontWeight: 600,
-            }}
-          >
-            ✅ You&apos;re in the queue. Waiting for host approval…
-          </div>
-        )}
-
         <button
           type="button"
           onClick={openCamera}
-          disabled={waitingApproval}
           style={{
             width: "100%",
             padding: 12,
@@ -527,7 +523,6 @@ export default function TriviaJoinPage() {
             background: "linear-gradient(90deg,#0284c7,#2563eb)",
             color: "#fff",
             marginBottom: 6,
-            opacity: waitingApproval ? 0.6 : 1,
           }}
         >
           📸 Take Photo
@@ -536,7 +531,6 @@ export default function TriviaJoinPage() {
         <button
           type="button"
           onClick={() => fileRef.current?.click()}
-          disabled={waitingApproval}
           style={{
             width: "100%",
             padding: 12,
@@ -544,7 +538,6 @@ export default function TriviaJoinPage() {
             background: "rgba(255,255,255,0.12)",
             color: "#fff",
             marginBottom: 10,
-            opacity: waitingApproval ? 0.6 : 1,
           }}
         >
           📁 Choose File
@@ -573,11 +566,23 @@ export default function TriviaJoinPage() {
           }}
         >
           {waitingApproval
-            ? "Waiting for host…"
+            ? "Waiting for Host Approval…"
             : joining
             ? "Joining…"
             : "Join Trivia Game"}
         </button>
+
+        {waitingApproval && (
+          <p
+            style={{
+              marginTop: 8,
+              fontSize: 13,
+              color: "#bfdbfe",
+            }}
+          >
+            Please keep this screen open. The host is reviewing your selfie.
+          </p>
+        )}
 
         <p
           style={{
