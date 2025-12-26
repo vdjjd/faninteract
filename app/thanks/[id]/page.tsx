@@ -110,7 +110,7 @@ export default function ThankYouPage() {
 
   /* ---------------------------------------------------------
      Load host + background (with FK-based join)
-     ⚠️ This is where trivia must get host_id for loyalty
+     ⚠️ This is where trivia must get host for logo + loyalty
   --------------------------------------------------------- */
   useEffect(() => {
     if (!gameId) return;
@@ -132,7 +132,7 @@ export default function ThankYouPage() {
           ? "trivia_cards"
           : "fan_walls";
 
-      // Include host_id explicitly for all types using host_id FK
+      // Base select: always include host_id + FK join
       const select =
         type === "basketball"
           ? `
@@ -155,7 +155,7 @@ export default function ThankYouPage() {
               )
             `;
 
-      const { data, error } = await supabase
+      const { data: row, error } = await supabase
         .from(table)
         .select(select)
         .eq("id", gameId as string)
@@ -167,23 +167,50 @@ export default function ThankYouPage() {
         return;
       }
 
-      if (!data) {
+      if (!row) {
         setData(null);
         return;
       }
 
-      // Just in case host join fails, we still have host_id
-      if (!("host" in data) || !data.host) {
-        console.log("⚠️ No host join in thanks page, raw row:", data);
+      let finalRow: any = row;
+
+      // 🔁 If the FK join didn't hydrate host, fall back to a direct hosts query
+      if (!finalRow.host && finalRow.host_id) {
+        try {
+          const { data: hostRow, error: hostErr } = await supabase
+            .from("hosts")
+            .select("id, branding_logo_url, logo_url")
+            .eq("id", finalRow.host_id)
+            .maybeSingle();
+
+          if (hostErr) {
+            console.warn("⚠️ Could not load host in thanks page:", hostErr);
+          } else if (hostRow) {
+            finalRow = {
+              ...finalRow,
+              host: hostRow,
+            };
+          }
+        } catch (e) {
+          console.warn("⚠️ Host fetch fallback threw:", e);
+        }
       }
 
-      setData(data);
+      if (!finalRow.host) {
+        console.log("⚠️ No host attached on thanks page for", {
+          type,
+          table,
+          row: finalRow,
+        });
+      }
+
+      setData(finalRow);
     })();
   }, [gameId, type, supabase]);
 
   /* ---------------------------------------------------------
      Record visit (loyalty / badge)
-     Runs for trivia too, as long as profile + host.id exist
+     Runs for trivia too when profile + host.id exist
   --------------------------------------------------------- */
   useEffect(() => {
     if (!profile || !data?.host?.id) return;
