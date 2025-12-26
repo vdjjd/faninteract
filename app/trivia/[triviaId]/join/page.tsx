@@ -35,7 +35,7 @@ export default function TriviaJoinPage() {
   const [joining, setJoining] = useState(false);
   const [joinError, setJoinError] = useState("");
 
-  // 🔑 NEW: track the trivia_players row + waiting state
+  // 🔑 Track the trivia_players row + waiting state
   const [playerId, setPlayerId] = useState<string | null>(null);
   const [waitingApproval, setWaitingApproval] = useState(false);
 
@@ -162,7 +162,7 @@ export default function TriviaJoinPage() {
 
   /* -------------------------------------------------- */
   /* JOIN TRIVIA → INSERT trivia_players                */
-  /*   Now: stay here & wait for moderation             */
+  /*   Stay here & wait for moderation                  */
   /* -------------------------------------------------- */
   async function handleJoinTrivia(e: any) {
     e.preventDefault();
@@ -282,9 +282,10 @@ export default function TriviaJoinPage() {
       if (newPlayerId) {
         setPlayerId(newPlayerId);
         setWaitingApproval(true);
+        console.log("🔍 Waiting for approval on trivia_players id:", newPlayerId);
       }
-      // 🔥 NOTE: we DO NOT redirect here anymore.
-      // We wait for moderation approval via realtime below.
+      // NOTE: we DO NOT redirect here.
+      // We wait for moderation approval via realtime + polling below.
     } finally {
       setJoining(false);
     }
@@ -292,30 +293,45 @@ export default function TriviaJoinPage() {
 
   /* -------------------------------------------------- */
   /* WATCH THIS trivia_player FOR APPROVAL / REJECT      */
+  /*   1) Realtime subscription                          */
+  /*   2) Polling fallback every 2s                      */
   /* -------------------------------------------------- */
   useEffect(() => {
     if (!playerId || !triviaId) return;
 
     let cancelled = false;
 
-    // One-shot check in case status was already changed
-    (async () => {
-      const { data } = await supabase
+    // 🔁 Polling fallback
+    const poll = async () => {
+      const { data, error } = await supabase
         .from("trivia_players")
         .select("status")
         .eq("id", playerId)
         .maybeSingle();
 
+      if (error) {
+        console.error("❌ Poll trivia_players error:", error);
+        return;
+      }
+
       if (!data || cancelled) return;
+
       if (data.status === "approved") {
+        console.log("✅ Player approved via polling, redirecting…");
         router.replace(`/thanks/${triviaId}?type=trivia`);
       } else if (data.status === "rejected") {
+        console.log("🚫 Player rejected via polling");
         setJoinError("Sorry, the host rejected your entry.");
         setWaitingApproval(false);
       }
-    })();
+    };
 
-    // Realtime subscription for ongoing changes
+    // Initial one-shot check
+    poll();
+
+    const intervalId = setInterval(poll, 2000);
+
+    // ✅ Realtime subscription as primary path
     const channel = supabase
       .channel(`trivia-player-${playerId}`)
       .on(
@@ -330,9 +346,13 @@ export default function TriviaJoinPage() {
           const row = payload.new as any;
           if (!row || cancelled) return;
 
+          console.log("📡 Realtime update on trivia_players:", row.status);
+
           if (row.status === "approved") {
+            console.log("✅ Player approved via realtime, redirecting…");
             router.replace(`/thanks/${triviaId}?type=trivia`);
           } else if (row.status === "rejected") {
+            console.log("🚫 Player rejected via realtime");
             setJoinError("Sorry, the host rejected your entry.");
             setWaitingApproval(false);
           }
@@ -342,6 +362,7 @@ export default function TriviaJoinPage() {
 
     return () => {
       cancelled = true;
+      clearInterval(intervalId);
       supabase.removeChannel(channel);
     };
   }, [playerId, triviaId, router]);
