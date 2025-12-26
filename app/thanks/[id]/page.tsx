@@ -110,7 +110,6 @@ export default function ThankYouPage() {
 
   /* ---------------------------------------------------------
      Load host + background (with FK-based join)
-     ⚠️ This is where trivia must get host for logo + loyalty
   --------------------------------------------------------- */
   useEffect(() => {
     if (!gameId) return;
@@ -132,9 +131,18 @@ export default function ThankYouPage() {
           ? "trivia_cards"
           : "fan_walls";
 
-      // Base select: always include host_id + FK join
+      // Special-case trivia, because trivia_cards currently have no background_value
       const select =
         type === "basketball"
+          ? `
+              id,
+              host:host_id (
+                id,
+                branding_logo_url,
+                logo_url
+              )
+            `
+          : type === "trivia"
           ? `
               id,
               host_id,
@@ -146,7 +154,6 @@ export default function ThankYouPage() {
             `
           : `
               id,
-              host_id,
               background_value,
               host:host_id (
                 id,
@@ -155,7 +162,7 @@ export default function ThankYouPage() {
               )
             `;
 
-      const { data: row, error } = await supabase
+      const { data, error } = await supabase
         .from(table)
         .select(select)
         .eq("id", gameId as string)
@@ -167,50 +174,12 @@ export default function ThankYouPage() {
         return;
       }
 
-      if (!row) {
-        setData(null);
-        return;
-      }
-
-      let finalRow: any = row;
-
-      // 🔁 If the FK join didn't hydrate host, fall back to a direct hosts query
-      if (!finalRow.host && finalRow.host_id) {
-        try {
-          const { data: hostRow, error: hostErr } = await supabase
-            .from("hosts")
-            .select("id, branding_logo_url, logo_url")
-            .eq("id", finalRow.host_id)
-            .maybeSingle();
-
-          if (hostErr) {
-            console.warn("⚠️ Could not load host in thanks page:", hostErr);
-          } else if (hostRow) {
-            finalRow = {
-              ...finalRow,
-              host: hostRow,
-            };
-          }
-        } catch (e) {
-          console.warn("⚠️ Host fetch fallback threw:", e);
-        }
-      }
-
-      if (!finalRow.host) {
-        console.log("⚠️ No host attached on thanks page for", {
-          type,
-          table,
-          row: finalRow,
-        });
-      }
-
-      setData(finalRow);
+      setData(data);
     })();
   }, [gameId, type, supabase]);
 
   /* ---------------------------------------------------------
      Record visit (loyalty / badge)
-     Runs for trivia too when profile + host.id exist
   --------------------------------------------------------- */
   useEffect(() => {
     if (!profile || !data?.host?.id) return;
@@ -223,7 +192,6 @@ export default function ThankYouPage() {
       host_id: data.host.id,
     }).then((res) => {
       if (!res) return;
-      console.log("🎖️ Loyalty visitInfo:", res);
       setVisitInfo(res);
     });
   }, [profile, data?.host?.id]);
@@ -320,7 +288,7 @@ export default function ThankYouPage() {
         setCountdownStartedAt(Date.now());
       } else if (card.status === "running") {
         setTriviaPhase("playing");
-        router.replace(`/trivia/${gameId}/question/0`);
+        router.replace(`/trivia/userinterface?game=${gameId}`);
       } else {
         setTriviaPhase("waiting");
       }
@@ -339,6 +307,7 @@ export default function ThankYouPage() {
           filter: `id=eq.${gameId}`,
         },
         (payload) => {
+          console.log("🔔 trivia_cards update on thanks:", payload.new);
           const card = payload.new as any;
 
           if (card.countdown_active) {
@@ -354,7 +323,7 @@ export default function ThankYouPage() {
 
           if (card.status === "running") {
             setTriviaPhase("playing");
-            router.replace(`/trivia/${gameId}/question/0`);
+            router.replace(`/trivia/userinterface?game=${gameId}`);
             return;
           }
 
@@ -399,6 +368,8 @@ export default function ThankYouPage() {
   const bg =
     type === "basketball"
       ? `url(/newbackground.png)`
+      : type === "trivia"
+      ? "linear-gradient(135deg,#0a2540,#1b2b44,#000000)"
       : data?.background_value?.includes?.("http")
       ? `url(${data.background_value})`
       : data?.background_value ||
@@ -434,7 +405,7 @@ export default function ThankYouPage() {
   --------------------------------------------------------- */
   if (type === "trivia" && triviaPhase === "countdown" && countdownStartedAt) {
     const elapsed = Math.floor((now - countdownStartedAt) / 1000);
-    const secondsLeft = Math.max(0, 10 - elapsed);
+    const secondsLeft = Math.max(0, 10 - elapsed); // matches 10s dashboard countdown
 
     return (
       <div
