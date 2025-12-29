@@ -12,15 +12,6 @@ interface TriviaActiveWallProps {
   running?: boolean; // optional, not required
 }
 
-/* ---------- FULLSCREEN TOGGLE ---------- */
-function toggleFullscreen() {
-  if (!document.fullscreenElement) {
-    document.documentElement.requestFullscreen().catch(() => {});
-  } else {
-    document.exitFullscreen().catch(() => {});
-  }
-}
-
 /* ---------------------------------------------------- */
 /* QR + LOGO CONTROL                                    */
 /* ---------------------------------------------------- */
@@ -675,29 +666,6 @@ export default function TriviaActiveWall({
               filter: "drop-shadow(0 0 12px rgba(0,0,0,0.65))",
             }}
           />
-        </div>
-
-        {/* FULLSCREEN BUTTON */}
-        <div
-          style={{
-            position: "fixed",
-            bottom: "30px",
-            right: "30px",
-            width: 40,
-            height: 40,
-            borderRadius: 12,
-            background: "rgba(255,255,255,0.08)",
-            border: "1px solid rgba(255,255,255,0.2)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            cursor: "pointer",
-            opacity: 0.35,
-            zIndex: 999999999,
-          }}
-          onClick={toggleFullscreen}
-        >
-          ⛶
         </div>
       </div>
 

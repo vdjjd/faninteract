@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { useParams } from "next/navigation";
 import { getSupabaseClient } from "@/lib/supabaseClient";
 
@@ -12,6 +12,9 @@ const supabase = getSupabaseClient();
 export default function TriviaWallPage() {
   const { triviaId } = useParams();
   const [trivia, setTrivia] = useState<any>(null);
+
+  // 🔥 Fullscreen container (same pattern as FanWallPage)
+  const wallRef = useRef<HTMLDivElement | null>(null);
 
   /* ------------------------------------------------------------
      POLLING — trivia_cards + host (via host_id)
@@ -41,9 +44,7 @@ export default function TriviaWallPage() {
       if (triviaRow?.host_id) {
         const { data: hostRow, error: hostErr } = await supabase
           .from("hosts")
-          .select(
-            "id, venue_name, branding_logo_url, logo_url"
-          )
+          .select("id, venue_name, branding_logo_url, logo_url")
           .eq("id", triviaRow.host_id)
           .maybeSingle();
 
@@ -75,22 +76,106 @@ export default function TriviaWallPage() {
   if (!trivia) return null;
 
   /* ------------------------------------------------------------
-     WALL ROUTING (FINAL)
+     SHARED FULLSCREEN HANDLER (router-level)
   ------------------------------------------------------------ */
+  const toggleFullscreen = async () => {
+    const el = wallRef.current;
+    if (!el) {
+      console.warn("Fullscreen element missing");
+      return;
+    }
 
-  // Countdown OR inactive OR finished → inactive wall
-  if (
+    try {
+      if (!document.fullscreenElement) {
+        await (el as any)
+          .requestFullscreen({ navigationUI: "hide" } as any)
+          .catch((err: any) => {
+            console.error("❌ Fullscreen failed:", err);
+          });
+      } else {
+        await document.exitFullscreen();
+      }
+    } catch (err) {
+      console.error("🔥 Fullscreen error:", err);
+    }
+  };
+
+  const isInactive =
     trivia.status === "inactive" ||
     trivia.countdown_active === true ||
-    trivia.status === "finished"
-  ) {
-    return <InactiveWall trivia={trivia} />;
-  }
+    trivia.status === "finished";
 
-  // Running AFTER countdown
-  if (trivia.status === "running" && trivia.countdown_active === false) {
-    return <TriviaActiveWall trivia={trivia} />;
-  }
+  const bg =
+    trivia.background_type === "image"
+      ? `url(${trivia.background_value}) center/cover no-repeat`
+      : trivia.background_value ||
+        "linear-gradient(to bottom right,#1b2735,#090a0f)";
 
-  return <InactiveWall trivia={trivia} />;
+  const brightness = trivia.background_brightness ?? 100;
+
+  return (
+    <div
+      ref={wallRef}
+      style={{
+        position: "relative",
+        width: "100%",
+        height: "100vh",
+        background: bg,
+        filter: `brightness(${brightness}%)`,
+        overflow: "hidden",
+      }}
+    >
+      {/* INACTIVE WALL */}
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          opacity: isInactive ? 1 : 0,
+          transition: "opacity 0.6s ease",
+          zIndex: 1,
+        }}
+      >
+        <InactiveWall trivia={trivia} />
+      </div>
+
+      {/* ACTIVE WALL */}
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          opacity: isInactive ? 0 : 1,
+          transition: "opacity 0.6s ease",
+          zIndex: 2,
+        }}
+      >
+        <TriviaActiveWall trivia={trivia} />
+      </div>
+
+      {/* FULLSCREEN BUTTON (shared) */}
+      <div
+        style={{
+          position: "fixed",
+          bottom: "30px",
+          right: "30px",
+          width: 40,
+          height: 40,
+          borderRadius: 12,
+          background: "rgba(255,255,255,0.08)",
+          border: "1px solid rgba(255,255,255,0.2)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          cursor: "pointer",
+          opacity: 0.35,
+          transition: "opacity 0.2s ease",
+          zIndex: 999999999,
+        }}
+        onMouseEnter={(e) => (e.currentTarget.style.opacity = "1")}
+        onMouseLeave={(e) => (e.currentTarget.style.opacity = "0.35")}
+        onClick={toggleFullscreen}
+      >
+        ⛶
+      </div>
+    </div>
+  );
 }

@@ -8,15 +8,6 @@ interface TriviaInactiveWallProps {
   trivia: any;
 }
 
-/* ---------- FULLSCREEN ---------- */
-function toggleFullscreen() {
-  if (!document.fullscreenElement) {
-    document.documentElement.requestFullscreen().catch(() => {});
-  } else {
-    document.exitFullscreen().catch(() => {});
-  }
-}
-
 /* ---------- COUNTDOWN COMPONENT (DB-synced) ---------- */
 function CountdownDisplay({
   countdown,
@@ -125,9 +116,7 @@ export default function TriviaInactiveWall({
 
     setWallState({
       countdown: trivia.countdown || "10 seconds",
-      // 🔑 listen to countdown_active
       countdownActive: trivia.countdown_active === true,
-      // 🔑 shared start time from DB
       countdownStartedAt: trivia.countdown_started_at || null,
       title: trivia.title || "",
     });
@@ -328,29 +317,6 @@ export default function TriviaInactiveWall({
             />
           </div>
         </div>
-      </div>
-
-      {/* FULLSCREEN BUTTON */}
-      <div
-        onClick={toggleFullscreen}
-        style={{
-          position: "fixed",
-          bottom: 28,
-          right: 28,
-          width: 42,
-          height: 42,
-          borderRadius: 12,
-          background: "rgba(255,255,255,0.08)",
-          border: "1px solid rgba(255,255,255,0.2)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          cursor: "pointer",
-          opacity: 0.45,
-          zIndex: 999999,
-        }}
-      >
-        ⛶
       </div>
     </div>
   );
