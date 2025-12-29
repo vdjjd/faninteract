@@ -18,7 +18,8 @@ export default function FanWallPage() {
   const { wallId } = useParams();
   const wallUUID = Array.isArray(wallId) ? wallId[0] : wallId;
 
-  const wallRef = useRef<HTMLDivElement | null>(null); // 🔥 For fullscreen container
+  // 🔥 This will now be the 16:9 "stage" container
+  const wallRef = useRef<HTMLDivElement | null>(null);
 
   const { wall, posts, loading, showLive } = useWallData(wallUUID);
 
@@ -85,106 +86,120 @@ export default function FanWallPage() {
   const toggleFullscreen = async () => {
     const el = wallRef.current;
 
-    if (!el) return console.warn("Fullscreen element missing");
+    if (!el) return console.warn('Fullscreen element missing');
 
     try {
       if (!document.fullscreenElement) {
-        console.log("🔵 Requesting fullscreen on element:", el);
-
-        await el.requestFullscreen({ navigationUI: "hide" }).catch(err => {
-          console.error("❌ Fullscreen failed:", err);
+        await el.requestFullscreen({ navigationUI: 'hide' }).catch(err => {
+          console.error('❌ Fullscreen failed:', err);
         });
-
       } else {
         await document.exitFullscreen();
       }
     } catch (err) {
-      console.error("🔥 Fullscreen error:", err);
+      console.error('🔥 Fullscreen error:', err);
     }
   };
 
   return (
+    // 🔲 OUTER SHELL – fills the monitor / browser
     <div
-      ref={wallRef}  // 🔥 fullscreen now targets THIS container
       style={{
-        position: 'relative',
-        width: '100%',
-        height: '100vh',
-        background: bg,
-        transition: 'background 0.6s ease',
+        position: 'fixed',
+        inset: 0,
+        background: '#000',               // letterbox background
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
         overflow: 'hidden',
       }}
     >
-      {/* INACTIVE WALL */}
+      {/* 🎯 16:9 STAGE – this is what you send to TriCaster */}
       <div
+        ref={wallRef}
         style={{
-          position: 'absolute',
-          inset: 0,
-          opacity: showLive ? 0 : 1,
-          transition: 'opacity 0.6s ease',
-          zIndex: 1,
+          position: 'relative',
+          width: '100%',
+          height: '100%',
+          maxWidth: '177.78vh',           // 16/9 * height
+          maxHeight: '56.25vw',           // 9/16 * width
+          aspectRatio: '16 / 9',
+          background: bg,
+          transition: 'background 0.6s ease',
+          overflow: 'hidden',
         }}
       >
-        <InactiveWall wall={wall} />
-      </div>
-
-      {/* ACTIVE WALL */}
-      <div
-        style={{
-          position: 'absolute',
-          inset: 0,
-          opacity: showLive ? 1 : 0,
-          transition: 'opacity 0.6s ease',
-          zIndex: 2,
-        }}
-      >
-        {renderActiveWall()}
-      </div>
-
-      {/* AD OVERLAY */}
-      <AdOverlay
-        showAd={showAd}
-        currentAd={currentAd}
-        adTransition={adTransition}
-      />
-
-      {/* FULLSCREEN BUTTON */}
-      <div
-        style={{
-          position: 'fixed',
-          bottom: '30px',
-          right: '30px',
-          width: 40,
-          height: 40,
-          borderRadius: 12,
-          background: 'rgba(255,255,255,0.08)',
-          border: '1px solid rgba(255,255,255,0.2)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          cursor: 'pointer',
-          opacity: 0.35,
-          transition: 'opacity 0.2s ease',
-          zIndex: 999999999,
-        }}
-        onMouseEnter={e => (e.currentTarget.style.opacity = '1')}
-        onMouseLeave={e => (e.currentTarget.style.opacity = '0.35')}
-        onClick={toggleFullscreen}
-      >
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          stroke="white"
-          fill="none"
-          viewBox="0 0 24 24"
-          strokeWidth={1.5}
-          style={{ width: 28, height: 28 }}
+        {/* INACTIVE WALL */}
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            opacity: showLive ? 0 : 1,
+            transition: 'opacity 0.6s ease',
+            zIndex: 1,
+          }}
         >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            d="M3 9V4h5M21 9V4h-5M3 15v5h5M21 15v5h-5"
-          />
-        </svg>
+          <InactiveWall wall={wall} />
+        </div>
+
+        {/* ACTIVE WALL */}
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            opacity: showLive ? 1 : 0,
+            transition: 'opacity 0.6s ease',
+            zIndex: 2,
+          }}
+        >
+          {renderActiveWall()}
+        </div>
+
+        {/* AD OVERLAY – stays locked to the stage */}
+        <AdOverlay
+          showAd={showAd}
+          currentAd={currentAd}
+          adTransition={adTransition}
+        />
+
+        {/* FULLSCREEN BUTTON – anchored to the stage, not the whole window */}
+        <div
+          style={{
+            position: 'absolute',
+            bottom: '30px',
+            right: '30px',
+            width: 40,
+            height: 40,
+            borderRadius: 12,
+            background: 'rgba(255,255,255,0.08)',
+            border: '1px solid rgba(255,255,255,0.2)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            cursor: 'pointer',
+            opacity: 0.35,
+            transition: 'opacity 0.2s ease',
+            zIndex: 999,
+          }}
+          onMouseEnter={e => (e.currentTarget.style.opacity = '1')}
+          onMouseLeave={e => (e.currentTarget.style.opacity = '0.35')}
+          onClick={toggleFullscreen}
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            stroke="white"
+            fill="none"
+            viewBox="0 0 24 24"
+            strokeWidth={1.5}
+            style={{ width: 28, height: 28 }}
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="M3 9V4h5M21 9V4h-5M3 15v5h5M21 15v5h-5"
+            />
+          </svg>
+        </div>
       </div>
     </div>
   );

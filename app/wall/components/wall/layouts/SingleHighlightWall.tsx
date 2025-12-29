@@ -1,9 +1,113 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { QRCodeCanvas } from 'qrcode.react';
 import React from 'react';
+
+/* ---------------------------------------------------- */
+/*  TRANSITION RESOLVER (UNCHANGED)                     */
+/* ---------------------------------------------------- */
+
+const SPEED_MAP: Record<string, number> = {
+  Slow: 1.2,
+  Medium: 0.7,
+  Fast: 0.35,
+};
+
+function resolveTransition(type?: string, speed?: string) {
+  const duration = SPEED_MAP[speed || 'Medium'] ?? 0.7;
+
+  if (type === 'Random') {
+    const options = [
+      'Fade In / Fade Out',
+      'Slide Left / Slide Right',
+      'Slide Right / Slide Left',
+      'Slide Up / Slide Out',
+      'Slide Down / Slide Out',
+      'Zoom In / Zoom Out',
+      'Zoom Out / Zoom In',
+      'Flip',
+      'Rotate In / Rotate Out',
+    ];
+    type = options[Math.floor(Math.random() * options.length)];
+  }
+
+  switch (type) {
+    case 'Slide Left / Slide Right':
+      return {
+        initial: { opacity: 0, x: 120 },
+        animate: { opacity: 1, x: 0 },
+        exit: { opacity: 0, x: -120 },
+        transition: { duration, ease: 'easeOut' },
+      };
+
+    case 'Slide Right / Slide Left':
+      return {
+        initial: { opacity: 0, x: -120 },
+        animate: { opacity: 1, x: 0 },
+        exit: { opacity: 0, x: 120 },
+        transition: { duration, ease: 'easeOut' },
+      };
+
+    case 'Slide Up / Slide Out':
+      return {
+        initial: { opacity: 0, y: 80 },
+        animate: { opacity: 1, y: 0 },
+        exit: { opacity: 0, y: -80 },
+        transition: { duration, ease: 'easeOut' },
+      };
+
+    case 'Slide Down / Slide Out':
+      return {
+        initial: { opacity: 0, y: -80 },
+        animate: { opacity: 1, y: 0 },
+        exit: { opacity: 0, y: 80 },
+        transition: { duration, ease: 'easeOut' },
+      };
+
+    case 'Zoom In / Zoom Out':
+      return {
+        initial: { opacity: 0, scale: 0.7 },
+        animate: { opacity: 1, scale: 1 },
+        exit: { opacity: 0, scale: 1.2 },
+        transition: { duration },
+      };
+
+    case 'Zoom Out / Zoom In':
+      return {
+        initial: { opacity: 0, scale: 1.2 },
+        animate: { opacity: 1, scale: 1 },
+        exit: { opacity: 0, scale: 0.7 },
+        transition: { duration },
+      };
+
+    case 'Flip':
+      return {
+        initial: { opacity: 0, rotateY: 90 },
+        animate: { opacity: 1, rotateY: 0 },
+        exit: { opacity: 0, rotateY: -90 },
+        transition: { duration, ease: 'easeOut' },
+      };
+
+    case 'Rotate In / Rotate Out':
+      return {
+        initial: { opacity: 0, rotate: -15 },
+        animate: { opacity: 1, rotate: 0 },
+        exit: { opacity: 0, rotate: 15 },
+        transition: { duration, ease: 'easeOut' },
+      };
+
+    case 'Fade In / Fade Out':
+    default:
+      return {
+        initial: { opacity: 0 },
+        animate: { opacity: 1 },
+        exit: { opacity: 0 },
+        transition: { duration },
+      };
+  }
+}
 
 /* ---------------------------------------------------- */
 /*  STYLE CONTROL BLOCK                                  */
@@ -52,12 +156,24 @@ const STYLE: Record<string, React.CSSProperties> = {
     `,
   },
 
+  // Invisible box that defines the available message area
+  messageBox: {
+    width: '90%',
+    height: 'clamp(120px, 30vh, 220px)', // adjust this to change the zone
+    marginTop: '2vh',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    boxSizing: 'border-box',
+    overflow: 'hidden', // text must stay inside this
+  },
+
+  // Text itself; font-size is controlled in JS so we don't set it here
   message: {
-    fontSize: 'clamp(4rem,1vw,2.4rem)',
     color: '#fff',
     textAlign: 'center',
-    maxWidth: '90%',
-    marginTop: '2vh',
+    maxWidth: '100%',
+    margin: 0,
     fontWeight: 600,
     textShadow: `
       2px 2px 2px #000,
@@ -65,6 +181,8 @@ const STYLE: Record<string, React.CSSProperties> = {
       2px -2px 2px #000,
       -2px -2px 2px #000
     `,
+    wordWrap: 'break-word',
+    overflow: 'hidden',
   },
 
   scanText: {
@@ -92,14 +210,14 @@ const STYLE: Record<string, React.CSSProperties> = {
 };
 
 /* ---------------------------------------------------- */
-/*      BADGE + VISIT CONTROL                            */
+/*      BADGE + VISIT CONTROL (BACK TO ORIGINAL)        */
 /* ---------------------------------------------------- */
 
 const BADGE_CTRL = {
   badge: {
     bottom: '0vh',
     right: '48vw',
-    size: 150, // 👈 container size (authoritative)
+    size: 150,
   },
   visits: {
     bottom: '10.5vh',
@@ -120,6 +238,9 @@ export default function SingleHighlightWall({
   const [livePosts, setLivePosts] = useState(posts || []);
   const [currentIndex, setCurrentIndex] = useState(0);
 
+  const messageBoxRef = useRef<HTMLDivElement | null>(null);
+  const messageTextRef = useRef<HTMLParagraphElement | null>(null);
+
   const title = event?.title || 'Fan Zone Wall';
 
   const logo =
@@ -133,6 +254,11 @@ export default function SingleHighlightWall({
       : event?.background_value || 'linear-gradient(135deg,#1b2735,#090a0f)';
 
   const brightness = event?.background_brightness ?? 100;
+
+  const motionPreset = resolveTransition(
+    event?.post_transition,
+    event?.transition_speed
+  );
 
   useEffect(() => {
     setLivePosts(posts || []);
@@ -153,6 +279,37 @@ export default function SingleHighlightWall({
 
   const current = livePosts[currentIndex] || null;
 
+  // 🔧 Auto-scale message text to fit inside the messageBox
+  useEffect(() => {
+    const box = messageBoxRef.current;
+    const textEl = messageTextRef.current;
+
+    if (!box || !textEl) return;
+
+    let fontSize = 56; // px – starting size
+    textEl.style.fontSize = `${fontSize}px`;
+
+    const adjust = () => {
+      if (!box || !textEl) return;
+
+      let iterations = 0;
+      const minFont = 10;
+
+      while (
+        textEl.scrollHeight > box.clientHeight &&
+        fontSize > minFont &&
+        iterations < 50
+      ) {
+        fontSize -= 2;
+        textEl.style.fontSize = `${fontSize}px`;
+        iterations++;
+      }
+    };
+
+    const id = requestAnimationFrame(adjust);
+    return () => cancelAnimationFrame(id);
+  }, [currentIndex, current?.message]);
+
   const origin =
     typeof window !== 'undefined'
       ? window.location.origin
@@ -161,7 +318,7 @@ export default function SingleHighlightWall({
   return (
     <div
       style={{
-        width: '100vw',
+        width: '100vw',        // back to explicit viewport sizing
         height: '100vh',
         background: bg,
         filter: `brightness(${brightness}%)`,
@@ -175,6 +332,7 @@ export default function SingleHighlightWall({
     >
       <h1 style={STYLE.title}>{title}</h1>
 
+      {/* MAIN CARD */}
       <div
         style={{
           width: 'min(92vw,1800px)',
@@ -204,10 +362,7 @@ export default function SingleHighlightWall({
             <motion.img
               key={`${current?.id || 'blank'}-${currentIndex}`}
               src={current?.photo_url || '/fallback.png'}
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.8 }}
+              {...motionPreset}
               style={{
                 width: '100%',
                 height: '100%',
@@ -230,6 +385,7 @@ export default function SingleHighlightWall({
             position: 'relative',
           }}
         >
+          {/* Logo */}
           <div
             style={{
               width: 'clamp(400px,28vw,380px)',
@@ -252,12 +408,19 @@ export default function SingleHighlightWall({
 
           <div style={STYLE.greyBar} />
 
+          {/* Nickname */}
           <p style={STYLE.nickname}>{current?.nickname || 'Guest'}</p>
-          <p style={STYLE.message}>{current?.message || ''}</p>
+
+          {/* Invisible Message Box that auto-scales text to fit */}
+          <div style={STYLE.messageBox} ref={messageBoxRef}>
+            <p style={STYLE.message} ref={messageTextRef}>
+              {current?.message || ''}
+            </p>
+          </div>
         </div>
       </div>
 
-      {/* QR */}
+      {/* QR (bottom-left) */}
       <div style={STYLE.qrContainer}>
         <p style={STYLE.scanText}>Scan Me To Join</p>
         <div style={STYLE.qrWrapper}>
@@ -272,7 +435,7 @@ export default function SingleHighlightWall({
         </div>
       </div>
 
-      {/* BADGE (container authoritative) */}
+      {/* BADGE (back to original anchoring) */}
       {current?.badge_icon_url && (
         <div
           style={{
@@ -294,7 +457,7 @@ export default function SingleHighlightWall({
             style={{
               maxWidth: '100%',
               maxHeight: '100%',
-              objectFit: 'contain', // 👈 image fits container
+              objectFit: 'contain',
               filter: 'drop-shadow(0 0 10px rgba(0,0,0,0.8))',
             }}
           />
