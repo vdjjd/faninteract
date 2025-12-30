@@ -241,6 +241,14 @@ export default function TriviaJoinPage() {
         sessionId = session.id;
       }
 
+      // 🔒 IMPORTANT: remember which session + card this guest is in
+      try {
+        localStorage.setItem("current_trivia_session_id", sessionId);
+        localStorage.setItem("current_trivia_card_id", triviaId);
+      } catch {
+        // ignore storage errors
+      }
+
       // 3️⃣ Upload selfie (if required)
       let photoUrl: string | null = null;
       if (requireSelfie && imageSrc) {
