@@ -191,7 +191,7 @@ export default function TriviaCard({
   }
 
   /* ------------------------------------------------------------
-     ▶️ PLAY TRIVIA (single source of truth for countdown)
+     ▶️ PLAY TRIVIA (reuse latest session instead of creating a new one)
   ------------------------------------------------------------ */
   async function handlePlayTrivia() {
     if (trivia.countdown_active || trivia.status === "running") return;
@@ -207,8 +207,11 @@ export default function TriviaCard({
       })
       .eq("id", trivia.id);
 
-    // 2️⃣ After 10s → flip to running, stop countdown, ensure a session exists
+    // 2️⃣ After 10s → flip card to running, stop countdown,
+    //    and bump the latest session to "running" (do NOT create a new one
+    //    unless absolutely none exists).
     setTimeout(async () => {
+      // Mark the card as running
       await supabase
         .from("trivia_cards")
         .update({
@@ -217,14 +220,30 @@ export default function TriviaCard({
         })
         .eq("id", trivia.id);
 
-      const { data: existingSession } = await supabase
+      // Grab the most recent session for this card
+      const { data: latestSession, error: latestErr } = await supabase
         .from("trivia_sessions")
-        .select("id")
+        .select("id,status")
         .eq("trivia_card_id", trivia.id)
-        .eq("status", "running")
+        .order("created_at", { ascending: false })
+        .limit(1)
         .maybeSingle();
 
-      if (!existingSession) {
+      if (latestErr) {
+        console.error("❌ trivia_sessions latest fetch error:", latestErr);
+        return;
+      }
+
+      if (latestSession) {
+        // This is the session your join page used ("waiting" or already "running")
+        if (latestSession.status !== "running") {
+          await supabase
+            .from("trivia_sessions")
+            .update({ status: "running" })
+            .eq("id", latestSession.id);
+        }
+      } else {
+        // Edge case: host hit Play before anybody joined → create first session now
         await supabase.from("trivia_sessions").insert({
           trivia_card_id: trivia.id,
           status: "running",
