@@ -48,24 +48,65 @@ export default function TriviaCard({
   const [savingSettings, setSavingSettings] = useState(false);
 
   /* ------------------------------------------------------------
-     PARTICIPANTS / PENDING COUNTS
+     CARD STATUS (LIVE POLLING FROM trivia_cards)
   ------------------------------------------------------------ */
-  const [participantsCount, setParticipantsCount] = useState(0);
-  const [pendingCount, setPendingCount] = useState(0);
+  const [cardStatus, setCardStatus] = useState<string>(trivia.status);
+  const [cardCountdownActive, setCardCountdownActive] = useState<boolean>(
+    !!trivia.countdown_active
+  );
 
+  // keep in sync if parent reloads trivia
   useEffect(() => {
-    // keep local state in sync if parent reloads trivia
     setTimerSeconds(trivia?.timer_seconds ?? 30);
     setPlayMode(trivia?.play_mode || "auto");
     setScoringMode(trivia?.scoring_mode || "100s");
     setRequireSelfie(trivia?.require_selfie ?? true);
+    setCardStatus(trivia?.status);
+    setCardCountdownActive(!!trivia?.countdown_active);
   }, [
     trivia?.id,
     trivia?.timer_seconds,
     trivia?.play_mode,
     trivia?.scoring_mode,
     trivia?.require_selfie,
+    trivia?.status,
+    trivia?.countdown_active,
   ]);
+
+  // 🔁 Poll trivia_cards.status + countdown_active every 2s
+  useEffect(() => {
+    let isMounted = true;
+
+    const pollCard = async () => {
+      if (!trivia?.id) return;
+
+      const { data, error } = await supabase
+        .from("trivia_cards")
+        .select("status, countdown_active")
+        .eq("id", trivia.id)
+        .maybeSingle();
+
+      if (error || !data) {
+        if (error) {
+          console.error("❌ trivia_cards status poll error:", error);
+        }
+        return;
+      }
+
+      if (!isMounted) return;
+      setCardStatus(data.status);
+      setCardCountdownActive(!!data.countdown_active);
+    };
+
+    // initial + interval
+    pollCard();
+    const id = setInterval(pollCard, 2000);
+
+    return () => {
+      isMounted = false;
+      clearInterval(id);
+    };
+  }, [trivia?.id]);
 
   async function updateTriviaSettings(patch: {
     timer_seconds?: number;
@@ -140,6 +181,9 @@ export default function TriviaCard({
   /* ------------------------------------------------------------
      PARTICIPANTS / PENDING COUNTS FOR LATEST NON-FINISHED SESSION
   ------------------------------------------------------------ */
+  const [participantsCount, setParticipantsCount] = useState(0);
+  const [pendingCount, setPendingCount] = useState(0);
+
   async function loadCounts() {
     // latest session that is NOT finished (waiting or running)
     const { data: session, error: sessionErr } = await supabase
@@ -172,7 +216,7 @@ export default function TriviaCard({
     setPendingCount(players.filter((p) => p.status === "pending").length);
   }
 
-  // 🔁 POLL COUNTS EVERY 2 SECONDS
+  // 🔁 Poll counts every 2s
   useEffect(() => {
     let isMounted = true;
 
@@ -181,10 +225,7 @@ export default function TriviaCard({
       await loadCounts();
     };
 
-    // initial
     doLoad();
-
-    // interval
     const id = setInterval(doLoad, 2000);
 
     return () => {
@@ -258,9 +299,10 @@ export default function TriviaCard({
      - Reuse latest non-finished session (waiting/running)
      - Require at least one APPROVED player
      - Do NOT create a new session here (prevents ghost sessions)
+     - Uses LIVE cardStatus / cardCountdownActive
   ------------------------------------------------------------ */
   async function handlePlayTrivia() {
-    if (trivia.countdown_active || trivia.status === "running") return;
+    if (cardCountdownActive || cardStatus === "running") return;
 
     // 1️⃣ Find latest non-finished session for this card
     const { data: session, error: sessionErr } = await supabase
@@ -310,6 +352,10 @@ export default function TriviaCard({
       })
       .eq("id", trivia.id);
 
+    // update local immediately (polling will keep it in sync too)
+    setCardCountdownActive(true);
+    setCardStatus("waiting");
+
     // 4️⃣ After 10s → mark card as running + mark THIS session as running
     setTimeout(async () => {
       await supabase
@@ -324,6 +370,9 @@ export default function TriviaCard({
         .from("trivia_sessions")
         .update({ status: "running" })
         .eq("id", session.id);
+
+      setCardCountdownActive(false);
+      setCardStatus("running");
     }, 10_000);
   }
 
@@ -349,6 +398,9 @@ export default function TriviaCard({
       .update({ status: "finished" })
       .eq("trivia_card_id", trivia.id)
       .neq("status", "finished");
+
+    setCardStatus("finished");
+    setCardCountdownActive(false);
   }
 
   /* ------------------------------------------------------------
@@ -364,15 +416,17 @@ export default function TriviaCard({
     startIndex + PAGE_SIZE
   );
 
+  const isActiveBorder = cardStatus === "running" || cardCountdownActive;
+
   return (
     <div
       className={cn(
-        "rounded-xl p-5 bg-[#1b2638] border shadow-lg",
+        "rounded-xl p-5 bg-[#1b2638] shadow-lg",
         "col-span-2 row-span-2 min-h-[420px] w-full",
-        // ✅ Green border when trivia is running or counting down
-        trivia.status === "running" || trivia.countdown_active
-          ? "border-lime-400"
-          : "border-white/10"
+        // ✅ THICK green border when running / countdown, thin white otherwise
+        isActiveBorder
+          ? "border-4 border-lime-400 shadow-[0_0_28px_rgba(190,242,100,0.7)]"
+          : "border border-white/10"
       )}
     >
       <Tabs.Root defaultValue="menu">
@@ -483,7 +537,7 @@ export default function TriviaCard({
 
             {/* Row 2 */}
 
-            {/* Col 1: Play / Stop stack (unchanged) */}
+            {/* Col 1: Play / Stop stack */}
             <div className={cn("flex", "flex-col", "gap-2")}>
               <button
                 onClick={handlePlayTrivia}
@@ -511,9 +565,8 @@ export default function TriviaCard({
               </button>
             </div>
 
-            {/* Col 2: ghost spacer (Play height) + Delete aligned with Stop */}
+            {/* Col 2: spacer + Delete aligned with Stop */}
             <div className={cn("flex", "flex-col", "gap-2")}>
-              {/* Invisible spacer to match Play height */}
               <div
                 className={cn(
                   "py-2",
@@ -613,7 +666,6 @@ export default function TriviaCard({
                 )}
               >
                 {visibleQuestions.map((q) => {
-                  // Default: NOT in game unless explicitly true
                   const isActive = !!q.is_active;
 
                   return (
