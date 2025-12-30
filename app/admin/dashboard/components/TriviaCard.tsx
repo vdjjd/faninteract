@@ -10,13 +10,13 @@ export default function TriviaCard({
   onOpenOptions,
   onDelete,
   onLaunch,
-  onOpenModeration, // ✅ NEW: moderation callback
+  onOpenModeration, // ✅ moderation callback
 }: {
   trivia: any;
   onOpenOptions: (trivia: any) => void;
   onDelete: (id: string) => void;
   onLaunch: (id: string) => void;
-  onOpenModeration?: (trivia: any) => void; // ✅ optional
+  onOpenModeration?: (trivia: any) => void;
 }) {
   if (!trivia) return null;
 
@@ -46,6 +46,12 @@ export default function TriviaCard({
     trivia?.require_selfie ?? true
   );
   const [savingSettings, setSavingSettings] = useState(false);
+
+  /* ------------------------------------------------------------
+     PARTICIPANTS + PENDING COUNTS
+  ------------------------------------------------------------ */
+  const [participantsCount, setParticipantsCount] = useState<number>(0);
+  const [pendingCount, setPendingCount] = useState<number>(0);
 
   useEffect(() => {
     // keep local state in sync if parent reloads trivia
@@ -192,23 +198,27 @@ export default function TriviaCard({
 
   /* ------------------------------------------------------------
      ▶️ PLAY TRIVIA (single source of truth for countdown)
+     - Reuse latest non-finished session if it exists.
   ------------------------------------------------------------ */
   async function handlePlayTrivia() {
+    // don't double-trigger while countdown is active or already running
     if (trivia.countdown_active || trivia.status === "running") return;
 
     const nowIso = new Date().toISOString();
 
-    // 1️⃣ Start countdown + store when it started
+    // 1️⃣ Start countdown + store when it started, card in "waiting"
     await supabase
       .from("trivia_cards")
       .update({
         countdown_active: true,
         countdown_started_at: nowIso,
+        status: "waiting",
       })
       .eq("id", trivia.id);
 
     // 2️⃣ After 10s → flip to running, stop countdown, ensure a session exists
     setTimeout(async () => {
+      // flip card into running
       await supabase
         .from("trivia_cards")
         .update({
@@ -217,17 +227,40 @@ export default function TriviaCard({
         })
         .eq("id", trivia.id);
 
-      const { data: existingSession } = await supabase
+      // find latest NON-finished session for this card
+      const { data: sessionRow, error: sessionErr } = await supabase
         .from("trivia_sessions")
-        .select("id")
+        .select("id,status")
         .eq("trivia_card_id", trivia.id)
-        .eq("status", "running")
+        .neq("status", "finished")
+        .order("created_at", { ascending: false })
+        .limit(1)
         .maybeSingle();
 
-      if (!existingSession) {
+      if (sessionErr) {
+        console.error("❌ trivia_sessions select error on Play:", sessionErr);
+        return;
+      }
+
+      if (sessionRow) {
+        // ✅ reuse existing waiting session
+        await supabase
+          .from("trivia_sessions")
+          .update({
+            status: "running",
+            current_round: 1,
+            current_question: 0,
+            question_started_at: null,
+          })
+          .eq("id", sessionRow.id);
+      } else {
+        // no active session -> create one fresh
         await supabase.from("trivia_sessions").insert({
           trivia_card_id: trivia.id,
           status: "running",
+          current_round: 1,
+          current_question: 0,
+          question_started_at: null,
         });
       }
     }, 10_000);
@@ -235,22 +268,103 @@ export default function TriviaCard({
 
   /* ------------------------------------------------------------
      ⏹ STOP TRIVIA
+     - Put card + any non-finished sessions back to "waiting"
+     - This lets you stop, rescan QR, rejoin, and play again.
   ------------------------------------------------------------ */
   async function handleStopTrivia() {
+    // 1️⃣ Card goes back to waiting / inactive
     await supabase
       .from("trivia_cards")
       .update({
-        status: "finished",
+        status: "waiting",
         countdown_active: false,
+        countdown_started_at: null,
       })
       .eq("id", trivia.id);
 
+    // 2️⃣ Any non-finished session becomes "waiting" again
     await supabase
       .from("trivia_sessions")
-      .update({ status: "finished" })
+      .update({
+        status: "waiting",
+        current_round: 1,
+        current_question: 0,
+        question_started_at: null,
+      })
       .eq("trivia_card_id", trivia.id)
-      .eq("status", "running");
+      .neq("status", "finished"); // leave finished sessions alone
   }
+
+  /* ------------------------------------------------------------
+     PARTICIPANTS / PENDING COUNTS
+     - Based on latest non-finished session for this card
+  ------------------------------------------------------------ */
+  useEffect(() => {
+    let cancelled = false;
+
+    async function pollCounts() {
+      // latest non-finished session for this trivia card
+      const { data: sessionRow, error: sessErr } = await supabase
+        .from("trivia_sessions")
+        .select("id,status,created_at")
+        .eq("trivia_card_id", trivia.id)
+        .neq("status", "finished")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (sessErr) {
+        console.error("❌ trivia_sessions fetch for counts error:", sessErr);
+        return;
+      }
+
+      if (!sessionRow) {
+        if (!cancelled) {
+          setParticipantsCount(0);
+          setPendingCount(0);
+        }
+        return;
+      }
+
+      const sessionId = sessionRow.id;
+
+      const { count: approvedCount, error: approvedErr } = await supabase
+        .from("trivia_players")
+        .select("id", { count: "exact", head: true })
+        .eq("session_id", sessionId)
+        .eq("status", "approved");
+
+      if (approvedErr) {
+        console.error(
+          "❌ trivia_players approved count error:",
+          approvedErr
+        );
+      }
+
+      const { count: pending, error: pendingErr } = await supabase
+        .from("trivia_players")
+        .select("id", { count: "exact", head: true })
+        .eq("session_id", sessionId)
+        .eq("status", "pending");
+
+      if (pendingErr) {
+        console.error("❌ trivia_players pending count error:", pendingErr);
+      }
+
+      if (!cancelled) {
+        setParticipantsCount(approvedCount ?? 0);
+        setPendingCount(pending ?? 0);
+      }
+    }
+
+    pollCounts();
+    const id = setInterval(pollCounts, 3000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [trivia.id]);
 
   /* ------------------------------------------------------------
      PAGINATION DERIVED VALUES
@@ -376,7 +490,9 @@ export default function TriviaCard({
               )}
             >
               <p className={cn("text-xs", "opacity-75")}>Participants</p>
-              <p className={cn("text-lg", "font-bold")}>0</p>
+              <p className={cn("text-lg", "font-bold")}>
+                {participantsCount}
+              </p>
             </div>
 
             {/* Play + Stop vertical stack */}
@@ -410,7 +526,7 @@ export default function TriviaCard({
             {/* empty center cell on row 2 */}
             <div />
 
-            {/* ✅ MODERATION BUTTON — same size, under Participants (col 3, row 2) */}
+            {/* ✅ MODERATION BUTTON — under Participants (col 3, row 2) */}
             <button
               onClick={() => onOpenModeration?.(trivia)}
               className={cn(
@@ -419,10 +535,20 @@ export default function TriviaCard({
                 "py-2",
                 "rounded-lg",
                 "font-semibold",
-                "w-full"
+                "w-full",
+                "flex",
+                "items-center",
+                "justify-center",
+                "gap-2",
+                "text-sm"
               )}
             >
-              Moderate Players
+              <span>Moderate Players</span>
+              {pendingCount > 0 && (
+                <span className={cn('ml-1', 'inline-flex', 'items-center', 'justify-center', 'px-2', 'py-0.5', 'text-xs', 'rounded-full', 'bg-black/30')}>
+                  {pendingCount} waiting
+                </span>
+              )}
             </button>
           </div>
         </Tabs.Content>
