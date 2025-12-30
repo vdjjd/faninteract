@@ -10,13 +10,13 @@ export default function TriviaCard({
   onOpenOptions,
   onDelete,
   onLaunch,
-  onOpenModeration, // ✅ NEW: moderation callback
+  onOpenModeration, // ✅ moderation callback
 }: {
   trivia: any;
   onOpenOptions: (trivia: any) => void;
   onDelete: (id: string) => void;
   onLaunch: (id: string) => void;
-  onOpenModeration?: (trivia: any) => void; // ✅ optional
+  onOpenModeration?: (trivia: any) => void;
 }) {
   if (!trivia) return null;
 
@@ -47,8 +47,13 @@ export default function TriviaCard({
   );
   const [savingSettings, setSavingSettings] = useState(false);
 
+  /* ------------------------------------------------------------
+     PARTICIPANTS + PENDING COUNTS (LIVE)
+  ------------------------------------------------------------ */
+  const [participantCount, setParticipantCount] = useState<number | null>(null);
+  const [pendingCount, setPendingCount] = useState<number | null>(null);
+
   useEffect(() => {
-    // keep local state in sync if parent reloads trivia
     setTimerSeconds(trivia?.timer_seconds ?? 30);
     setPlayMode(trivia?.play_mode || "auto");
     setScoringMode(trivia?.scoring_mode || "100s");
@@ -191,7 +196,7 @@ export default function TriviaCard({
   }
 
   /* ------------------------------------------------------------
-     ▶️ PLAY TRIVIA (reuse latest session instead of creating a new one)
+     ▶️ PLAY TRIVIA (single source of truth for countdown)
   ------------------------------------------------------------ */
   async function handlePlayTrivia() {
     if (trivia.countdown_active || trivia.status === "running") return;
@@ -207,11 +212,8 @@ export default function TriviaCard({
       })
       .eq("id", trivia.id);
 
-    // 2️⃣ After 10s → flip card to running, stop countdown,
-    //    and bump the latest session to "running" (do NOT create a new one
-    //    unless absolutely none exists).
+    // 2️⃣ After 10s → flip to running, stop countdown, ensure a session exists
     setTimeout(async () => {
-      // Mark the card as running
       await supabase
         .from("trivia_cards")
         .update({
@@ -220,30 +222,14 @@ export default function TriviaCard({
         })
         .eq("id", trivia.id);
 
-      // Grab the most recent session for this card
-      const { data: latestSession, error: latestErr } = await supabase
+      const { data: existingSession } = await supabase
         .from("trivia_sessions")
-        .select("id,status")
+        .select("id")
         .eq("trivia_card_id", trivia.id)
-        .order("created_at", { ascending: false })
-        .limit(1)
+        .eq("status", "running")
         .maybeSingle();
 
-      if (latestErr) {
-        console.error("❌ trivia_sessions latest fetch error:", latestErr);
-        return;
-      }
-
-      if (latestSession) {
-        // This is the session your join page used ("waiting" or already "running")
-        if (latestSession.status !== "running") {
-          await supabase
-            .from("trivia_sessions")
-            .update({ status: "running" })
-            .eq("id", latestSession.id);
-        }
-      } else {
-        // Edge case: host hit Play before anybody joined → create first session now
+      if (!existingSession) {
         await supabase.from("trivia_sessions").insert({
           trivia_card_id: trivia.id,
           status: "running",
@@ -270,6 +256,75 @@ export default function TriviaCard({
       .eq("trivia_card_id", trivia.id)
       .eq("status", "running");
   }
+
+  /* ------------------------------------------------------------
+     PARTICIPANTS + PENDING POLLING
+     - always look at the most recent session for this card
+  ------------------------------------------------------------ */
+  useEffect(() => {
+    let cancelled = false;
+
+    async function fetchCounts() {
+      // 1️⃣ get latest session for this trivia card
+      const { data: session, error: sessionErr } = await supabase
+        .from("trivia_sessions")
+        .select("id,status,created_at")
+        .eq("trivia_card_id", trivia.id)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (sessionErr) {
+        console.error("❌ trivia_sessions (counts) error:", sessionErr);
+        if (!cancelled) {
+          setParticipantCount(0);
+          setPendingCount(0);
+        }
+        return;
+      }
+
+      if (!session) {
+        if (!cancelled) {
+          setParticipantCount(0);
+          setPendingCount(0);
+        }
+        return;
+      }
+
+      // 2️⃣ get all players for that session and count by status
+      const { data: players, error: playersErr } = await supabase
+        .from("trivia_players")
+        .select("status")
+        .eq("session_id", session.id);
+
+      if (playersErr) {
+        console.error("❌ trivia_players (counts) error:", playersErr);
+        if (!cancelled) {
+          setParticipantCount(0);
+          setPendingCount(0);
+        }
+        return;
+      }
+
+      if (cancelled || !players) return;
+
+      const approved = players.filter((p: any) => p.status === "approved")
+        .length;
+      const pending = players.filter((p: any) => p.status === "pending")
+        .length;
+
+      setParticipantCount(approved);
+      setPendingCount(pending);
+    }
+
+    fetchCounts();
+    const intervalId = setInterval(fetchCounts, 2000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(intervalId);
+    };
+  }, [trivia.id]);
 
   /* ------------------------------------------------------------
      PAGINATION DERIVED VALUES
@@ -395,7 +450,9 @@ export default function TriviaCard({
               )}
             >
               <p className={cn("text-xs", "opacity-75")}>Participants</p>
-              <p className={cn("text-lg", "font-bold")}>0</p>
+              <p className={cn("text-lg", "font-bold")}>
+                {participantCount ?? 0}
+              </p>
             </div>
 
             {/* Play + Stop vertical stack */}
@@ -429,7 +486,7 @@ export default function TriviaCard({
             {/* empty center cell on row 2 */}
             <div />
 
-            {/* ✅ MODERATION BUTTON — same size, under Participants (col 3, row 2) */}
+            {/* ✅ MODERATION BUTTON — shows pending count */}
             <button
               onClick={() => onOpenModeration?.(trivia)}
               className={cn(
@@ -441,7 +498,9 @@ export default function TriviaCard({
                 "w-full"
               )}
             >
-              Moderate Players
+              {pendingCount && pendingCount > 0
+                ? `Moderate Players (${pendingCount} waiting)`
+                : "Moderate Players"}
             </button>
           </div>
         </Tabs.Content>
