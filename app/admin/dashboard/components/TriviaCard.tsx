@@ -420,8 +420,9 @@ export default function TriviaCard({
             </div>
           </div>
 
-          {/* 👉 Play / Stop stacked in the same column */}
+          {/* 👉 Controls grid */}
           <div className={cn("grid", "grid-cols-3", "gap-3", "mt-4")}>
+            {/* Row 1 */}
             <button
               onClick={() => onLaunch(trivia.id)}
               className={cn(
@@ -463,7 +464,9 @@ export default function TriviaCard({
               </p>
             </div>
 
-            {/* Play + Stop vertical stack */}
+            {/* Row 2 */}
+
+            {/* Col 1: Play / Stop stack (unchanged) */}
             <div className={cn("flex", "flex-col", "gap-2")}>
               <button
                 onClick={handlePlayTrivia}
@@ -491,10 +494,35 @@ export default function TriviaCard({
               </button>
             </div>
 
-            {/* empty center cell on row 2 */}
-            <div />
+            {/* Col 2: ghost spacer (Play height) + Delete aligned with Stop */}
+            <div className={cn("flex", "flex-col", "gap-2")}>
+              {/* Invisible spacer to match Play height */}
+              <div
+                className={cn(
+                  "py-2",
+                  "rounded-lg",
+                  "font-semibold",
+                  "opacity-0",
+                  "pointer-events-none"
+                )}
+              >
+                spacer
+              </div>
+              <button
+                onClick={handleDeleteTrivia}
+                className={cn(
+                  "bg-red-700",
+                  "hover:bg-red-800",
+                  "py-2",
+                  "rounded-lg",
+                  "font-semibold"
+                )}
+              >
+                ❌ Delete
+              </button>
+            </div>
 
-            {/* ✅ MODERATION BUTTON — under Participants (col 3, row 2) */}
+            {/* Col 3: Moderate Players */}
             <button
               onClick={() => onOpenModeration?.(trivia)}
               className={cn(
@@ -512,7 +540,9 @@ export default function TriviaCard({
               )}
             >
               <span>Moderate Players</span>
-              <span className={cn('text-[11px]', 'opacity-80', 'mt-0.5')}>
+              <span
+                className={cn("text-[11px]", "opacity-80", "mt-0.5")}
+              >
                 {`(Waiting ${pendingCount} Players)`}
               </span>
             </button>
@@ -566,8 +596,8 @@ export default function TriviaCard({
                 )}
               >
                 {visibleQuestions.map((q) => {
-                  const isActive =
-                    q.is_active === undefined ? true : !!q.is_active;
+                  // Default: NOT in game unless explicitly true
+                  const isActive = !!q.is_active;
 
                   return (
                     <div
@@ -892,20 +922,6 @@ export default function TriviaCard({
               Saving settings…
             </p>
           )}
-
-          <button
-            onClick={handleDeleteTrivia}
-            className={cn(
-              "W-full",
-              "bg-red-700",
-              "hover:bg-red-800",
-              "py-2",
-              "rounded-lg",
-              "font-semibold"
-            )}
-          >
-            ❌ Delete Trivia
-          </button>
         </Tabs.Content>
       </Tabs.Root>
     </div>

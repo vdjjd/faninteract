@@ -274,12 +274,18 @@ export default function TriviaUserInterfacePage() {
     return timeLeft <= 0;
   }, [timeLeft]);
 
+  // ✅ Question is considered "open" only if host has started it AND timer > 0
+  const questionOpen = !!session?.question_started_at && !questionLocked;
+
   /* ---------------------------------------------------------
      Answer submission
   --------------------------------------------------------- */
   async function handleSelectAnswer(idx: number) {
     if (!playerId || !currentQuestion) return;
-    if (hasAnswered || questionLocked) return;
+
+    // ❌ Don't allow answers before host opens the question or after time is up
+    if (!session?.question_started_at || questionLocked) return;
+    if (hasAnswered) return;
 
     setSelectedIndex(idx);
     setHasAnswered(true);
@@ -537,7 +543,10 @@ export default function TriviaUserInterfacePage() {
       >
         {currentQuestion.options.map((opt: string, idx: number) => {
           const chosen = selectedIndex === idx;
-          const disabled = hasAnswered || questionLocked;
+
+          // 🔒 Now also disabled if host hasn't opened question yet
+          const disabled =
+            hasAnswered || questionLocked || !session.question_started_at;
 
           let bg = "rgba(15,23,42,0.85)";
           let border = "1px solid rgba(148,163,184,0.4)";
