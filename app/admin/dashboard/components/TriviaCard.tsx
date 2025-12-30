@@ -505,28 +505,16 @@ export default function TriviaCard({
                 "font-semibold",
                 "w-full",
                 "flex",
+                "flex-col",
                 "items-center",
                 "justify-center",
-                "gap-2",
                 "text-sm"
               )}
             >
               <span>Moderate Players</span>
-              {pendingCount > 0 && (
-                <span
-                  className={cn(
-                    "px-2",
-                    "py-0.5",
-                    "rounded-full",
-                    "text-[11px]",
-                    "bg-yellow-400",
-                    "text-black",
-                    "font-bold"
-                  )}
-                >
-                  {pendingCount} waiting
-                </span>
-              )}
+              <span className={cn('text-[11px]', 'opacity-80', 'mt-0.5')}>
+                {`(Waiting ${pendingCount} Players)`}
+              </span>
             </button>
           </div>
         </Tabs.Content>
