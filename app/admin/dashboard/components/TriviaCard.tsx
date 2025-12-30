@@ -172,8 +172,25 @@ export default function TriviaCard({
     setPendingCount(players.filter((p) => p.status === "pending").length);
   }
 
+  // 🔁 POLL COUNTS EVERY 2 SECONDS
   useEffect(() => {
-    loadCounts();
+    let isMounted = true;
+
+    const doLoad = async () => {
+      if (!isMounted) return;
+      await loadCounts();
+    };
+
+    // initial
+    doLoad();
+
+    // interval
+    const id = setInterval(doLoad, 2000);
+
+    return () => {
+      isMounted = false;
+      clearInterval(id);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [trivia.id]);
 
