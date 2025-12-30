@@ -10,13 +10,13 @@ export default function TriviaCard({
   onOpenOptions,
   onDelete,
   onLaunch,
-  onOpenModeration, // moderation callback
+  onOpenModeration, // ✅ NEW: moderation callback
 }: {
   trivia: any;
   onOpenOptions: (trivia: any) => void;
   onDelete: (id: string) => void;
   onLaunch: (id: string) => void;
-  onOpenModeration?: (trivia: any) => void;
+  onOpenModeration?: (trivia: any) => void; // ✅ optional
 }) {
   if (!trivia) return null;
 
@@ -46,12 +46,6 @@ export default function TriviaCard({
     trivia?.require_selfie ?? true
   );
   const [savingSettings, setSavingSettings] = useState(false);
-
-  /* ------------------------------------------------------------
-     PARTICIPANTS + PENDING COUNTS (LIVE)
-  ------------------------------------------------------------ */
-  const [participantCount, setParticipantCount] = useState<number | null>(null);
-  const [pendingCount, setPendingCount] = useState<number | null>(null);
 
   useEffect(() => {
     // keep local state in sync if parent reloads trivia
@@ -197,66 +191,27 @@ export default function TriviaCard({
   }
 
   /* ------------------------------------------------------------
-     ▶️ PLAY TRIVIA (REUSE LATEST NON-FINISHED SESSION)
+     ▶️ PLAY TRIVIA (reuse latest session instead of creating a new one)
   ------------------------------------------------------------ */
   async function handlePlayTrivia() {
-    // Do nothing if we’re already counting down or running
     if (trivia.countdown_active || trivia.status === "running") return;
 
     const nowIso = new Date().toISOString();
 
-    // 1️⃣ Find the latest session for this card
-    let sessionId: string | null = null;
-
-    const { data: latestSession, error: sessionErr } = await supabase
-      .from("trivia_sessions")
-      .select("id,status,created_at")
-      .eq("trivia_card_id", trivia.id)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    if (sessionErr) {
-      console.error("❌ trivia_sessions fetch error (Play):", sessionErr);
-    }
-
-    if (!latestSession || latestSession.status === "finished") {
-      // No usable session → create fresh 'waiting' session
-      const { data: newSession, error: newSessionErr } = await supabase
-        .from("trivia_sessions")
-        .insert({
-          trivia_card_id: trivia.id,
-          status: "waiting",
-        })
-        .select("id")
-        .single();
-
-      if (newSessionErr || !newSession) {
-        console.error("❌ trivia_sessions create error (Play):", newSessionErr);
-        return;
-      }
-
-      sessionId = newSession.id;
-    } else {
-      // Reuse latest 'waiting' or 'running' session
-      sessionId = latestSession.id;
-    }
-
-    // 2️⃣ Start countdown on the card
+    // 1️⃣ Start countdown + store when it started
     await supabase
       .from("trivia_cards")
       .update({
         countdown_active: true,
         countdown_started_at: nowIso,
-        // optional, but nice to set:
-        status: "countdown",
       })
       .eq("id", trivia.id);
 
-    // 3️⃣ After 10s → flip BOTH card + this session to running
+    // 2️⃣ After 10s → flip card to running, stop countdown,
+    //    and bump the latest session to "running" (do NOT create a new one
+    //    unless absolutely none exists).
     setTimeout(async () => {
-      if (!sessionId) return;
-
+      // Mark the card as running
       await supabase
         .from("trivia_cards")
         .update({
@@ -265,12 +220,35 @@ export default function TriviaCard({
         })
         .eq("id", trivia.id);
 
-      await supabase
+      // Grab the most recent session for this card
+      const { data: latestSession, error: latestErr } = await supabase
         .from("trivia_sessions")
-        .update({
+        .select("id,status")
+        .eq("trivia_card_id", trivia.id)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (latestErr) {
+        console.error("❌ trivia_sessions latest fetch error:", latestErr);
+        return;
+      }
+
+      if (latestSession) {
+        // This is the session your join page used ("waiting" or already "running")
+        if (latestSession.status !== "running") {
+          await supabase
+            .from("trivia_sessions")
+            .update({ status: "running" })
+            .eq("id", latestSession.id);
+        }
+      } else {
+        // Edge case: host hit Play before anybody joined → create first session now
+        await supabase.from("trivia_sessions").insert({
+          trivia_card_id: trivia.id,
           status: "running",
-        })
-        .eq("id", sessionId);
+        });
+      }
     }, 10_000);
   }
 
@@ -294,75 +272,6 @@ export default function TriviaCard({
   }
 
   /* ------------------------------------------------------------
-     PARTICIPANTS + PENDING POLLING
-     - always look at the most recent session for this card
-  ------------------------------------------------------------ */
-  useEffect(() => {
-    let cancelled = false;
-
-    async function fetchCounts() {
-      // 1️⃣ get latest session for this trivia card
-      const { data: session, error: sessionErr } = await supabase
-        .from("trivia_sessions")
-        .select("id,status,created_at")
-        .eq("trivia_card_id", trivia.id)
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      if (sessionErr) {
-        console.error("❌ trivia_sessions (counts) error:", sessionErr);
-        if (!cancelled) {
-          setParticipantCount(0);
-          setPendingCount(0);
-        }
-        return;
-      }
-
-      if (!session) {
-        if (!cancelled) {
-          setParticipantCount(0);
-          setPendingCount(0);
-        }
-        return;
-      }
-
-      // 2️⃣ get all players for that session and count by status
-      const { data: players, error: playersErr } = await supabase
-        .from("trivia_players")
-        .select("status")
-        .eq("session_id", session.id);
-
-      if (playersErr) {
-        console.error("❌ trivia_players (counts) error:", playersErr);
-        if (!cancelled) {
-          setParticipantCount(0);
-          setPendingCount(0);
-        }
-        return;
-      }
-
-      if (cancelled || !players) return;
-
-      const approved = players.filter((p: any) => p.status === "approved")
-        .length;
-      const pending = players.filter((p: any) => p.status === "pending")
-        .length;
-
-      setParticipantCount(approved);
-      setPendingCount(pending);
-    }
-
-    fetchCounts();
-    const intervalId = setInterval(fetchCounts, 2000);
-
-    return () => {
-      cancelled = true;
-      clearInterval(intervalId);
-    };
-  }, [trivia.id]);
-
-  /* ------------------------------------------------------------
      PAGINATION DERIVED VALUES
   ------------------------------------------------------------ */
   const totalPages =
@@ -380,7 +289,7 @@ export default function TriviaCard({
       className={cn(
         "rounded-xl p-5 bg-[#1b2638] border shadow-lg",
         "col-span-2 row-span-2 min-h-[420px] w-full",
-        // Green border when trivia is running or counting down
+        // ✅ Green border when trivia is running or counting down
         trivia.status === "running" || trivia.countdown_active
           ? "border-lime-400"
           : "border-white/10"
@@ -448,7 +357,7 @@ export default function TriviaCard({
             </div>
           </div>
 
-          {/* Play / Stop / Participants / Moderate */}
+          {/* 👉 Play / Stop stacked in the same column */}
           <div className={cn("grid", "grid-cols-3", "gap-3", "mt-4")}>
             <button
               onClick={() => onLaunch(trivia.id)}
@@ -486,9 +395,7 @@ export default function TriviaCard({
               )}
             >
               <p className={cn("text-xs", "opacity-75")}>Participants</p>
-              <p className={cn("text-lg", "font-bold")}>
-                {participantCount ?? 0}
-              </p>
+              <p className={cn("text-lg", "font-bold")}>0</p>
             </div>
 
             {/* Play + Stop vertical stack */}
@@ -522,7 +429,7 @@ export default function TriviaCard({
             {/* empty center cell on row 2 */}
             <div />
 
-            {/* Moderation button with pending count */}
+            {/* ✅ MODERATION BUTTON — same size, under Participants (col 3, row 2) */}
             <button
               onClick={() => onOpenModeration?.(trivia)}
               className={cn(
@@ -534,9 +441,7 @@ export default function TriviaCard({
                 "w-full"
               )}
             >
-              {pendingCount && pendingCount > 0
-                ? `Moderate Players (${pendingCount} waiting)`
-                : "Moderate Players"}
+              Moderate Players
             </button>
           </div>
         </Tabs.Content>
