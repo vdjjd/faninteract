@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
-import { useRouter } from "next/navigation";
 import { QRCodeCanvas } from "qrcode.react";
 import { getSupabaseClient } from "@/lib/supabaseClient";
 
@@ -21,6 +20,17 @@ type TopRankRow = {
   selfieUrl?: string | null;
   points: number;
 };
+
+type LeaderRow = {
+  rank: number;
+  playerId: string;
+  guestId?: string | null;
+  name: string;
+  selfieUrl?: string | null;
+  points: number;
+};
+
+type WallView = "question" | "leaderboard"; // (we'll add podium later)
 
 /* ---------------------------------------------------- */
 /* QR + LOGO CONTROL                                    */
@@ -55,6 +65,19 @@ const RANKINGS_CTRL = {
 };
 
 /* ---------------------------------------------------- */
+/* LEADERBOARD UI TUNING                                */
+/* ---------------------------------------------------- */
+const LEADER_UI = {
+  titleTop: "9vh",
+  listTop: "18vh",
+  maxWidth: 1200,
+  rowGap: 14,
+  rowPadX: 22,
+  rowHeight: 86,
+  avatar: 64,
+};
+
+/* ---------------------------------------------------- */
 /* TEMP HOST LOGO STUB                                  */
 /* ---------------------------------------------------- */
 const fallbackLogo = "/faninteractlogo.png";
@@ -74,7 +97,6 @@ function formatName(first?: string, last?: string) {
   return `${f}${li ? " " + li : ""}`.trim() || "Player";
 }
 
-// ✅ force display_name to First + Last Initial too
 function formatDisplayName(display?: string) {
   const raw = (display || "").trim().replace(/\s+/g, " ");
   if (!raw) return "Player";
@@ -116,48 +138,61 @@ function sameTopRanks(a: TopRankRow[], b: TopRankRow[]) {
   return true;
 }
 
+function sameLeaderRows(a: LeaderRow[], b: LeaderRow[]) {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (
+      a[i].playerId !== b[i].playerId ||
+      a[i].points !== b[i].points ||
+      a[i].name !== b[i].name ||
+      (a[i].selfieUrl || "") !== (b[i].selfieUrl || "")
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
 /* -------------------------------------------------------------------------- */
 /* 🎮 TRIVIA ACTIVE WALL                                                       */
 /* -------------------------------------------------------------------------- */
 
 export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
-  const router = useRouter();
-
   const logoSrc =
     trivia?.host?.branding_logo_url?.trim() ||
     trivia?.host?.logo_url?.trim() ||
     fallbackLogo;
 
-  // ✅ True when the DB row says this game is actually running
   const isRunning =
     trivia?.status === "running" && trivia?.countdown_active === false;
+
+  const [view, setView] = useState<WallView>("question");
 
   const [question, setQuestion] = useState<any>(null);
   const [currentQuestionNumber, setCurrentQuestionNumber] =
     useState<number | null>(null);
   const [totalQuestions, setTotalQuestions] = useState<number | null>(null);
 
-  // ✅ DB-synced timer anchor
-  const [questionStartedAt, setQuestionStartedAt] = useState<string | null>(
-    null
-  );
+  const [questionStartedAt, setQuestionStartedAt] = useState<string | null>(null);
 
   const [progress, setProgress] = useState(1);
   const [locked, setLocked] = useState(false);
 
-  // Answer reveal phases
   const [showAnswerOverlay, setShowAnswerOverlay] = useState(false);
   const [revealAnswer, setRevealAnswer] = useState(false);
 
-  // 🔠 Question text DOM ref (for auto-scaling to ~2 lines)
   const questionRef = useRef<HTMLDivElement | null>(null);
 
-  // Top 3 ranks for Current Rankings
   const [topRanks, setTopRanks] = useState<TopRankRow[]>([]);
   const topRanksRef = useRef<TopRankRow[]>([]);
 
-  // ✅ guard so we only route once per question
-  const leaderboardNavRef = useRef(false);
+  // Full leaderboard rows (top 10)
+  const [leaderRows, setLeaderRows] = useState<LeaderRow[]>([]);
+  const leaderRowsRef = useRef<LeaderRow[]>([]);
+  const [leaderLoading, setLeaderLoading] = useState(false);
+
+  // prevent duplicate transitions
+  const transitionLockRef = useRef(false);
 
   /* -------------------------------------------------- */
   /* FETCH CURRENT QUESTION (POLLING)                    */
@@ -168,7 +203,6 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
     let alive = true;
 
     async function fetchCurrentQuestion() {
-      // 1️⃣ Get the running session for this trivia card (DB source of truth)
       const { data: session, error: sessionErr } = await supabase
         .from("trivia_sessions")
         .select("current_question, question_started_at")
@@ -195,7 +229,6 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
       setCurrentQuestionNumber(session.current_question);
       setQuestionStartedAt(session.question_started_at ?? null);
 
-      // 2️⃣ Load all questions for this card
       const { data: qs, error: qErr } = await supabase
         .from("trivia_questions")
         .select("*")
@@ -219,13 +252,15 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
       const safeIndex = Math.min(index, qs.length - 1);
       const current = qs[safeIndex];
 
+      // IMPORTANT:
+      // Even if DB advances early (manual host action), the WALL view will not show it
+      // during leaderboard because we render a different view.
       if (alive) {
         setQuestion(current);
         setTotalQuestions(qs.length);
       }
     }
 
-    // initial load + poll
     fetchCurrentQuestion();
     const interval = setInterval(fetchCurrentQuestion, 1000);
 
@@ -272,7 +307,6 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
         return;
       }
 
-      // ✅ pull display_name + photo_url so we can fall back cleanly
       const { data: players, error: playersErr } = await supabase
         .from("trivia_players")
         .select("id,status,guest_id,display_name,photo_url")
@@ -314,7 +348,6 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
 
       const guestMap = new Map<string, { name: string; selfieUrl: string | null }>();
 
-      // ✅ only fetch what we need
       if (guestIds.length > 0) {
         const { data: guests, error: guestsErr } = await supabase
           .from("guest_profiles")
@@ -338,11 +371,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
       const rows = approved
         .map((p: any) => {
           const guest = p.guest_id ? guestMap.get(p.guest_id) : undefined;
-
-          // ✅ Name: guest first/initial if present, otherwise formatted display_name
           const safeName = guest?.name || formatDisplayName(p.display_name);
-
-          // ✅ Selfie: guest_profiles first, else trivia_players.photo_url (from moderation)
           const safeSelfie = guest?.selfieUrl || p.photo_url || null;
 
           return {
@@ -380,18 +409,140 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
   }, [trivia?.id, isRunning]);
 
   /* -------------------------------------------------- */
+  /* FULL LEADERBOARD LOADER (ONLY USED IN VIEW=leaderboard) */
+  /* -------------------------------------------------- */
+  useEffect(() => {
+    if (!trivia?.id) return;
+    if (!isRunning) return;
+    if (view !== "leaderboard") return;
+
+    let cancelled = false;
+
+    async function loadLeaderboard() {
+      if (!leaderRowsRef.current.length) setLeaderLoading(true);
+
+      const { data: session, error: sessionErr } = await supabase
+        .from("trivia_sessions")
+        .select("id,status,created_at")
+        .eq("trivia_card_id", trivia.id)
+        .neq("status", "finished")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (sessionErr || !session?.id) {
+        if (!cancelled && !sameLeaderRows([], leaderRowsRef.current)) {
+          leaderRowsRef.current = [];
+          setLeaderRows([]);
+        }
+        if (!cancelled) setLeaderLoading(false);
+        return;
+      }
+
+      const { data: players, error: playersErr } = await supabase
+        .from("trivia_players")
+        .select("id,status,guest_id,display_name,photo_url")
+        .eq("session_id", session.id)
+        .eq("status", "approved");
+
+      if (playersErr || !players || players.length === 0) {
+        if (!cancelled && !sameLeaderRows([], leaderRowsRef.current)) {
+          leaderRowsRef.current = [];
+          setLeaderRows([]);
+        }
+        if (!cancelled) setLeaderLoading(false);
+        return;
+      }
+
+      const playerIds = players.map((p: any) => p.id);
+      const guestIds = players.map((p: any) => p.guest_id).filter(Boolean);
+
+      const { data: answers, error: answersErr } = await supabase
+        .from("trivia_answers")
+        .select("player_id,points")
+        .in("player_id", playerIds);
+
+      if (answersErr) {
+        console.error("❌ trivia_answers fetch error:", answersErr);
+        if (!cancelled) setLeaderLoading(false);
+        return;
+      }
+
+      const totals = new Map<string, number>();
+      for (const a of answers || []) {
+        const pts = typeof a.points === "number" ? a.points : 0;
+        totals.set(a.player_id, (totals.get(a.player_id) || 0) + pts);
+      }
+
+      const guestMap = new Map<string, { name: string; selfieUrl: string | null }>();
+
+      if (guestIds.length > 0) {
+        const { data: guests, error: guestsErr } = await supabase
+          .from("guest_profiles")
+          .select(
+            "id,first_name,last_name,photo_url,selfie_url,avatar_url,image_url,profile_photo_url"
+          )
+          .in("id", guestIds);
+
+        if (guestsErr) {
+          console.warn("⚠️ guest_profiles fetch error:", guestsErr);
+        } else {
+          for (const g of guests || []) {
+            guestMap.set(g.id, {
+              name: formatName(g?.first_name, g?.last_name),
+              selfieUrl: pickSelfieUrl(g),
+            });
+          }
+        }
+      }
+
+      const built = players
+        .map((p: any) => {
+          const guest = p.guest_id ? guestMap.get(p.guest_id) : undefined;
+          const safeName = guest?.name || formatDisplayName(p.display_name);
+          const safeSelfie = guest?.selfieUrl || p.photo_url || null;
+
+          return {
+            rank: 0,
+            playerId: p.id,
+            guestId: p.guest_id,
+            name: safeName,
+            selfieUrl: safeSelfie,
+            points: totals.get(p.id) || 0,
+          };
+        })
+        .sort((a: any, b: any) => b.points - a.points)
+        .map((r: any, idx: number) => ({ ...r, rank: idx + 1 }));
+
+      if (!cancelled && !sameLeaderRows(built, leaderRowsRef.current)) {
+        leaderRowsRef.current = built;
+        setLeaderRows(built);
+      }
+
+      if (!cancelled) setLeaderLoading(false);
+    }
+
+    loadLeaderboard();
+    const id = window.setInterval(loadLeaderboard, 1000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [trivia?.id, isRunning, view]);
+
+  /* -------------------------------------------------- */
   /* TIMER ENGINE — DB-SYNCED                            */
   /* -------------------------------------------------- */
   useEffect(() => {
     if (!isRunning || currentQuestionNumber == null) return;
+    if (view !== "question") return; // don't run timer while leaderboard is up
 
     setLocked(false);
     setProgress(1);
     setShowAnswerOverlay(false);
     setRevealAnswer(false);
-
-    // ✅ allow routing to leaderboard again for this new question
-    leaderboardNavRef.current = false;
+    transitionLockRef.current = false;
 
     const durationMs =
       typeof trivia?.timer_seconds === "number" && trivia.timer_seconds > 0
@@ -418,12 +569,20 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
     return () => {
       window.clearInterval(id);
     };
-  }, [isRunning, currentQuestionNumber, trivia?.timer_seconds, questionStartedAt]);
+  }, [
+    isRunning,
+    currentQuestionNumber,
+    trivia?.timer_seconds,
+    questionStartedAt,
+    view,
+  ]);
 
   /* -------------------------------------------------- */
   /* ANSWER REVEAL FLOW                                  */
   /* -------------------------------------------------- */
   useEffect(() => {
+    if (view !== "question") return;
+
     if (!locked) {
       setShowAnswerOverlay(false);
       setRevealAnswer(false);
@@ -439,32 +598,74 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
     }, 5000);
 
     return () => window.clearTimeout(timeoutId);
-  }, [locked]);
+  }, [locked, view]);
 
   /* -------------------------------------------------- */
-  /* AFTER 8s OF REVEAL → GO TO LEADERBOARD PAGE          */
-  /* (NO DB ADVANCE HERE — leaderboard will advance)      */
+  /* AFTER 8s REVEAL → SHOW LEADERBOARD (NO NAVIGATION)   */
   /* -------------------------------------------------- */
   useEffect(() => {
+    if (view !== "question") return;
     if (!revealAnswer) return;
     if (!isRunning) return;
-    if (!trivia?.id) return;
+    if (currentQuestionNumber == null) return;
 
-    // don't route twice
-    if (leaderboardNavRef.current) return;
-    leaderboardNavRef.current = true;
+    if (transitionLockRef.current) return;
+    transitionLockRef.current = true;
 
-    const timeoutId = window.setTimeout(() => {
-      router.replace(`/trivia/${trivia.id}/leaderboard`);
+    // 8 seconds after reveal starts, switch to leaderboard view
+    const toLeaderboard = window.setTimeout(() => {
+      setView("leaderboard");
+      setLeaderLoading(true);
     }, 8000);
 
+    return () => window.clearTimeout(toLeaderboard);
+  }, [revealAnswer, isRunning, currentQuestionNumber, view]);
+
+  /* -------------------------------------------------- */
+  /* LEADERBOARD VIEW TIMER (15s) THEN ADVANCE QUESTION   */
+  /* -------------------------------------------------- */
+  useEffect(() => {
+    if (view !== "leaderboard") return;
+    if (!isRunning) return;
+    if (currentQuestionNumber == null) return;
+
+    const timeoutId = window.setTimeout(async () => {
+      try {
+        // if last question, do nothing here (we'll handle podium later)
+        if (totalQuestions != null && currentQuestionNumber >= totalQuestions) {
+          // For now: end on leaderboard view (until you add podium)
+          // You can later setView("podium") here.
+          return;
+        }
+
+        // ✅ ADVANCE ONLY AFTER LEADERBOARD FINISHES
+        await supabase
+          .from("trivia_sessions")
+          .update({
+            current_question: currentQuestionNumber + 1,
+            question_started_at: new Date().toISOString(),
+          })
+          .eq("trivia_card_id", trivia.id)
+          .eq("status", "running");
+
+        // back to question view (fullscreen stays intact)
+        setView("question");
+      } catch (err) {
+        console.error("❌ leaderboard advance error:", err);
+        // even on error, try to return
+        setView("question");
+      }
+    }, 15000);
+
     return () => window.clearTimeout(timeoutId);
-  }, [revealAnswer, isRunning, trivia?.id, router]);
+  }, [view, isRunning, currentQuestionNumber, totalQuestions, trivia?.id]);
 
   /* -------------------------------------------------- */
   /* AUTO-SCALE QUESTION TEXT TO ~2 LINES               */
   /* -------------------------------------------------- */
   useEffect(() => {
+    if (view !== "question") return;
+
     const el = questionRef.current;
     if (!el) return;
     if (typeof window === "undefined") return;
@@ -494,7 +695,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
     };
 
     requestAnimationFrame(fit);
-  }, [question?.question_text]);
+  }, [question?.question_text, view]);
 
   const options: string[] = Array.isArray(question?.options) ? question.options : [];
 
@@ -547,185 +748,341 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
           position: "relative",
         }}
       >
-        {/* FROSTED GLASS PANEL */}
-        <div
-          style={{
-            width: "90vw",
-            height: "78vh",
-            maxWidth: "1800px",
-            aspectRatio: "16 / 9",
-            background: "rgba(255,255,255,0.08)",
-            backdropFilter: "blur(20px)",
-            border: "1px solid rgba(255,255,255,0.15)",
-            borderRadius: 24,
-            position: "relative",
-            overflow: "hidden",
-            padding: "4vh 4vw",
-            color: "#fff",
-          }}
-        >
-          {/* QUESTION */}
-          <div
-            ref={questionRef}
-            style={{
-              fontWeight: 900,
-              lineHeight: 1.15,
-              textAlign: "center",
-              maxWidth: "90%",
-              margin: "0 auto 3vh auto",
-            }}
-          >
-            {question?.question_text ? question.question_text : "Waiting for game to start"}
-          </div>
-
-          {/* TIMER BAR */}
+        {/* =======================
+            QUESTION VIEW
+        ======================= */}
+        {view === "question" && (
           <div
             style={{
-              width: "100%",
-              height: 20,
-              background: "rgba(255,255,255,0.15)",
-              borderRadius: 999,
+              width: "90vw",
+              height: "78vh",
+              maxWidth: "1800px",
+              aspectRatio: "16 / 9",
+              background: "rgba(255,255,255,0.08)",
+              backdropFilter: "blur(20px)",
+              border: "1px solid rgba(255,255,255,0.15)",
+              borderRadius: 24,
+              position: "relative",
               overflow: "hidden",
-              marginBottom: "4vh",
+              padding: "4vh 4vw",
+              color: "#fff",
             }}
           >
+            {/* QUESTION */}
             <div
+              ref={questionRef}
               style={{
-                width: `${progress * 100}%`,
-                height: "100%",
-                background:
-                  revealAnswer || locked
-                    ? "linear-gradient(to right,#ef4444,#dc2626)"
-                    : "linear-gradient(to right,#4ade80,#22c55e)",
-                transition: "width 0.1s linear, background 0.2s ease",
+                fontWeight: 900,
+                lineHeight: 1.15,
+                textAlign: "center",
+                maxWidth: "90%",
+                margin: "0 auto 3vh auto",
               }}
-            />
-          </div>
+            >
+              {question?.question_text ? question.question_text : "Waiting for game to start"}
+            </div>
 
-          {/* ANSWERS */}
-          <div
-            style={{
-              position: "absolute",
-              bottom: "21vh",
-              left: "4vw",
-              right: "4vw",
-              display: "grid",
-              gridTemplateColumns: "1fr 1fr",
-              gap: "2.5vh",
-            }}
-          >
-            {options.length > 0
-              ? options.map((opt, idx) => {
-                  const isCorrect = idx === question?.correct_index;
-
-                  let bg = baseBgColors[idx] ?? "rgba(255,255,255,0.12)";
-                  let border = baseBorders[idx] ?? "1px solid rgba(255,255,255,0.18)";
-                  let opacity = 1;
-                  let boxShadow = "none";
-                  let transform = "scale(1)";
-
-                  if (revealAnswer) {
-                    if (isCorrect) {
-                      border = highlightBorders[idx] ?? border;
-                      boxShadow = `0 0 40px 8px ${glowColors[idx] ?? "rgba(255,255,255,0.9)"}`;
-                      transform = "scale(1.04)";
-                    } else {
-                      opacity = 0.35;
-                    }
-                  }
-
-                  return (
-                    <div
-                      key={idx}
-                      style={{
-                        padding: "2.4vh 2.6vw",
-                        minHeight: "14vh",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        borderRadius: 18,
-                        background: bg,
-                        border,
-                        fontSize: "clamp(1.6rem,2vw,2.4rem)",
-                        fontWeight: 700,
-                        textAlign: "center",
-                        opacity,
-                        boxShadow,
-                        transform,
-                        transition:
-                          "opacity 0.3s ease, border 0.3s ease, background 0.3s ease, box-shadow 0.4s ease, transform 0.4s ease",
-                      }}
-                    >
-                      {String.fromCharCode(65 + idx)}. {opt}
-                    </div>
-                  );
-                })
-              : null}
-          </div>
-
-          {/* CURRENT RANKINGS LABEL */}
-          <div
-            style={{
-              position: "absolute",
-              bottom: "13vh",
-              left: "50%",
-              transform: "translateX(-50%)",
-              fontSize: "clamp(1.6rem,2vw,2.2rem)",
-              fontWeight: 800,
-              opacity: 0.85,
-            }}
-          >
-            Current Rankings
-          </div>
-
-          {/* TINTED OVERLAY + "THE ANSWER IS" */}
-          {showAnswerOverlay && (
+            {/* TIMER BAR */}
             <div
               style={{
-                position: "absolute",
-                inset: 0,
-                background: "rgba(0,0,0,0.75)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                zIndex: 15,
+                width: "100%",
+                height: 20,
+                background: "rgba(255,255,255,0.15)",
+                borderRadius: 999,
+                overflow: "hidden",
+                marginBottom: "4vh",
               }}
             >
               <div
                 style={{
-                  textAlign: "center",
-                  textTransform: "uppercase",
-                  letterSpacing: "0.08em",
+                  width: `${progress * 100}%`,
+                  height: "100%",
+                  background:
+                    revealAnswer || locked
+                      ? "linear-gradient(to right,#ef4444,#dc2626)"
+                      : "linear-gradient(to right,#4ade80,#22c55e)",
+                  transition: "width 0.1s linear, background 0.2s ease",
+                }}
+              />
+            </div>
+
+            {/* ANSWERS */}
+            <div
+              style={{
+                position: "absolute",
+                bottom: "21vh",
+                left: "4vw",
+                right: "4vw",
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: "2.5vh",
+              }}
+            >
+              {options.length > 0
+                ? options.map((opt, idx) => {
+                    const isCorrect = idx === question?.correct_index;
+
+                    let bg = baseBgColors[idx] ?? "rgba(255,255,255,0.12)";
+                    let border = baseBorders[idx] ?? "1px solid rgba(255,255,255,0.18)";
+                    let opacity = 1;
+                    let boxShadow = "none";
+                    let transform = "scale(1)";
+
+                    if (revealAnswer) {
+                      if (isCorrect) {
+                        border = highlightBorders[idx] ?? border;
+                        boxShadow = `0 0 40px 8px ${glowColors[idx] ?? "rgba(255,255,255,0.9)"}`;
+                        transform = "scale(1.04)";
+                      } else {
+                        opacity = 0.35;
+                      }
+                    }
+
+                    return (
+                      <div
+                        key={idx}
+                        style={{
+                          padding: "2.4vh 2.6vw",
+                          minHeight: "14vh",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          borderRadius: 18,
+                          background: bg,
+                          border,
+                          fontSize: "clamp(1.6rem,2vw,2.4rem)",
+                          fontWeight: 700,
+                          textAlign: "center",
+                          opacity,
+                          boxShadow,
+                          transform,
+                          transition:
+                            "opacity 0.3s ease, border 0.3s ease, background 0.3s ease, box-shadow 0.4s ease, transform 0.4s ease",
+                        }}
+                      >
+                        {String.fromCharCode(65 + idx)}. {opt}
+                      </div>
+                    );
+                  })
+                : null}
+            </div>
+
+            {/* CURRENT RANKINGS LABEL */}
+            <div
+              style={{
+                position: "absolute",
+                bottom: "13vh",
+                left: "50%",
+                transform: "translateX(-50%)",
+                fontSize: "clamp(1.6rem,2vw,2.2rem)",
+                fontWeight: 800,
+                opacity: 0.85,
+              }}
+            >
+              Current Rankings
+            </div>
+
+            {/* TINTED OVERLAY + "THE ANSWER IS" */}
+            {showAnswerOverlay && (
+              <div
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  background: "rgba(0,0,0,0.75)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  zIndex: 15,
                 }}
               >
                 <div
                   style={{
-                    fontFamily:
-                      "'SF Pro Display', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
-                    fontSize: "clamp(3rem,5vw,5.5rem)",
-                    fontWeight: 900,
-                    marginBottom: "1rem",
-                    color: "#e5f1ff",
-                    textShadow:
-                      "0 0 2px #000000, 0 0 6px #000000, 0 0 18px rgba(15,23,42,0.9), 0 0 36px rgba(15,23,42,0.9), 0 0 72px rgba(59,130,246,0.9)",
-                    padding: "0.4em 0.9em",
-                    borderRadius: 18,
-                    background:
-                      "radial-gradient(circle at 50% 50%, rgba(59,130,246,0.65), rgba(15,23,42,0.0))",
-                    boxShadow:
-                      "0 0 40px rgba(59,130,246,0.9), 0 0 90px rgba(59,130,246,0.85)",
-                    display: "inline-block",
-                    animation: "fiAnswerGlow 1.8s ease-in-out infinite alternate",
+                    textAlign: "center",
+                    textTransform: "uppercase",
+                    letterSpacing: "0.08em",
                   }}
                 >
-                  THE ANSWER IS
+                  <div
+                    style={{
+                      fontFamily:
+                        "'SF Pro Display', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+                      fontSize: "clamp(3rem,5vw,5.5rem)",
+                      fontWeight: 900,
+                      marginBottom: "1rem",
+                      color: "#e5f1ff",
+                      textShadow:
+                        "0 0 2px #000000, 0 0 6px #000000, 0 0 18px rgba(15,23,42,0.9), 0 0 36px rgba(15,23,42,0.9), 0 0 72px rgba(59,130,246,0.9)",
+                      padding: "0.4em 0.9em",
+                      borderRadius: 18,
+                      background:
+                        "radial-gradient(circle at 50% 50%, rgba(59,130,246,0.65), rgba(15,23,42,0.0))",
+                      boxShadow:
+                        "0 0 40px rgba(59,130,246,0.9), 0 0 90px rgba(59,130,246,0.85)",
+                      display: "inline-block",
+                      animation: "fiAnswerGlow 1.8s ease-in-out infinite alternate",
+                    }}
+                  >
+                    THE ANSWER IS
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
-        </div>
+            )}
+          </div>
+        )}
 
-        {/* ✅ QR CODE — BOTTOM LEFT */}
+        {/* =======================
+            LEADERBOARD VIEW (no navigation)
+        ======================= */}
+        {view === "leaderboard" && (
+          <div
+            style={{
+              width: "100vw",
+              height: "100vh",
+              color: "#fff",
+              position: "relative",
+              overflow: "hidden",
+              display: "flex",
+              justifyContent: "center",
+            }}
+          >
+            <div
+              style={{
+                position: "absolute",
+                top: LEADER_UI.titleTop,
+                left: "50%",
+                transform: "translateX(-50%)",
+                fontSize: "clamp(2.5rem,4vw,4.8rem)",
+                fontWeight: 900,
+                letterSpacing: "0.02em",
+                textShadow: "0 10px 40px rgba(0,0,0,0.65)",
+              }}
+            >
+              Leaderboard
+            </div>
+
+            <div
+              style={{
+                position: "absolute",
+                top: LEADER_UI.listTop,
+                width: "92vw",
+                maxWidth: LEADER_UI.maxWidth,
+              }}
+            >
+              {leaderLoading && (
+                <div style={{ textAlign: "center", opacity: 0.75 }}>
+                  Loading leaderboard…
+                </div>
+              )}
+
+              {!leaderLoading && leaderRows.length === 0 && (
+                <div style={{ textAlign: "center", opacity: 0.75 }}>
+                  No scores yet.
+                </div>
+              )}
+
+              {!leaderLoading && leaderRows.length > 0 && (
+                <div style={{ display: "flex", flexDirection: "column", gap: LEADER_UI.rowGap }}>
+                  {leaderRows.slice(0, 10).map((r) => {
+                    const isTop3 = r.rank <= 3;
+
+                    return (
+                      <div
+                        key={r.playerId}
+                        style={{
+                          height: LEADER_UI.rowHeight,
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          borderRadius: 22,
+                          padding: `0 ${LEADER_UI.rowPadX}px`,
+                          background: "rgba(255,255,255,0.07)",
+                          border: isTop3
+                            ? "2px solid rgba(190,242,100,0.55)"
+                            : "1px solid rgba(255,255,255,0.15)",
+                          boxShadow: isTop3 ? "0 0 28px rgba(190,242,100,0.22)" : "none",
+                        }}
+                      >
+                        <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
+                          {/* Avatar */}
+                          <div
+                            style={{
+                              width: LEADER_UI.avatar,
+                              height: LEADER_UI.avatar,
+                              borderRadius: "50%",
+                              overflow: "hidden",
+                              background: "rgba(255,255,255,0.12)",
+                              border: r.selfieUrl
+                                ? "2px solid rgba(255,255,255,0.45)"
+                                : "2px dashed rgba(255,255,255,0.45)",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              position: "relative",
+                            }}
+                          >
+                            {r.selfieUrl ? (
+                              <img
+                                src={r.selfieUrl}
+                                alt={r.name}
+                                style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                              />
+                            ) : (
+                              <div style={{ fontWeight: 900, fontSize: "1.25rem", opacity: 0.9 }}>
+                                {r.rank}
+                              </div>
+                            )}
+
+                            {r.selfieUrl && (
+                              <div
+                                style={{
+                                  position: "absolute",
+                                  bottom: -8,
+                                  right: -8,
+                                  width: 30,
+                                  height: 30,
+                                  borderRadius: "50%",
+                                  background: "rgba(0,0,0,0.75)",
+                                  border: "1px solid rgba(255,255,255,0.25)",
+                                  display: "flex",
+                                  alignItems: "center",
+                                  justifyContent: "center",
+                                  fontWeight: 900,
+                                }}
+                              >
+                                {r.rank}
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Name */}
+                          <div
+                            style={{
+                              fontSize: "clamp(1.3rem,2.2vw,2.4rem)",
+                              fontWeight: 900,
+                              whiteSpace: "nowrap",
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              maxWidth: "65vw",
+                            }}
+                          >
+                            {r.name}
+                          </div>
+                        </div>
+
+                        {/* Points */}
+                        <div style={{ fontSize: "clamp(1.6rem,2.6vw,3rem)", fontWeight: 900 }}>
+                          {r.points}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ✅ QR CODE — BOTTOM LEFT (keep on both views) */}
         <div
           style={{
             position: "absolute",
@@ -765,100 +1122,99 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
           />
         </div>
 
-        {/* TOP 3 LEADERS */}
-        <div
-          style={{
-            position: "absolute",
-            bottom: RANKINGS_CTRL.bottom,
-            left: RANKINGS_CTRL.centerLeft,
-            transform: `translateX(calc(-50% + ${RANKINGS_CTRL.offsetX}))`,
-            display: "flex",
-            gap: RANKINGS_CTRL.groupGap,
-            zIndex: 20,
-            pointerEvents: "none",
-          }}
-        >
-          {[1, 2, 3].map((place) => {
-            const row = topRanks.find((r) => r.place === place);
-            const hasSelfie = !!row?.selfieUrl;
+        {/* TOP 3 LEADERS (show only in question view) */}
+        {view === "question" && (
+          <div
+            style={{
+              position: "absolute",
+              bottom: RANKINGS_CTRL.bottom,
+              left: RANKINGS_CTRL.centerLeft,
+              transform: `translateX(calc(-50% + ${RANKINGS_CTRL.offsetX}))`,
+              display: "flex",
+              gap: RANKINGS_CTRL.groupGap,
+              zIndex: 20,
+              pointerEvents: "none",
+            }}
+          >
+            {[1, 2, 3].map((place) => {
+              const row = topRanks.find((r) => r.place === place);
+              const hasSelfie = !!row?.selfieUrl;
 
-            return (
-              <div
-                key={place}
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: `${RANKINGS_CTRL.avatarSize}px auto`,
-                  gridTemplateRows: "auto auto",
-                  columnGap: RANKINGS_CTRL.nameGap,
-                  alignItems: "center",
-                  fontWeight: 900,
-                  opacity: 0.92,
-                }}
-              >
-                {/* Avatar */}
+              return (
                 <div
+                  key={place}
                   style={{
-                    gridColumn: "1 / 2",
-                    gridRow: "1 / 2",
-                    width: RANKINGS_CTRL.avatarSize,
-                    height: RANKINGS_CTRL.avatarSize,
-                    borderRadius: "50%",
-                    overflow: "hidden",
-                    background: "rgba(255,255,255,0.12)",
-                    border: hasSelfie
-                      ? "2px solid rgba(255,255,255,0.45)"
-                      : "2px dashed rgba(255,255,255,0.45)",
-                    boxShadow: hasSelfie ? "0 0 16px rgba(0,0,0,0.45)" : "none",
+                    display: "grid",
+                    gridTemplateColumns: `${RANKINGS_CTRL.avatarSize}px auto`,
+                    gridTemplateRows: "auto auto",
+                    columnGap: RANKINGS_CTRL.nameGap,
+                    alignItems: "center",
+                    fontWeight: 900,
+                    opacity: 0.92,
                   }}
                 >
-                  {hasSelfie ? (
-                    <img
-                      src={row!.selfieUrl as string}
-                      alt={row!.name}
-                      style={{
-                        width: "100%",
-                        height: "100%",
-                        objectFit: "cover",
-                        display: "block",
-                      }}
-                    />
-                  ) : null}
-                </div>
+                  <div
+                    style={{
+                      gridColumn: "1 / 2",
+                      gridRow: "1 / 2",
+                      width: RANKINGS_CTRL.avatarSize,
+                      height: RANKINGS_CTRL.avatarSize,
+                      borderRadius: "50%",
+                      overflow: "hidden",
+                      background: "rgba(255,255,255,0.12)",
+                      border: hasSelfie
+                        ? "2px solid rgba(255,255,255,0.45)"
+                        : "2px dashed rgba(255,255,255,0.45)",
+                      boxShadow: hasSelfie ? "0 0 16px rgba(0,0,0,0.45)" : "none",
+                    }}
+                  >
+                    {hasSelfie ? (
+                      <img
+                        src={row!.selfieUrl as string}
+                        alt={row!.name}
+                        style={{
+                          width: "100%",
+                          height: "100%",
+                          objectFit: "cover",
+                          display: "block",
+                        }}
+                      />
+                    ) : null}
+                  </div>
 
-                {/* Name */}
-                <div
-                  style={{
-                    gridColumn: "2 / 3",
-                    gridRow: "1 / 2",
-                    fontSize: "clamp(1.05rem,1.3vw,1.5rem)",
-                    whiteSpace: "nowrap",
-                    maxWidth: RANKINGS_CTRL.nameMaxWidth,
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    color: "rgba(255,255,255,0.92)",
-                    textShadow: "0 2px 10px rgba(0,0,0,0.45)",
-                  }}
-                >
-                  {row?.name || "—"}
-                </div>
+                  <div
+                    style={{
+                      gridColumn: "2 / 3",
+                      gridRow: "1 / 2",
+                      fontSize: "clamp(1.05rem,1.3vw,1.5rem)",
+                      whiteSpace: "nowrap",
+                      maxWidth: RANKINGS_CTRL.nameMaxWidth,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      color: "rgba(255,255,255,0.92)",
+                      textShadow: "0 2px 10px rgba(0,0,0,0.45)",
+                    }}
+                  >
+                    {row?.name || "—"}
+                  </div>
 
-                {/* Place under circle */}
-                <div
-                  style={{
-                    gridColumn: "1 / 2",
-                    gridRow: "2 / 3",
-                    justifySelf: "center",
-                    marginTop: RANKINGS_CTRL.placeTopMargin,
-                    fontSize: "clamp(1rem,1.2vw,1.25rem)",
-                    opacity: 0.9,
-                  }}
-                >
-                  {place === 1 ? "1st" : place === 2 ? "2nd" : "3rd"}
+                  <div
+                    style={{
+                      gridColumn: "1 / 2",
+                      gridRow: "2 / 3",
+                      justifySelf: "center",
+                      marginTop: RANKINGS_CTRL.placeTopMargin,
+                      fontSize: "clamp(1rem,1.2vw,1.25rem)",
+                      opacity: 0.9,
+                    }}
+                  >
+                    {place === 1 ? "1st" : place === 2 ? "2nd" : "3rd"}
+                  </div>
                 </div>
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
+        )}
 
         {/* LOGO */}
         <div
@@ -886,7 +1242,6 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
         </div>
       </div>
 
-      {/* 🔵 FANINTERACT PULSE GLOW KEYFRAMES */}
       <style jsx global>{`
         @keyframes fiAnswerGlow {
           0% {
