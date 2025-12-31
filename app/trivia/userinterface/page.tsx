@@ -488,332 +488,354 @@ export default function TriviaUserInterfacePage() {
   }
 
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        background:
-          "radial-gradient(circle at top,#1d4ed8 0,#020617 55%,#000 100%)",
-        color: "#fff",
-        padding: 20,
-        display: "flex",
-        flexDirection: "column",
-        position: "relative",
-      }}
-    >
-      {/* HEADER ROW (LOGO + TITLE) */}
+    <>
       <div
         style={{
+          minHeight: "100vh",
+          background:
+            "radial-gradient(circle at top,#1d4ed8 0,#020617 55%,#000 100%)",
+          color: "#fff",
+          padding: 20,
           display: "flex",
-          alignItems: "center",
-          marginBottom: 12,
-        }}
-      >
-        <div
-          style={{
-            width: 44,
-            height: 44,
-            borderRadius: 8,
-            background: "rgba(15,23,42,0.95)",
-            border: "2px solid rgba(148,163,184,0.9)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            fontSize: "0.7rem",
-            fontWeight: 700,
-            marginRight: 10,
-            letterSpacing: 0.5,
-            overflow: "hidden",
-          }}
-        >
-          {hostLogoUrl ? (
-            <img
-              src={hostLogoUrl}
-              alt="Host Logo"
-              style={{
-                width: "100%",
-                height: "100%",
-                objectFit: "contain",
-              }}
-            />
-          ) : (
-            "LOGO"
-          )}
-        </div>
-
-        <div style={{ display: "flex", flexDirection: "column" }}>
-          <div
-            style={{
-              fontSize: "0.95rem",
-              fontWeight: 700,
-              letterSpacing: 0.3,
-            }}
-          >
-            {trivia?.public_name || "Trivia Game"}
-          </div>
-          <div
-            style={{
-              fontSize: "0.75rem",
-              opacity: 0.75,
-              marginTop: 2,
-            }}
-          >
-            Question {currentQuestionIndex + 1} of {questions.length}
-          </div>
-        </div>
-      </div>
-
-      {/* QUESTION BOX */}
-      <div
-        style={{
-          padding: 18,
-          borderRadius: 16,
-          background: "rgba(15,23,42,0.9)",
-          border: "1px solid rgba(148,163,184,0.4)",
-          marginBottom: 10,
-          minHeight: 130,
-          display: "flex",
-          alignItems: "center",
-        }}
-      >
-        <div
-          style={{
-            fontSize: "1.05rem",
-            fontWeight: 700,
-            lineHeight: 1.4,
-            wordWrap: "break-word",
-          }}
-        >
-          {currentQuestion.question_text}
-        </div>
-      </div>
-
-      {/* GREEN TIMER BAR (same feel as wall) */}
-      <div
-        style={{
-          marginBottom: 16,
-          width: "100%",
-          borderRadius: 999,
-          background: "rgba(15,23,42,0.85)",
-          border: "1px solid rgba(34,197,94,0.5)",
-          overflow: "hidden",
+          flexDirection: "column",
           position: "relative",
-          height: 26,
         }}
       >
-        {/* label */}
+        {/* HEADER ROW (LOGO + TITLE) */}
         <div
           style={{
-            position: "absolute",
-            inset: 0,
             display: "flex",
             alignItems: "center",
-            justifyContent: "center",
-            fontSize: "0.85rem",
-            fontWeight: 700,
-            zIndex: 2,
+            marginBottom: 12,
           }}
         >
-          {minutes}:{seconds.toString().padStart(2, "0")}
-        </div>
-        {/* fill */}
-        <div
-          style={{
-            height: "100%",
-            width: `${pctWidth}%`,
-            background:
-              locked || revealAnswer
-                ? "linear-gradient(90deg,#ef4444,#dc2626)"
-                : "linear-gradient(90deg,#22c55e,#16a34a,#15803d)",
-            transition: "width 0.25s linear, background 0.2s ease",
-          }}
-        />
-      </div>
+          <div
+            style={{
+              width: 44,
+              height: 44,
+              borderRadius: 8,
+              background: "rgba(15,23,42,0.95)",
+              border: "2px solid rgba(148,163,184,0.9)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontSize: "0.7rem",
+              fontWeight: 700,
+              marginRight: 10,
+              letterSpacing: 0.5,
+              overflow: "hidden",
+            }}
+          >
+            {hostLogoUrl ? (
+              <img
+                src={hostLogoUrl}
+                alt="Host Logo"
+                style={{
+                  width: "100%",
+                  height: "100%",
+                  objectFit: "contain",
+                }}
+              />
+            ) : (
+              "LOGO"
+            )}
+          </div>
 
-      {/* ANSWER BUTTONS (scrollable area) */}
-      <div
-        style={{
-          display: "grid",
-          gap: 10,
-          marginBottom: 10,
-          flex: "1 1 auto",
-          minHeight: 0,
-          overflowY: "auto",
-          paddingRight: 2,
-        }}
-      >
-        {currentQuestion.options.map((opt: string, idx: number) => {
-          const chosen = selectedIndex === idx;
-          const isCorrect =
-            typeof currentQuestion.correct_index === "number" &&
-            idx === currentQuestion.correct_index;
-
-          const disabled = hasAnswered || locked;
-
-          let bg = "rgba(15,23,42,0.85)";
-          let border = "1px solid rgba(148,163,184,0.4)";
-          let opacity = 1;
-          let boxShadow = "none";
-
-          // While question is open: chosen answer is highlighted, but not red/green yet
-          if (!revealAnswer && chosen) {
-            bg = "linear-gradient(90deg,#22c55e,#15803d)";
-            border = "1px solid rgba(240,253,250,0.9)";
-            boxShadow = "0 0 12px rgba(74,222,128,0.6)";
-          }
-
-          // After reveal: show correct / incorrect colors
-          if (revealAnswer) {
-            if (isCorrect) {
-              // Correct answer glow (even if user didn't pick it)
-              bg = "linear-gradient(90deg,#22c55e,#16a34a)";
-              border = "2px solid rgba(74,222,128,1)";
-              boxShadow = "0 0 20px rgba(74,222,128,0.9)";
-            } else if (chosen && !isCorrect) {
-              // User picked this but it's wrong
-              bg = "linear-gradient(90deg,#ef4444,#b91c1c)";
-              border = "2px solid rgba(248,113,113,1)";
-              boxShadow = "0 0 16px rgba(248,113,113,0.9)";
-            } else {
-              // Not chosen & not correct: dim it
-              opacity = 0.4;
-            }
-          } else if (disabled && !chosen) {
-            // Timer expired but reveal not done yet: dim unchosen ones a bit
-            opacity = 0.7;
-          }
-
-          return (
-            <button
-              key={idx}
-              onClick={() => handleSelectAnswer(idx)}
-              disabled={disabled}
+          <div style={{ display: "flex", flexDirection: "column" }}>
+            <div
               style={{
-                width: "100%",
-                padding: "6px 12px",
-                borderRadius: 20,
-                background: bg,
-                border,
-                opacity,
-                color: "#fff",
-                textAlign: "left",
-                display: "flex",
-                alignItems: "center",
-                gap: 15,
                 fontSize: "0.95rem",
-                fontWeight: chosen ? 700 : 500,
-                minHeight: 72,
-                boxShadow,
-                transition:
-                  "opacity 0.25s ease, border 0.25s ease, background 0.25s ease, box-shadow 0.3s ease",
+                fontWeight: 700,
+                letterSpacing: 0.3,
               }}
             >
-              <span
-                style={{
-                  width: 60,
-                  height: 60,
-                  borderRadius: "999px",
-                  border: "1px solid rgba(226,232,240,0.8)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  fontSize: "2.0rem",
-                  background: chosen
-                    ? "rgba(15,23,42,0.2)"
-                    : "rgba(15,23,42,0.7)",
-                  flexShrink: 0,
-                }}
-              >
-                {String.fromCharCode(65 + idx)}
-              </span>
-              <span
-                style={{
-                  flex: 1,
-                  lineHeight: 1.3,
-                  wordWrap: "break-word",
-                  whiteSpace: "normal",
-                }}
-              >
-                {opt}
-              </span>
-            </button>
-          );
-        })}
-      </div>
+              {trivia?.public_name || "Trivia Game"}
+            </div>
+            <div
+              style={{
+                fontSize: "0.75rem",
+                opacity: 0.75,
+                marginTop: 2,
+              }}
+            >
+              Question {currentQuestionIndex + 1} of {questions.length}
+            </div>
+          </div>
+        </div>
 
-      {/* AD SLOT PLACEHOLDER (you can wire this later) */}
-      <div
-        style={{
-          marginBottom: 10,
-          padding: 16,
-          borderRadius: 16,
-          border: "1px dashed rgba(148,163,184,0.6)",
-          background: "rgba(15,23,42,0.7)",
-          minHeight: 160,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          fontSize: "0.95rem",
-          opacity: 0.95,
-        }}
-      >
-        AD SLOT (from Ad Manager)
-      </div>
-
-      {/* FOOTER STATUS */}
-      <div
-        style={{
-          textAlign: "center",
-          fontSize: "0.8rem",
-          opacity: 0.8,
-          paddingBottom: 8,
-        }}
-      >
-        {footerText}
-      </div>
-
-      {/* THE ANSWER IS OVERLAY */}
-      {showAnswerOverlay && (
+        {/* QUESTION BOX */}
         <div
           style={{
-            position: "absolute",
-            inset: 0,
-            background: "rgba(0,0,0,0.75)",
+            padding: 18,
+            borderRadius: 16,
+            background: "rgba(15,23,42,0.9)",
+            border: "1px solid rgba(148,163,184,0.4)",
+            marginBottom: 10,
+            minHeight: 130,
             display: "flex",
             alignItems: "center",
-            justifyContent: "center",
-            zIndex: 50,
           }}
         >
           <div
             style={{
-              textAlign: "center",
-              textTransform: "uppercase",
-              letterSpacing: "0.08em",
+              fontSize: "1.05rem",
+              fontWeight: 700,
+              lineHeight: 1.4,
+              wordWrap: "break-word",
+            }}
+          >
+            {currentQuestion.question_text}
+          </div>
+        </div>
+
+        {/* GREEN TIMER BAR */}
+        <div
+          style={{
+            marginBottom: 16,
+            width: "100%",
+            borderRadius: 999,
+            background: "rgba(15,23,42,0.85)",
+            border: "1px solid rgba(34,197,94,0.5)",
+            overflow: "hidden",
+            position: "relative",
+            height: 26,
+          }}
+        >
+          <div
+            style={{
+              position: "absolute",
+              inset: 0,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontSize: "0.85rem",
+              fontWeight: 700,
+              zIndex: 2,
+            }}
+          >
+            {minutes}:{seconds.toString().padStart(2, "0")}
+          </div>
+          <div
+            style={{
+              height: "100%",
+              width: `${pctWidth}%`,
+              background:
+                locked || revealAnswer
+                  ? "linear-gradient(90deg,#ef4444,#dc2626)"
+                  : "linear-gradient(90deg,#22c55e,#16a34a,#15803d)",
+              transition: "width 0.25s linear, background 0.2s ease",
+            }}
+          />
+        </div>
+
+        {/* ANSWER BUTTONS */}
+        <div
+          style={{
+            display: "grid",
+            gap: 10,
+            marginBottom: 10,
+            flex: "1 1 auto",
+            minHeight: 0,
+            overflowY: "auto",
+            paddingRight: 2,
+          }}
+        >
+          {currentQuestion.options.map((opt: string, idx: number) => {
+            const chosen = selectedIndex === idx;
+            const isCorrect =
+              typeof currentQuestion.correct_index === "number" &&
+              idx === currentQuestion.correct_index;
+
+            const disabled = hasAnswered || locked;
+
+            let bg = "rgba(15,23,42,0.85)";
+            let border = "1px solid rgba(148,163,184,0.4)";
+            let opacity = 1;
+            let boxShadow = "none";
+
+            // NEW: pulse flag if user got it right and we're in reveal phase
+            const gotItRightPulse = revealAnswer && chosen && isCorrect;
+
+            // While question is open: chosen answer highlighted
+            if (!revealAnswer && chosen) {
+              bg = "linear-gradient(90deg,#22c55e,#15803d)";
+              border = "1px solid rgba(240,253,250,0.9)";
+              boxShadow = "0 0 12px rgba(74,222,128,0.6)";
+            }
+
+            // After reveal: show correct / incorrect colors + pulse
+            if (revealAnswer) {
+              if (isCorrect) {
+                // Correct answer glow (pulse only if the user picked it)
+                bg = "linear-gradient(90deg,#22c55e,#16a34a)";
+                border = "2px solid rgba(74,222,128,1)";
+                boxShadow = gotItRightPulse
+                  ? "0 0 26px rgba(74,222,128,1)"
+                  : "0 0 20px rgba(74,222,128,0.9)";
+              } else if (chosen && !isCorrect) {
+                bg = "linear-gradient(90deg,#ef4444,#b91c1c)";
+                border = "2px solid rgba(248,113,113,1)";
+                boxShadow = "0 0 16px rgba(248,113,113,0.9)";
+              } else {
+                opacity = 0.4;
+              }
+            } else if (disabled && !chosen) {
+              opacity = 0.7;
+            }
+
+            return (
+              <button
+                key={idx}
+                onClick={() => handleSelectAnswer(idx)}
+                disabled={disabled}
+                style={{
+                  width: "100%",
+                  padding: "6px 12px",
+                  borderRadius: 20,
+                  background: bg,
+                  border,
+                  opacity,
+                  color: "#fff",
+                  textAlign: "left",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 15,
+                  fontSize: "0.95rem",
+                  fontWeight: chosen ? 700 : 500,
+                  minHeight: 72,
+                  boxShadow,
+                  transition:
+                    "opacity 0.25s ease, border 0.25s ease, background 0.25s ease, box-shadow 0.3s ease",
+                  // 🔥 PULSE ANIMATION WHEN USER GOT IT RIGHT
+                  animation: gotItRightPulse
+                    ? "fiCorrectPulse 1.25s ease-in-out infinite alternate"
+                    : "none",
+                }}
+              >
+                <span
+                  style={{
+                    width: 60,
+                    height: 60,
+                    borderRadius: "999px",
+                    border: "1px solid rgba(226,232,240,0.8)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: "2.0rem",
+                    background: chosen
+                      ? "rgba(15,23,42,0.2)"
+                      : "rgba(15,23,42,0.7)",
+                    flexShrink: 0,
+                  }}
+                >
+                  {String.fromCharCode(65 + idx)}
+                </span>
+                <span
+                  style={{
+                    flex: 1,
+                    lineHeight: 1.3,
+                    wordWrap: "break-word",
+                    whiteSpace: "normal",
+                  }}
+                >
+                  {opt}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* AD SLOT PLACEHOLDER */}
+        <div
+          style={{
+            marginBottom: 10,
+            padding: 16,
+            borderRadius: 16,
+            border: "1px dashed rgba(148,163,184,0.6)",
+            background: "rgba(15,23,42,0.7)",
+            minHeight: 160,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontSize: "0.95rem",
+            opacity: 0.95,
+          }}
+        >
+          AD SLOT (from Ad Manager)
+        </div>
+
+        {/* FOOTER STATUS */}
+        <div
+          style={{
+            textAlign: "center",
+            fontSize: "0.8rem",
+            opacity: 0.8,
+            paddingBottom: 8,
+          }}
+        >
+          {footerText}
+        </div>
+
+        {/* THE ANSWER IS OVERLAY */}
+        {showAnswerOverlay && (
+          <div
+            style={{
+              position: "absolute",
+              inset: 0,
+              background: "rgba(0,0,0,0.75)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              zIndex: 50,
             }}
           >
             <div
               style={{
-                fontFamily:
-                  "'SF Pro Display', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
-                fontSize: "2rem",
-                fontWeight: 900,
-                marginBottom: "0.5rem",
-                color: "#e5f1ff",
-                textShadow:
-                  "0 0 2px #000000, 0 0 6px #000000, 0 0 18px rgba(15,23,42,0.9), 0 0 36px rgba(15,23,42,0.9), 0 0 72px rgba(59,130,246,0.9)",
-                padding: "0.4em 1.2em",
-                borderRadius: 18,
-                background:
-                  "radial-gradient(circle at 50% 50%, rgba(59,130,246,0.65), rgba(15,23,42,0.0))",
-                boxShadow:
-                  "0 0 30px rgba(59,130,246,0.9), 0 0 70px rgba(59,130,246,0.85)",
+                textAlign: "center",
+                textTransform: "uppercase",
+                letterSpacing: "0.08em",
               }}
             >
-              THE ANSWER IS…
+              <div
+                style={{
+                  fontFamily:
+                    "'SF Pro Display', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+                  fontSize: "2rem",
+                  fontWeight: 900,
+                  marginBottom: "0.5rem",
+                  color: "#e5f1ff",
+                  textShadow:
+                    "0 0 2px #000000, 0 0 6px #000000, 0 0 18px rgba(15,23,42,0.9), 0 0 36px rgba(15,23,42,0.9), 0 0 72px rgba(59,130,246,0.9)",
+                  padding: "0.4em 1.2em",
+                  borderRadius: 18,
+                  background:
+                    "radial-gradient(circle at 50% 50%, rgba(59,130,246,0.65), rgba(15,23,42,0.0))",
+                  boxShadow:
+                    "0 0 30px rgba(59,130,246,0.9), 0 0 70px rgba(59,130,246,0.85)",
+                }}
+              >
+                THE ANSWER IS…
+              </div>
             </div>
           </div>
-        </div>
-      )}
-    </div>
+        )}
+      </div>
+
+      {/* 🔵 PULSE KEYFRAME FOR CORRECT ANSWER */}
+      <style jsx global>{`
+        @keyframes fiCorrectPulse {
+          0% {
+            transform: scale(1);
+            box-shadow: 0 0 16px rgba(74, 222, 128, 0.7);
+          }
+          100% {
+            transform: scale(1.04);
+            box-shadow:
+              0 0 26px rgba(74, 222, 128, 1),
+              0 0 46px rgba(22, 163, 74, 0.9);
+          }
+        }
+      `}</style>
+    </>
   );
 }
