@@ -26,7 +26,7 @@ export default function TriviaCard({
   onOpenOptions,
   onDelete,
   onLaunch,
-  onOpenModeration, // ✅ moderation callback
+  onOpenModeration,
 }: {
   trivia: any;
   onOpenOptions: (trivia: any) => void;
@@ -42,12 +42,11 @@ export default function TriviaCard({
   const [questions, setQuestions] = useState<any[]>([]);
   const [loadingQuestions, setLoadingQuestions] = useState(false);
 
-  // pagination (5 per page)
   const PAGE_SIZE = 5;
   const [currentPage, setCurrentPage] = useState(0);
 
   /* ------------------------------------------------------------
-     TRIVIA SETTINGS STATE (TIMER + MODE + SCORING + SELFIE)
+     TRIVIA SETTINGS STATE
   ------------------------------------------------------------ */
   const [timerSeconds, setTimerSeconds] = useState<number>(
     trivia?.timer_seconds ?? 30
@@ -70,7 +69,7 @@ export default function TriviaCard({
   );
 
   /* ------------------------------------------------------------
-     PARTICIPANTS / PENDING COUNTS FOR LATEST NON-FINISHED SESSION
+     PARTICIPANTS / PENDING COUNTS
   ------------------------------------------------------------ */
   const [participantsCount, setParticipantsCount] = useState(0);
   const [pendingCount, setPendingCount] = useState(0);
@@ -82,14 +81,20 @@ export default function TriviaCard({
   const [leaderboardLoading, setLeaderboardLoading] = useState(false);
   const lastLeaderboardRef = useRef<LeaderRow[]>([]);
 
+  // ✅ track last session trigger so we only refresh when a question advances
+  const lastQuestionStartedAtRef = useRef<string | null>(null);
+  const lastCurrentQuestionRef = useRef<number | null>(null);
+
   /* ------------------------------------------------------------
-     ACTIVE TAB (needed so we only poll leaderboard when open)
+     ACTIVE TAB
   ------------------------------------------------------------ */
   const [activeTab, setActiveTab] = useState<
     "menu" | "questions" | "leaderboard" | "settings"
   >("menu");
 
-  // keep settings + card state in sync if parent reloads trivia
+  /* ------------------------------------------------------------
+     Keep state in sync if parent reloads trivia
+  ------------------------------------------------------------ */
   useEffect(() => {
     setTimerSeconds(trivia?.timer_seconds ?? 30);
     setPlayMode(trivia?.play_mode || "auto");
@@ -107,7 +112,9 @@ export default function TriviaCard({
     trivia?.countdown_active,
   ]);
 
-  // 🔁 Poll trivia_cards.status + countdown_active every 2s
+  /* ------------------------------------------------------------
+     Poll trivia_cards.status + countdown_active every 2s
+  ------------------------------------------------------------ */
   useEffect(() => {
     let isMounted = true;
 
@@ -207,7 +214,7 @@ export default function TriviaCard({
 
   /* ------------------------------------------------------------
      PARTICIPANTS / PENDING COUNTS (poll every 2s)
-  ------------------------------------------------------------ */
+ ------------------------------------------------------------ */
   async function loadCounts() {
     const { data: session, error: sessionErr } = await supabase
       .from("trivia_sessions")
@@ -258,133 +265,190 @@ export default function TriviaCard({
   }, [trivia.id]);
 
   /* ------------------------------------------------------------
-     LIVE LEADERBOARD (NO UUID, NAME + LAST INITIAL)
-     - Only update state when rows actually change (prevents flicker)
+     LEADERBOARD LOADER (shared by realtime + fallback poll)
+  ------------------------------------------------------------ */
+  async function loadLeaderboard(cancelledRef?: { current: boolean }) {
+    if (!trivia?.id) return;
+
+    // only show loading if first paint / empty (prevents flicker)
+    if (lastLeaderboardRef.current.length === 0) setLeaderboardLoading(true);
+
+    try {
+      // 1) Latest session for this trivia card
+      const { data: session, error: sessionErr } = await supabase
+        .from("trivia_sessions")
+        .select("id,status,created_at")
+        .eq("trivia_card_id", trivia.id)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (sessionErr || !session) {
+        if (
+          !cancelledRef?.current &&
+          !sameLeaderboard([], lastLeaderboardRef.current)
+        ) {
+          lastLeaderboardRef.current = [];
+          setLeaderboard([]);
+        }
+        return;
+      }
+
+      // 2) Players in that session (include guest_id)
+      const { data: players, error: playersErr } = await supabase
+        .from("trivia_players")
+        .select("id,status,guest_id")
+        .eq("session_id", session.id);
+
+      if (playersErr || !players) {
+        if (
+          !cancelledRef?.current &&
+          !sameLeaderboard([], lastLeaderboardRef.current)
+        ) {
+          lastLeaderboardRef.current = [];
+          setLeaderboard([]);
+        }
+        return;
+      }
+
+      const approved = players.filter((p) => p.status === "approved");
+      if (approved.length === 0) {
+        if (
+          !cancelledRef?.current &&
+          !sameLeaderboard([], lastLeaderboardRef.current)
+        ) {
+          lastLeaderboardRef.current = [];
+          setLeaderboard([]);
+        }
+        return;
+      }
+
+      const playerIds = approved.map((p) => p.id);
+      const guestIds = approved.map((p) => p.guest_id).filter(Boolean);
+
+      // 3) Answers → totals
+      const { data: answers, error: answersErr } = await supabase
+        .from("trivia_answers")
+        .select("player_id,points")
+        .in("player_id", playerIds);
+
+      if (answersErr) {
+        console.error("❌ leaderboard answers fetch error:", answersErr);
+        return;
+      }
+
+      const totals = new Map<string, number>();
+      for (const a of answers || []) {
+        const pts = typeof a.points === "number" ? a.points : 0;
+        totals.set(a.player_id, (totals.get(a.player_id) || 0) + pts);
+      }
+
+      // 4) Guest names map guest_id → "First L."
+      const guestNameMap = new Map<string, string>();
+
+      if (guestIds.length > 0) {
+        const { data: guests, error: guestsErr } = await supabase
+          .from("guest_profiles")
+          .select("id,first_name,last_name")
+          .in("id", guestIds);
+
+        if (guestsErr) {
+          console.warn("⚠️ guest_profiles fetch error:", guestsErr);
+        } else {
+          for (const g of guests || []) {
+            const first = (g.first_name || "").trim();
+            const last = (g.last_name || "").trim();
+            const lastInitial = last ? `${last[0].toUpperCase()}.` : "";
+            const label = `${first}${lastInitial ? " " + lastInitial : ""}`.trim();
+            if (g.id && label) guestNameMap.set(g.id, label);
+          }
+        }
+      }
+
+      // 5) Build rows
+      const rows: LeaderRow[] = approved.map((p, index) => ({
+        playerId: p.id,
+        label:
+          (p.guest_id && guestNameMap.get(p.guest_id)) || `Player ${index + 1}`,
+        totalPoints: totals.get(p.id) || 0,
+      }));
+
+      rows.sort((a, b) => b.totalPoints - a.totalPoints);
+
+      if (
+        !cancelledRef?.current &&
+        !sameLeaderboard(rows, lastLeaderboardRef.current)
+      ) {
+        lastLeaderboardRef.current = rows;
+        setLeaderboard(rows);
+      }
+    } finally {
+      if (!cancelledRef?.current) setLeaderboardLoading(false);
+    }
+  }
+
+  /* ------------------------------------------------------------
+     LEADERBOARD AUTO-REFRESH AFTER EACH QUESTION
+     - Realtime: trivia_sessions UPDATE (question_started_at/current_question)
+     - Fallback: poll every 4s while tab open
   ------------------------------------------------------------ */
   useEffect(() => {
     if (activeTab !== "leaderboard") return;
     if (!trivia?.id) return;
 
-    let cancelled = false;
+    const cancelledRef = { current: false };
 
-    async function loadLeaderboard() {
-      // only show loading if first paint / empty (prevents flicker)
-      if (lastLeaderboardRef.current.length === 0) setLeaderboardLoading(true);
+    // initial load
+    loadLeaderboard(cancelledRef);
 
-      try {
-        // 1) Latest session for this trivia card
-        const { data: session, error: sessionErr } = await supabase
-          .from("trivia_sessions")
-          .select("id,status,created_at")
-          .eq("trivia_card_id", trivia.id)
-          .order("created_at", { ascending: false })
-          .limit(1)
-          .maybeSingle();
+    // 1) Realtime subscription to trivia_sessions changes for this card
+    const channel = supabase
+      .channel(`dashboard-trivia-sessions-${trivia.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "trivia_sessions",
+          filter: `trivia_card_id=eq.${trivia.id}`,
+        },
+        (payload: any) => {
+          const next = payload?.new;
+          if (!next) return;
 
-        if (sessionErr || !session) {
-          if (!cancelled && !sameLeaderboard([], lastLeaderboardRef.current)) {
-            lastLeaderboardRef.current = [];
-            setLeaderboard([]);
-          }
-          return;
+          const startedAt = (next.question_started_at ?? null) as string | null;
+          const currentQ = (next.current_question ?? null) as number | null;
+
+          const changed =
+            startedAt !== lastQuestionStartedAtRef.current ||
+            currentQ !== lastCurrentQuestionRef.current;
+
+          if (!changed) return;
+
+          lastQuestionStartedAtRef.current = startedAt;
+          lastCurrentQuestionRef.current = currentQ;
+
+          // ✅ refresh leaderboard immediately when question advances
+          loadLeaderboard(cancelledRef);
         }
+      )
+      .subscribe();
 
-        // 2) Players in that session (include guest_id)
-        const { data: players, error: playersErr } = await supabase
-          .from("trivia_players")
-          .select("id,status,guest_id")
-          .eq("session_id", session.id);
-
-        if (playersErr || !players) {
-          if (!cancelled && !sameLeaderboard([], lastLeaderboardRef.current)) {
-            lastLeaderboardRef.current = [];
-            setLeaderboard([]);
-          }
-          return;
-        }
-
-        const approved = players.filter((p) => p.status === "approved");
-        if (approved.length === 0) {
-          if (!cancelled && !sameLeaderboard([], lastLeaderboardRef.current)) {
-            lastLeaderboardRef.current = [];
-            setLeaderboard([]);
-          }
-          return;
-        }
-
-        const playerIds = approved.map((p) => p.id);
-        const guestIds = approved.map((p) => p.guest_id).filter(Boolean);
-
-        // 3) Answers → totals
-        const { data: answers, error: answersErr } = await supabase
-          .from("trivia_answers")
-          .select("player_id,points")
-          .in("player_id", playerIds);
-
-        if (answersErr) {
-          console.error("❌ leaderboard answers fetch error:", answersErr);
-          return;
-        }
-
-        const totals = new Map<string, number>();
-        for (const a of answers || []) {
-          const pts = typeof a.points === "number" ? a.points : 0;
-          totals.set(a.player_id, (totals.get(a.player_id) || 0) + pts);
-        }
-
-        // 4) Guest names map guest_id → "First L."
-        const guestNameMap = new Map<string, string>();
-
-        if (guestIds.length > 0) {
-          const { data: guests, error: guestsErr } = await supabase
-            .from("guest_profiles")
-            .select("id,first_name,last_name")
-            .in("id", guestIds);
-
-          if (guestsErr) {
-            console.warn("⚠️ guest_profiles fetch error:", guestsErr);
-          } else {
-            for (const g of guests || []) {
-              const first = (g.first_name || "").trim();
-              const last = (g.last_name || "").trim();
-              const lastInitial = last ? `${last[0].toUpperCase()}.` : "";
-              const label = `${first}${lastInitial ? " " + lastInitial : ""}`.trim();
-              if (g.id && label) guestNameMap.set(g.id, label);
-            }
-          }
-        }
-
-        // 5) Build rows
-        const rows: LeaderRow[] = approved.map((p, index) => ({
-          playerId: p.id,
-          label:
-            (p.guest_id && guestNameMap.get(p.guest_id)) || `Player ${index + 1}`,
-          totalPoints: totals.get(p.id) || 0,
-        }));
-
-        rows.sort((a, b) => b.totalPoints - a.totalPoints);
-
-        if (!cancelled && !sameLeaderboard(rows, lastLeaderboardRef.current)) {
-          lastLeaderboardRef.current = rows;
-          setLeaderboard(rows);
-        }
-      } finally {
-        if (!cancelled) setLeaderboardLoading(false);
-      }
-    }
-
-    loadLeaderboard();
-    const id = window.setInterval(loadLeaderboard, 2000);
+    // 2) Fallback poll (covers missed realtime events)
+    const pollId = window.setInterval(() => {
+      loadLeaderboard(cancelledRef);
+    }, 4000);
 
     return () => {
-      cancelled = true;
-      window.clearInterval(id);
+      cancelledRef.current = true;
+      window.clearInterval(pollId);
+      supabase.removeChannel(channel);
     };
   }, [activeTab, trivia?.id]);
 
   /* ------------------------------------------------------------
      QUESTION ACTIONS
-  ------------------------------------------------------------ */
+ ------------------------------------------------------------ */
   async function handleSetQuestionActive(id: string, active: boolean) {
     const { data, error } = await supabase
       .from("trivia_questions")
@@ -429,7 +493,7 @@ export default function TriviaCard({
 
   /* ------------------------------------------------------------
      DELETE TRIVIA
-  ------------------------------------------------------------ */
+ ------------------------------------------------------------ */
   async function handleDeleteTrivia() {
     const yes = confirm(
       `Delete trivia "${trivia.public_name}"?\n\nThis will permanently remove:\n• The trivia game\n• All questions & answers linked to it\n\nThis cannot be undone.`
@@ -443,7 +507,7 @@ export default function TriviaCard({
 
   /* ------------------------------------------------------------
      ▶️ PLAY TRIVIA
-  ------------------------------------------------------------ */
+ ------------------------------------------------------------ */
   async function handlePlayTrivia() {
     if (cardCountdownActive || cardStatus === "running") return;
 
@@ -512,7 +576,7 @@ export default function TriviaCard({
 
   /* ------------------------------------------------------------
      ⏹ STOP TRIVIA
-  ------------------------------------------------------------ */
+ ------------------------------------------------------------ */
   async function handleStopTrivia() {
     await supabase
       .from("trivia_cards")
@@ -534,7 +598,7 @@ export default function TriviaCard({
 
   /* ------------------------------------------------------------
      PAGINATION DERIVED VALUES
-  ------------------------------------------------------------ */
+ ------------------------------------------------------------ */
   const totalPages =
     questions.length > 0 ? Math.ceil(questions.length / PAGE_SIZE) : 1;
 
@@ -595,13 +659,17 @@ export default function TriviaCard({
 
         {/* ---------------- HOME ---------------- */}
         <Tabs.Content value="menu">
-          <div className={cn("grid", "grid-cols-3", "gap-2", "mb-4", "items-center")}>
+          <div
+            className={cn("grid", "grid-cols-3", "gap-2", "mb-4", "items-center")}
+          >
             <div>
               <p className={cn("text-sm", "opacity-70")}>Difficulty</p>
               <p className="font-semibold">{trivia.difficulty}</p>
             </div>
             <div className="text-center">
-              <p className={cn("text-lg", "font-semibold")}>{trivia.public_name}</p>
+              <p className={cn("text-lg", "font-semibold")}>
+                {trivia.public_name}
+              </p>
             </div>
             <div className="text-right">
               <p className={cn("text-sm", "opacity-70")}>Topic</p>
@@ -622,6 +690,7 @@ export default function TriviaCard({
             >
               Launch
             </button>
+
             <button
               onClick={() => onOpenOptions(trivia)}
               className={cn(
@@ -634,6 +703,7 @@ export default function TriviaCard({
             >
               Options
             </button>
+
             <div
               className={cn(
                 "bg-gray-800",
@@ -728,6 +798,7 @@ export default function TriviaCard({
 
         {/* ---------------- QUESTIONS ---------------- */}
         <Tabs.Content value="questions" className={cn("mt-4", "space-y-3")}>
+          {/* unchanged */}
           <div className={cn("flex", "items-center", "justify-between")}>
             <div className={cn("text-xs", "opacity-70")}>
               Total questions: {questions.length}
@@ -756,7 +827,9 @@ export default function TriviaCard({
 
           {!loadingQuestions && questions.length > 0 && (
             <>
-              <div className={cn("max-h-80", "overflow-y-auto", "space-y-3", "pr-1")}>
+              <div
+                className={cn("max-h-80", "overflow-y-auto", "space-y-3", "pr-1")}
+              >
                 {visibleQuestions.map((q) => {
                   const isActive = !!q.is_active;
 
@@ -770,7 +843,15 @@ export default function TriviaCard({
                           : "border-red-500/40 opacity-80"
                       )}
                     >
-                      <div className={cn("flex", "items-start", "justify-between", "gap-2", "mb-2")}>
+                      <div
+                        className={cn(
+                          "flex",
+                          "items-start",
+                          "justify-between",
+                          "gap-2",
+                          "mb-2"
+                        )}
+                      >
                         <div>
                           <p className={cn("font-semibold")}>
                             R{q.round_number}. {q.question_text}
@@ -841,7 +922,15 @@ export default function TriviaCard({
               </div>
 
               {questions.length > PAGE_SIZE && (
-                <div className={cn("flex", "items-center", "justify-between", "mt-2", "text-xs")}>
+                <div
+                  className={cn(
+                    "flex",
+                    "items-center",
+                    "justify-between",
+                    "mt-2",
+                    "text-xs"
+                  )}
+                >
                   <button
                     type="button"
                     onClick={() => setCurrentPage((p) => Math.max(0, p - 1))}
@@ -944,7 +1033,10 @@ export default function TriviaCard({
 
         {/* ---------------- SETTINGS ---------------- */}
         <Tabs.Content value="settings" className={cn("mt-4", "space-y-4")}>
-          <div className={cn("flex", "items-center", "justify-between", "gap-4")}>
+          {/* unchanged */}
+          <div
+            className={cn("flex", "items-center", "justify-between", "gap-4")}
+          >
             <div>
               <p className={cn("text-sm", "font-semibold")}>Question Timer</p>
               <p className={cn("text-xs", "opacity-70")}>
@@ -972,7 +1064,9 @@ export default function TriviaCard({
             </select>
           </div>
 
-          <div className={cn("flex", "items-center", "justify-between", "gap-4")}>
+          <div
+            className={cn("flex", "items-center", "justify-between", "gap-4")}
+          >
             <div>
               <p className={cn("text-sm", "font-semibold")}>Game Flow Mode</p>
               <p className={cn("text-xs", "opacity-70")}>
@@ -1000,7 +1094,9 @@ export default function TriviaCard({
             </select>
           </div>
 
-          <div className={cn("flex", "items-center", "justify-between", "gap-4")}>
+          <div
+            className={cn("flex", "items-center", "justify-between", "gap-4")}
+          >
             <div>
               <p className={cn("text-sm", "font-semibold")}>Scoring Mode</p>
               <p className={cn("text-xs", "opacity-70")}>
@@ -1028,7 +1124,9 @@ export default function TriviaCard({
             </select>
           </div>
 
-          <div className={cn("flex", "items-center", "justify-between", "gap-4")}>
+          <div
+            className={cn("flex", "items-center", "justify-between", "gap-4")}
+          >
             <div>
               <p className={cn("text-sm", "font-semibold")}>Require Selfie</p>
               <p className={cn("text-xs", "opacity-70")}>
