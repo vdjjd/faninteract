@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
+import { useRouter } from "next/navigation";
 import { QRCodeCanvas } from "qrcode.react";
 import { getSupabaseClient } from "@/lib/supabaseClient";
 
@@ -73,6 +74,19 @@ function formatName(first?: string, last?: string) {
   return `${f}${li ? " " + li : ""}`.trim() || "Player";
 }
 
+// ✅ force display_name to First + Last Initial too
+function formatDisplayName(display?: string) {
+  const raw = (display || "").trim().replace(/\s+/g, " ");
+  if (!raw) return "Player";
+
+  const parts = raw.split(" ").filter(Boolean);
+  const first = parts[0] || "";
+  const last = parts.length > 1 ? parts[parts.length - 1] : "";
+  const li = last ? `${last[0].toUpperCase()}.` : "";
+
+  return `${first}${li ? " " + li : ""}`.trim() || "Player";
+}
+
 function pickSelfieUrl(guest: any): string | null {
   return (
     guest?.selfie_url ||
@@ -107,6 +121,8 @@ function sameTopRanks(a: TopRankRow[], b: TopRankRow[]) {
 /* -------------------------------------------------------------------------- */
 
 export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
+  const router = useRouter();
+
   const logoSrc =
     trivia?.host?.branding_logo_url?.trim() ||
     trivia?.host?.logo_url?.trim() ||
@@ -122,7 +138,9 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
   const [totalQuestions, setTotalQuestions] = useState<number | null>(null);
 
   // ✅ DB-synced timer anchor
-  const [questionStartedAt, setQuestionStartedAt] = useState<string | null>(null);
+  const [questionStartedAt, setQuestionStartedAt] = useState<string | null>(
+    null
+  );
 
   const [progress, setProgress] = useState(1);
   const [locked, setLocked] = useState(false);
@@ -137,6 +155,9 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
   // Top 3 ranks for Current Rankings
   const [topRanks, setTopRanks] = useState<TopRankRow[]>([]);
   const topRanksRef = useRef<TopRankRow[]>([]);
+
+  // ✅ guard so we only route once per question
+  const leaderboardNavRef = useRef(false);
 
   /* -------------------------------------------------- */
   /* FETCH CURRENT QUESTION (POLLING)                    */
@@ -251,9 +272,10 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
         return;
       }
 
+      // ✅ pull display_name + photo_url so we can fall back cleanly
       const { data: players, error: playersErr } = await supabase
         .from("trivia_players")
-        .select("id,status,guest_id")
+        .select("id,status,guest_id,display_name,photo_url")
         .eq("session_id", session.id)
         .eq("status", "approved");
 
@@ -292,10 +314,13 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
 
       const guestMap = new Map<string, { name: string; selfieUrl: string | null }>();
 
+      // ✅ only fetch what we need
       if (guestIds.length > 0) {
         const { data: guests, error: guestsErr } = await supabase
           .from("guest_profiles")
-          .select("*")
+          .select(
+            "id,first_name,last_name,photo_url,selfie_url,avatar_url,image_url,profile_photo_url"
+          )
           .in("id", guestIds);
 
         if (guestsErr) {
@@ -313,11 +338,18 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
       const rows = approved
         .map((p: any) => {
           const guest = p.guest_id ? guestMap.get(p.guest_id) : undefined;
+
+          // ✅ Name: guest first/initial if present, otherwise formatted display_name
+          const safeName = guest?.name || formatDisplayName(p.display_name);
+
+          // ✅ Selfie: guest_profiles first, else trivia_players.photo_url (from moderation)
+          const safeSelfie = guest?.selfieUrl || p.photo_url || null;
+
           return {
             playerId: p.id,
             guestId: p.guest_id,
-            name: guest?.name || "Player",
-            selfieUrl: guest?.selfieUrl || null,
+            name: safeName,
+            selfieUrl: safeSelfie,
             points: totals.get(p.id) || 0,
           };
         })
@@ -348,27 +380,24 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
   }, [trivia?.id, isRunning]);
 
   /* -------------------------------------------------- */
-  /* TIMER ENGINE — DB-SYNCED                             */
+  /* TIMER ENGINE — DB-SYNCED                            */
   /* -------------------------------------------------- */
   useEffect(() => {
-    // Only run timer when:
-    // 1) the game is marked running
-    // 2) we know which question number we're on
     if (!isRunning || currentQuestionNumber == null) return;
 
-    // Reset all state for new question
     setLocked(false);
     setProgress(1);
     setShowAnswerOverlay(false);
     setRevealAnswer(false);
 
-    // ⏱️ Respect per-game timer_seconds (10 / 15 / 30), fallback to 30s
+    // ✅ allow routing to leaderboard again for this new question
+    leaderboardNavRef.current = false;
+
     const durationMs =
       typeof trivia?.timer_seconds === "number" && trivia.timer_seconds > 0
         ? trivia.timer_seconds * 1000
         : QUESTION_DURATION_MS;
 
-    // ✅ DB start time (falls back to now if missing)
     const startedMs = questionStartedAt
       ? new Date(questionStartedAt).getTime()
       : Date.now();
@@ -396,60 +425,41 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
   /* -------------------------------------------------- */
   useEffect(() => {
     if (!locked) {
-      // Reset reveal state when not locked
       setShowAnswerOverlay(false);
       setRevealAnswer(false);
       return;
     }
 
-    // Step 1: show overlay
     setShowAnswerOverlay(true);
     setRevealAnswer(false);
 
     const timeoutId = window.setTimeout(() => {
-      // Step 2: hide overlay, show highlight
       setShowAnswerOverlay(false);
       setRevealAnswer(true);
-    }, 5000); // 5 seconds
+    }, 5000);
 
-    return () => {
-      window.clearTimeout(timeoutId);
-    };
+    return () => window.clearTimeout(timeoutId);
   }, [locked]);
 
   /* -------------------------------------------------- */
-  /* AUTO-ADVANCE QUESTION AFTER 8s OF REVEAL            */
+  /* AFTER 8s OF REVEAL → GO TO LEADERBOARD PAGE          */
+  /* (NO DB ADVANCE HERE — leaderboard will advance)      */
   /* -------------------------------------------------- */
   useEffect(() => {
-    // Only auto-advance once the correct answer is being shown
     if (!revealAnswer) return;
     if (!isRunning) return;
-    if (currentQuestionNumber == null) return;
+    if (!trivia?.id) return;
 
-    // If we know total questions and we’re at / past the end, don’t advance
-    if (totalQuestions != null && currentQuestionNumber >= totalQuestions) {
-      return;
-    }
+    // don't route twice
+    if (leaderboardNavRef.current) return;
+    leaderboardNavRef.current = true;
 
-    const timeoutId = window.setTimeout(async () => {
-      try {
-        await supabase
-          .from("trivia_sessions")
-          .update({
-            current_question: currentQuestionNumber + 1,
-            question_started_at: new Date().toISOString(), // ✅ critical
-          })
-          .eq("trivia_card_id", trivia.id)
-          .eq("status", "running");
-      } catch (err) {
-        console.error("❌ auto-advance error:", err);
-      }
-    }, 8000); // 8 seconds of showing the correct answer
+    const timeoutId = window.setTimeout(() => {
+      router.replace(`/trivia/${trivia.id}/leaderboard`);
+    }, 8000);
 
-    return () => {
-      window.clearTimeout(timeoutId);
-    };
-  }, [revealAnswer, isRunning, currentQuestionNumber, totalQuestions, trivia?.id]);
+    return () => window.clearTimeout(timeoutId);
+  }, [revealAnswer, isRunning, trivia?.id, router]);
 
   /* -------------------------------------------------- */
   /* AUTO-SCALE QUESTION TEXT TO ~2 LINES               */
@@ -459,8 +469,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
     if (!el) return;
     if (typeof window === "undefined") return;
 
-    // Base font size starting point from viewport width
-    let baseSize = Math.max(32, Math.min(88, window.innerWidth * 0.035)); // ~3.5vw
+    let baseSize = Math.max(32, Math.min(88, window.innerWidth * 0.035));
     let size = baseSize;
 
     el.style.fontSize = `${size}px`;
@@ -474,7 +483,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
       if (!node) return;
 
       const lineHeightPx = size * 1.15;
-      const maxHeight = lineHeightPx * maxLines + 4; // small buffer
+      const maxHeight = lineHeightPx * maxLines + 4;
 
       if (node.scrollHeight > maxHeight && size > 24) {
         size -= 2;
@@ -489,12 +498,11 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
 
   const options: string[] = Array.isArray(question?.options) ? question.options : [];
 
-  // Base colors for A/B/C/D
   const baseBgColors = [
-    "rgba(239, 68, 68, 0.30)", // A - Red
-    "rgba(59, 130, 246, 0.30)", // B - Blue
-    "rgba(34, 197, 94, 0.30)", // C - Green
-    "rgba(250, 204, 21, 0.35)", // D - Yellow
+    "rgba(239, 68, 68, 0.30)",
+    "rgba(59, 130, 246, 0.30)",
+    "rgba(34, 197, 94, 0.30)",
+    "rgba(250, 204, 21, 0.35)",
   ];
 
   const baseBorders = [
@@ -504,15 +512,13 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
     "1px solid rgba(250, 204, 21, 0.90)",
   ];
 
-  // Slightly lighter borders for the correct-answer highlight
   const highlightBorders = [
-    "2px solid rgba(248, 113, 113, 1)", // lighter red
-    "2px solid rgba(96, 165, 250, 1)", // lighter blue
-    "2px solid rgba(74, 222, 128, 1)", // lighter green
-    "2px solid rgba(253, 224, 71, 1)", // lighter yellow
+    "2px solid rgba(248, 113, 113, 1)",
+    "2px solid rgba(96, 165, 250, 1)",
+    "2px solid rgba(74, 222, 128, 1)",
+    "2px solid rgba(253, 224, 71, 1)",
   ];
 
-  // Glow colors for each answer when correct
   const glowColors = [
     "rgba(248, 113, 113, 0.9)",
     "rgba(96, 165, 250, 0.9)",
@@ -520,7 +526,6 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
     "rgba(253, 224, 71, 0.9)",
   ];
 
-  // ✅ SAME QR FORMAT AS INACTIVE WALL
   const origin =
     typeof window !== "undefined"
       ? window.location.origin
@@ -563,7 +568,6 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
           <div
             ref={questionRef}
             style={{
-              // fontSize is managed dynamically to keep max ~2 lines
               fontWeight: 900,
               lineHeight: 1.15,
               textAlign: "center",
@@ -614,14 +618,12 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
               ? options.map((opt, idx) => {
                   const isCorrect = idx === question?.correct_index;
 
-                  // Base per-answer styles
                   let bg = baseBgColors[idx] ?? "rgba(255,255,255,0.12)";
                   let border = baseBorders[idx] ?? "1px solid rgba(255,255,255,0.18)";
                   let opacity = 1;
                   let boxShadow = "none";
                   let transform = "scale(1)";
 
-                  // When revealing the answer:
                   if (revealAnswer) {
                     if (isCorrect) {
                       border = highlightBorders[idx] ?? border;
@@ -723,7 +725,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
           )}
         </div>
 
-        {/* ✅ QR CODE — BOTTOM LEFT, BRIGHT */}
+        {/* ✅ QR CODE — BOTTOM LEFT */}
         <div
           style={{
             position: "absolute",
@@ -763,7 +765,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
           />
         </div>
 
-        {/* TOP 3 LEADERS (ALIGNED + ADJUSTABLE) */}
+        {/* TOP 3 LEADERS */}
         <div
           style={{
             position: "absolute",
@@ -793,7 +795,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                   opacity: 0.92,
                 }}
               >
-                {/* Avatar (col 1, row 1) */}
+                {/* Avatar */}
                 <div
                   style={{
                     gridColumn: "1 / 2",
@@ -823,7 +825,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                   ) : null}
                 </div>
 
-                {/* Name (col 2, row 1) */}
+                {/* Name */}
                 <div
                   style={{
                     gridColumn: "2 / 3",
@@ -840,7 +842,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                   {row?.name || "—"}
                 </div>
 
-                {/* Place (col 1, row 2) — centered UNDER the circle */}
+                {/* Place under circle */}
                 <div
                   style={{
                     gridColumn: "1 / 2",
