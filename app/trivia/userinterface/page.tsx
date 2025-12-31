@@ -86,6 +86,9 @@ export default function TriviaUserInterfacePage() {
   const [hasAnswered, setHasAnswered] = useState(false);
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
 
+  // 🔹 Host logo URL (from hosts.branding_logo_url, default → FanInteract logo)
+  const [hostLogoUrl, setHostLogoUrl] = useState<string | null>(null);
+
   /* ---------------------------------------------------------
      Load guest profile
   --------------------------------------------------------- */
@@ -118,6 +121,8 @@ export default function TriviaUserInterfacePage() {
       setSession(MOCK_SESSION);
       setQuestions(MOCK_QUESTIONS);
       setPlayerId("mock-player-1");
+      // default FanInteract logo in mock mode
+      setHostLogoUrl("/faninteractlogo.png");
       setLoading(false);
       setLoadingMessage("");
       return;
@@ -131,6 +136,7 @@ export default function TriviaUserInterfacePage() {
       setLoading(true);
       setLoadingMessage("Loading trivia game…");
 
+      // 1️⃣ Trivia card (include host_id so we can look up branding_logo_url)
       const { data: card, error: cardErr } = await supabase
         .from("trivia_cards")
         .select(
@@ -138,7 +144,8 @@ export default function TriviaUserInterfacePage() {
           id,
           public_name,
           timer_seconds,
-          scoring_mode
+          scoring_mode,
+          host_id
         `
         )
         .eq("id", gameId)
@@ -155,8 +162,29 @@ export default function TriviaUserInterfacePage() {
 
       setTrivia(card);
 
+      // 🔹 1.5 – Host logo from hosts.branding_logo_url
+      // default to FanInteract logo
+      let logoPath: string | null = "/faninteractlogo.png";
+
+      if (card.host_id) {
+        const { data: hostRow, error: hostErr } = await supabase
+          .from("hosts")
+          .select("branding_logo_url")
+          .eq("id", card.host_id)
+          .maybeSingle();
+
+        if (!hostErr && hostRow?.branding_logo_url) {
+          logoPath = hostRow.branding_logo_url;
+        }
+      }
+
+      if (!cancelled) {
+        setHostLogoUrl(logoPath);
+      }
+
       setLoadingMessage("Connecting to game session…");
 
+      // 2️⃣ Latest session
       const { data: sessionRow, error: sessionErr } = await supabase
         .from("trivia_sessions")
         .select(
@@ -180,6 +208,7 @@ export default function TriviaUserInterfacePage() {
 
       setLoadingMessage("Finding your player seat…");
 
+      // 3️⃣ Player row
       const { data: playerRow, error: playerErr } = await supabase
         .from("trivia_players")
         .select("id,status")
@@ -200,6 +229,7 @@ export default function TriviaUserInterfacePage() {
 
       setLoadingMessage("Loading questions…");
 
+      // 4️⃣ Active questions
       const { data: qs, error: qErr } = await supabase
         .from("trivia_questions")
         .select(
@@ -231,35 +261,36 @@ export default function TriviaUserInterfacePage() {
   }, [gameId, profile?.id, DEV_MOCK]);
 
   /* ---------------------------------------------------------
-     Poll session (skip in MOCK mode)
+     REALTIME: subscribe to trivia_sessions (no polling)
   --------------------------------------------------------- */
   useEffect(() => {
     if (DEV_MOCK) return;
-    if (!gameId || !session?.id) return;
+    if (!session?.id) return;
 
-    const doPoll = async () => {
-      const { data, error } = await supabase
-        .from("trivia_sessions")
-        .select("id,status,current_round,current_question,question_started_at")
-        .eq("id", session.id)
-        .maybeSingle();
+    const channel = supabase
+      .channel(`trivia-session-${session.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "trivia_sessions",
+          filter: `id=eq.${session.id}`,
+        },
+        (payload) => {
+          const newSession = payload.new as TriviaSession;
+          setSession((prev) => ({
+            ...(prev || newSession),
+            ...newSession,
+          }));
+        }
+      )
+      .subscribe();
 
-      if (error || !data) {
-        console.error("❌ trivia_sessions poll error:", error);
-        return;
-      }
-
-      setSession((prev) => ({
-        ...(prev || data),
-        ...data,
-      }));
+    return () => {
+      supabase.removeChannel(channel);
     };
-
-    doPoll();
-    const id = setInterval(doPoll, 2000);
-
-    return () => clearInterval(id);
-  }, [session?.id, gameId, DEV_MOCK]);
+  }, [session?.id, DEV_MOCK]);
 
   /* ---------------------------------------------------------
      Derived question + timer
@@ -283,6 +314,7 @@ export default function TriviaUserInterfacePage() {
       return;
     }
 
+    // new question → reset local state
     setSelectedIndex(null);
     setHasAnswered(false);
 
@@ -315,9 +347,13 @@ export default function TriviaUserInterfacePage() {
     setSelectedIndex(idx);
     setHasAnswered(true);
 
-    if (DEV_MOCK) return;
+    if (DEV_MOCK) {
+      // mock mode: just flip UI, no DB
+      return;
+    }
     if (!playerId) return;
 
+    // Prevent duplicate answers
     const { data: existing, error: existingErr } = await supabase
       .from("trivia_answers")
       .select("id")
@@ -437,7 +473,7 @@ export default function TriviaUserInterfacePage() {
     );
   }
 
-  const baseSeconds = timerSeconds || 1;
+  const baseSeconds = trivia?.timer_seconds || 1;
   const safeTimeLeft =
     timeLeft === null ? baseSeconds : Math.max(0, timeLeft);
   const minutes = Math.floor(safeTimeLeft / 60);
@@ -470,7 +506,7 @@ export default function TriviaUserInterfacePage() {
         flexDirection: "column",
       }}
     >
-      {/* HEADER ROW */}
+      {/* HEADER ROW (logo + title + question count) */}
       <div
         style={{
           display: "flex",
@@ -478,6 +514,7 @@ export default function TriviaUserInterfacePage() {
           marginBottom: 12,
         }}
       >
+        {/* Logo box – move this wherever you want the logo */}
         <div
           style={{
             width: 44,
@@ -491,10 +528,22 @@ export default function TriviaUserInterfacePage() {
             fontSize: "0.7rem",
             fontWeight: 700,
             marginRight: 10,
-            letterSpacing: 0.5,
+            overflow: "hidden",
           }}
         >
-          LOGO
+          {hostLogoUrl ? (
+            <img
+              src={hostLogoUrl}
+              alt="Host Logo"
+              style={{
+                width: "100%",
+                height: "100%",
+                objectFit: "cover",
+              }}
+            />
+          ) : (
+            "LOGO"
+          )}
         </div>
 
         <div style={{ display: "flex", flexDirection: "column" }}>
@@ -540,7 +589,7 @@ export default function TriviaUserInterfacePage() {
             wordWrap: "break-word",
           }}
         >
-          {currentQuestion.question_text}
+          {currentQuestion?.question_text}
         </div>
       </div>
 
@@ -581,7 +630,7 @@ export default function TriviaUserInterfacePage() {
         />
       </div>
 
-      {/* ANSWER BUTTONS (scrolls so Ad Slot stays visible) */}
+      {/* ANSWER BUTTONS */}
       <div
         style={{
           display: "grid",
@@ -593,7 +642,7 @@ export default function TriviaUserInterfacePage() {
           paddingRight: 2,
         }}
       >
-        {currentQuestion.options.map((opt: string, idx: number) => {
+        {currentQuestion?.options.map((opt: string, idx: number) => {
           const chosen = selectedIndex === idx;
           const disabled = hasAnswered || questionLocked;
 
