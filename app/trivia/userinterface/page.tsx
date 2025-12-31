@@ -29,55 +29,20 @@ interface TriviaSession {
 }
 
 /* ---------------------------------------------------------
-   MOCK DATA (for ?mock=1 dev mode only)
---------------------------------------------------------- */
-const MOCK_TRIVIA = {
-  id: "mock-trivia-1",
-  public_name: "Mock Country Trivia",
-  timer_seconds: 30,
-  scoring_mode: "100s",
-};
-
-const MOCK_SESSION: TriviaSession = {
-  id: "mock-session-1",
-  status: "running",
-  current_round: 1,
-  current_question: 1,
-  question_started_at: new Date().toISOString(),
-};
-
-const MOCK_QUESTIONS = [
-  {
-    id: "mock-q1",
-    round_number: 1,
-    question_text: "Which city is the capital of Australia?",
-    options: ["Sydney", "Melbourne", "Canberra", "Brisbane"],
-    correct_index: 2,
-  },
-  {
-    id: "mock-q2",
-    round_number: 1,
-    question_text: "Which artist sings “Fast Car”?",
-    options: ["Luke Combs", "Tracy Chapman", "Morgan Wallen", "Jelly Roll"],
-    correct_index: 1,
-  },
-];
-
-/* ---------------------------------------------------------
    Component
 --------------------------------------------------------- */
 export default function TriviaUserInterfacePage() {
   const searchParams = useSearchParams();
   const router = useRouter();
 
-  const gameId = searchParams.get("game");
-  const DEV_MOCK = searchParams.get("mock") === "1";
+  const gameId = searchParams.get("game"); // trivia_cards.id
 
   const [profile, setProfile] = useState<any>(null);
   const [trivia, setTrivia] = useState<any>(null);
   const [session, setSession] = useState<TriviaSession | null>(null);
   const [playerId, setPlayerId] = useState<string | null>(null);
   const [questions, setQuestions] = useState<any[]>([]);
+  const [hostLogoUrl, setHostLogoUrl] = useState<string | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [loadingMessage, setLoadingMessage] = useState("Loading trivia…");
@@ -86,22 +51,10 @@ export default function TriviaUserInterfacePage() {
   const [hasAnswered, setHasAnswered] = useState(false);
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
 
-  // 🔹 Host logo URL (from hosts.branding_logo_url, default → FanInteract logo)
-  const [hostLogoUrl, setHostLogoUrl] = useState<string | null>(null);
-
   /* ---------------------------------------------------------
      Load guest profile
   --------------------------------------------------------- */
   useEffect(() => {
-    if (DEV_MOCK) {
-      setProfile({
-        id: "mock-guest-1",
-        first_name: "Mock",
-        last_name: "Player",
-      });
-      return;
-    }
-
     const p = getStoredGuestProfile();
     if (!p) {
       if (gameId) {
@@ -110,24 +63,12 @@ export default function TriviaUserInterfacePage() {
       return;
     }
     setProfile(p);
-  }, [router, gameId, DEV_MOCK]);
+  }, [router, gameId]);
 
   /* ---------------------------------------------------------
-     Initial load (skip Supabase in MOCK mode)
+     Initial load (card + session + player + questions + host logo)
   --------------------------------------------------------- */
   useEffect(() => {
-    if (DEV_MOCK) {
-      setTrivia(MOCK_TRIVIA);
-      setSession(MOCK_SESSION);
-      setQuestions(MOCK_QUESTIONS);
-      setPlayerId("mock-player-1");
-      // default FanInteract logo in mock mode
-      setHostLogoUrl("/faninteractlogo.png");
-      setLoading(false);
-      setLoadingMessage("");
-      return;
-    }
-
     if (!gameId || !profile?.id) return;
 
     let cancelled = false;
@@ -136,7 +77,7 @@ export default function TriviaUserInterfacePage() {
       setLoading(true);
       setLoadingMessage("Loading trivia game…");
 
-      // 1️⃣ Trivia card (include host_id so we can look up branding_logo_url)
+      // 1️⃣ Load trivia card (with host_id)
       const { data: card, error: cardErr } = await supabase
         .from("trivia_cards")
         .select(
@@ -162,29 +103,32 @@ export default function TriviaUserInterfacePage() {
 
       setTrivia(card);
 
-      // 🔹 1.5 – Host logo from hosts.branding_logo_url
-      // default to FanInteract logo
-      let logoPath: string | null = "/faninteractlogo.png";
-
+      // 2️⃣ Load host branding logo
       if (card.host_id) {
-        const { data: hostRow, error: hostErr } = await supabase
+        const { data: host, error: hostErr } = await supabase
           .from("hosts")
-          .select("branding_logo_url")
+          .select("branding_logo_url, logo_url")
           .eq("id", card.host_id)
           .maybeSingle();
 
-        if (!hostErr && hostRow?.branding_logo_url) {
-          logoPath = hostRow.branding_logo_url;
+        if (!cancelled) {
+          if (!hostErr && host) {
+            setHostLogoUrl(
+              host.branding_logo_url ||
+                host.logo_url ||
+                "/faninteractlogo.png"
+            );
+          } else {
+            setHostLogoUrl("/faninteractlogo.png");
+          }
         }
+      } else {
+        setHostLogoUrl("/faninteractlogo.png");
       }
 
-      if (!cancelled) {
-        setHostLogoUrl(logoPath);
-      }
-
+      // 3️⃣ Get latest session for this card
       setLoadingMessage("Connecting to game session…");
 
-      // 2️⃣ Latest session
       const { data: sessionRow, error: sessionErr } = await supabase
         .from("trivia_sessions")
         .select(
@@ -206,9 +150,9 @@ export default function TriviaUserInterfacePage() {
 
       setSession(sessionRow as TriviaSession);
 
+      // 4️⃣ Ensure we have this player row for the session
       setLoadingMessage("Finding your player seat…");
 
-      // 3️⃣ Player row
       const { data: playerRow, error: playerErr } = await supabase
         .from("trivia_players")
         .select("id,status")
@@ -227,9 +171,9 @@ export default function TriviaUserInterfacePage() {
 
       setPlayerId(playerRow.id);
 
+      // 5️⃣ Load active questions for the card
       setLoadingMessage("Loading questions…");
 
-      // 4️⃣ Active questions
       const { data: qs, error: qErr } = await supabase
         .from("trivia_questions")
         .select(
@@ -258,15 +202,15 @@ export default function TriviaUserInterfacePage() {
     return () => {
       cancelled = true;
     };
-  }, [gameId, profile?.id, DEV_MOCK]);
+  }, [gameId, profile?.id]);
 
   /* ---------------------------------------------------------
-     REALTIME: subscribe to trivia_sessions (no polling)
+     Realtime: follow trivia_sessions in lockstep with wall
   --------------------------------------------------------- */
   useEffect(() => {
-    if (DEV_MOCK) return;
     if (!session?.id) return;
 
+    // Realtime channel for this session
     const channel = supabase
       .channel(`trivia-session-${session.id}`)
       .on(
@@ -287,10 +231,31 @@ export default function TriviaUserInterfacePage() {
       )
       .subscribe();
 
+    // Optional: backup polling every few seconds
+    const poll = async () => {
+      const { data, error } = await supabase
+        .from("trivia_sessions")
+        .select(
+          "id,status,current_round,current_question,question_started_at"
+        )
+        .eq("id", session.id)
+        .maybeSingle();
+
+      if (!error && data) {
+        setSession((prev) => ({
+          ...(prev || data),
+          ...data,
+        }));
+      }
+    };
+
+    const intervalId = setInterval(poll, 5000);
+
     return () => {
       supabase.removeChannel(channel);
+      clearInterval(intervalId);
     };
-  }, [session?.id, DEV_MOCK]);
+  }, [session?.id]);
 
   /* ---------------------------------------------------------
      Derived question + timer
@@ -314,7 +279,7 @@ export default function TriviaUserInterfacePage() {
       return;
     }
 
-    // new question → reset local state
+    // New question started → reset local UI state
     setSelectedIndex(null);
     setHasAnswered(false);
 
@@ -338,22 +303,17 @@ export default function TriviaUserInterfacePage() {
   );
 
   /* ---------------------------------------------------------
-     Answer submission
+     Answer submission (locks in & highlights)
   --------------------------------------------------------- */
   async function handleSelectAnswer(idx: number) {
     if (!currentQuestion) return;
     if (hasAnswered || questionLocked) return;
+    if (!playerId) return;
 
     setSelectedIndex(idx);
     setHasAnswered(true);
 
-    if (DEV_MOCK) {
-      // mock mode: just flip UI, no DB
-      return;
-    }
-    if (!playerId) return;
-
-    // Prevent duplicate answers
+    // Prevent duplicate answers for this question
     const { data: existing, error: existingErr } = await supabase
       .from("trivia_answers")
       .select("id")
@@ -397,7 +357,7 @@ export default function TriviaUserInterfacePage() {
   /* ---------------------------------------------------------
      Render states
   --------------------------------------------------------- */
-  if (!gameId && !DEV_MOCK) {
+  if (!gameId) {
     return (
       <div
         style={{
@@ -416,7 +376,7 @@ export default function TriviaUserInterfacePage() {
     );
   }
 
-  if (!DEV_MOCK && !profile) {
+  if (!profile) {
     return (
       <div
         style={{
@@ -454,7 +414,7 @@ export default function TriviaUserInterfacePage() {
     );
   }
 
-  if ((!session || !questions.length || !currentQuestion) && !DEV_MOCK) {
+  if (!session || !questions.length || !currentQuestion) {
     return (
       <div
         style={{
@@ -473,7 +433,7 @@ export default function TriviaUserInterfacePage() {
     );
   }
 
-  const baseSeconds = trivia?.timer_seconds || 1;
+  const baseSeconds = timerSeconds || 1;
   const safeTimeLeft =
     timeLeft === null ? baseSeconds : Math.max(0, timeLeft);
   const minutes = Math.floor(safeTimeLeft / 60);
@@ -484,7 +444,7 @@ export default function TriviaUserInterfacePage() {
   );
 
   let footerText = "";
-  if (!session?.question_started_at) {
+  if (!session.question_started_at) {
     footerText = "Host hasn't opened this question yet. Get ready…";
   } else if (questionLocked) {
     footerText = "Time is up. Wait for the next question…";
@@ -512,9 +472,9 @@ export default function TriviaUserInterfacePage() {
           display: "flex",
           alignItems: "center",
           marginBottom: 12,
+          gap: 10,
         }}
       >
-        {/* Logo box – move this wherever you want the logo */}
         <div
           style={{
             width: 44,
@@ -527,7 +487,6 @@ export default function TriviaUserInterfacePage() {
             justifyContent: "center",
             fontSize: "0.7rem",
             fontWeight: 700,
-            marginRight: 10,
             overflow: "hidden",
           }}
         >
@@ -535,11 +494,7 @@ export default function TriviaUserInterfacePage() {
             <img
               src={hostLogoUrl}
               alt="Host Logo"
-              style={{
-                width: "100%",
-                height: "100%",
-                objectFit: "cover",
-              }}
+              style={{ width: "100%", height: "100%", objectFit: "cover" }}
             />
           ) : (
             "LOGO"
@@ -589,7 +544,7 @@ export default function TriviaUserInterfacePage() {
             wordWrap: "break-word",
           }}
         >
-          {currentQuestion?.question_text}
+          {currentQuestion.question_text}
         </div>
       </div>
 
@@ -630,7 +585,7 @@ export default function TriviaUserInterfacePage() {
         />
       </div>
 
-      {/* ANSWER BUTTONS */}
+      {/* ANSWER BUTTONS (scrollable area) */}
       <div
         style={{
           display: "grid",
@@ -642,22 +597,46 @@ export default function TriviaUserInterfacePage() {
           paddingRight: 2,
         }}
       >
-        {currentQuestion?.options.map((opt: string, idx: number) => {
+        {currentQuestion.options.map((opt: string, idx: number) => {
           const chosen = selectedIndex === idx;
           const disabled = hasAnswered || questionLocked;
+          const isCorrect = idx === currentQuestion.correct_index;
 
           let bg = "rgba(15,23,42,0.85)";
           let border = "1px solid rgba(148,163,184,0.4)";
           let opacity = 1;
+          let textColor = "#fff";
 
-          if (disabled && !chosen) {
-            opacity = 0.6;
+          if (!questionLocked) {
+            // Question still open
+            if (chosen) {
+              bg = "linear-gradient(90deg,#22c55e,#0ea5e9)";
+              border = "1px solid rgba(240,253,250,0.9)";
+            } else if (disabled) {
+              opacity = 0.6;
+            }
+          } else {
+            // Question locked → reveal correctness
+            if (isCorrect) {
+              bg = "linear-gradient(90deg,#22c55e,#15803d)";
+              border = "1px solid rgba(34,197,94,0.9)";
+            } else if (chosen && !isCorrect) {
+              bg = "linear-gradient(90deg,#ef4444,#b91c1c)";
+              border = "1px solid rgba(248,113,113,0.9)";
+            } else {
+              opacity = 0.5;
+              bg = "rgba(15,23,42,0.85)";
+            }
           }
 
-          if (chosen) {
-            bg = "linear-gradient(90deg,#22c55e,#15803d)";
-            border = "1px solid rgba(240,253,250,0.9)";
-          }
+          const scale =
+            chosen && !questionLocked
+              ? "scale(1.02)"
+              : "scale(1.0)";
+          const boxShadow =
+            chosen && !questionLocked
+              ? "0 0 12px rgba(56,189,248,0.7)"
+              : "none";
 
           return (
             <button
@@ -671,7 +650,7 @@ export default function TriviaUserInterfacePage() {
                 background: bg,
                 border,
                 opacity,
-                color: "#fff",
+                color: textColor,
                 textAlign: "left",
                 display: "flex",
                 alignItems: "center",
@@ -679,6 +658,10 @@ export default function TriviaUserInterfacePage() {
                 fontSize: "0.95rem",
                 fontWeight: chosen ? 700 : 500,
                 minHeight: 72,
+                transform: scale,
+                boxShadow,
+                transition:
+                  "transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease, background 0.15s ease, border 0.15s ease",
               }}
             >
               <span
@@ -715,7 +698,7 @@ export default function TriviaUserInterfacePage() {
         })}
       </div>
 
-      {/* AD SLOT PLACEHOLDER */}
+      {/* AD SLOT PLACEHOLDER (you can replace this later with live ads) */}
       <div
         style={{
           marginBottom: 10,
