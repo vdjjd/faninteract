@@ -3,7 +3,23 @@
 import { cn } from "@/lib/utils";
 import * as Tabs from "@radix-ui/react-tabs";
 import { supabase } from "@/lib/supabaseClient";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+
+type LeaderRow = { playerId: string; label: string; totalPoints: number };
+
+function sameLeaderboard(a: LeaderRow[], b: LeaderRow[]) {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (
+      a[i].playerId !== b[i].playerId ||
+      a[i].totalPoints !== b[i].totalPoints ||
+      a[i].label !== b[i].label
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
 
 export default function TriviaCard({
   trivia,
@@ -36,9 +52,7 @@ export default function TriviaCard({
   const [timerSeconds, setTimerSeconds] = useState<number>(
     trivia?.timer_seconds ?? 30
   );
-  const [playMode, setPlayMode] = useState<string>(
-    trivia?.play_mode || "auto"
-  );
+  const [playMode, setPlayMode] = useState<string>(trivia?.play_mode || "auto");
   const [scoringMode, setScoringMode] = useState<string>(
     trivia?.scoring_mode || "100s"
   );
@@ -55,7 +69,27 @@ export default function TriviaCard({
     !!trivia.countdown_active
   );
 
-  // keep in sync if parent reloads trivia
+  /* ------------------------------------------------------------
+     PARTICIPANTS / PENDING COUNTS FOR LATEST NON-FINISHED SESSION
+  ------------------------------------------------------------ */
+  const [participantsCount, setParticipantsCount] = useState(0);
+  const [pendingCount, setPendingCount] = useState(0);
+
+  /* ------------------------------------------------------------
+     LEADERBOARD STATE
+  ------------------------------------------------------------ */
+  const [leaderboard, setLeaderboard] = useState<LeaderRow[]>([]);
+  const [leaderboardLoading, setLeaderboardLoading] = useState(false);
+  const lastLeaderboardRef = useRef<LeaderRow[]>([]);
+
+  /* ------------------------------------------------------------
+     ACTIVE TAB (needed so we only poll leaderboard when open)
+  ------------------------------------------------------------ */
+  const [activeTab, setActiveTab] = useState<
+    "menu" | "questions" | "leaderboard" | "settings"
+  >("menu");
+
+  // keep settings + card state in sync if parent reloads trivia
   useEffect(() => {
     setTimerSeconds(trivia?.timer_seconds ?? 30);
     setPlayMode(trivia?.play_mode || "auto");
@@ -87,9 +121,7 @@ export default function TriviaCard({
         .maybeSingle();
 
       if (error || !data) {
-        if (error) {
-          console.error("❌ trivia_cards status poll error:", error);
-        }
+        if (error) console.error("❌ trivia_cards status poll error:", error);
         return;
       }
 
@@ -98,7 +130,6 @@ export default function TriviaCard({
       setCardCountdownActive(!!data.countdown_active);
     };
 
-    // initial + interval
     pollCard();
     const id = setInterval(pollCard, 2000);
 
@@ -121,9 +152,7 @@ export default function TriviaCard({
         .update(patch)
         .eq("id", trivia.id);
 
-      if (error) {
-        console.error("❌ Update trivia settings error:", error);
-      }
+      if (error) console.error("❌ Update trivia settings error:", error);
     } finally {
       setSavingSettings(false);
     }
@@ -166,26 +195,20 @@ export default function TriviaCard({
       .order("round_number", { ascending: true })
       .order("created_at", { ascending: true });
 
-    if (error) {
-      console.error("❌ Load questions error:", error);
-    }
+    if (error) console.error("❌ Load questions error:", error);
 
     if (!error && data) {
       setQuestions(data);
-      setCurrentPage(0); // reset to first page
+      setCurrentPage(0);
     }
 
     setLoadingQuestions(false);
   }
 
   /* ------------------------------------------------------------
-     PARTICIPANTS / PENDING COUNTS FOR LATEST NON-FINISHED SESSION
+     PARTICIPANTS / PENDING COUNTS (poll every 2s)
   ------------------------------------------------------------ */
-  const [participantsCount, setParticipantsCount] = useState(0);
-  const [pendingCount, setPendingCount] = useState(0);
-
   async function loadCounts() {
-    // latest session that is NOT finished (waiting or running)
     const { data: session, error: sessionErr } = await supabase
       .from("trivia_sessions")
       .select("id,status,created_at")
@@ -216,7 +239,6 @@ export default function TriviaCard({
     setPendingCount(players.filter((p) => p.status === "pending").length);
   }
 
-  // 🔁 Poll counts every 2s
   useEffect(() => {
     let isMounted = true;
 
@@ -234,6 +256,131 @@ export default function TriviaCard({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [trivia.id]);
+
+  /* ------------------------------------------------------------
+     LIVE LEADERBOARD (NO UUID, NAME + LAST INITIAL)
+     - Only update state when rows actually change (prevents flicker)
+  ------------------------------------------------------------ */
+  useEffect(() => {
+    if (activeTab !== "leaderboard") return;
+    if (!trivia?.id) return;
+
+    let cancelled = false;
+
+    async function loadLeaderboard() {
+      // only show loading if first paint / empty (prevents flicker)
+      if (lastLeaderboardRef.current.length === 0) setLeaderboardLoading(true);
+
+      try {
+        // 1) Latest session for this trivia card
+        const { data: session, error: sessionErr } = await supabase
+          .from("trivia_sessions")
+          .select("id,status,created_at")
+          .eq("trivia_card_id", trivia.id)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (sessionErr || !session) {
+          if (!cancelled && !sameLeaderboard([], lastLeaderboardRef.current)) {
+            lastLeaderboardRef.current = [];
+            setLeaderboard([]);
+          }
+          return;
+        }
+
+        // 2) Players in that session (include guest_id)
+        const { data: players, error: playersErr } = await supabase
+          .from("trivia_players")
+          .select("id,status,guest_id")
+          .eq("session_id", session.id);
+
+        if (playersErr || !players) {
+          if (!cancelled && !sameLeaderboard([], lastLeaderboardRef.current)) {
+            lastLeaderboardRef.current = [];
+            setLeaderboard([]);
+          }
+          return;
+        }
+
+        const approved = players.filter((p) => p.status === "approved");
+        if (approved.length === 0) {
+          if (!cancelled && !sameLeaderboard([], lastLeaderboardRef.current)) {
+            lastLeaderboardRef.current = [];
+            setLeaderboard([]);
+          }
+          return;
+        }
+
+        const playerIds = approved.map((p) => p.id);
+        const guestIds = approved.map((p) => p.guest_id).filter(Boolean);
+
+        // 3) Answers → totals
+        const { data: answers, error: answersErr } = await supabase
+          .from("trivia_answers")
+          .select("player_id,points")
+          .in("player_id", playerIds);
+
+        if (answersErr) {
+          console.error("❌ leaderboard answers fetch error:", answersErr);
+          return;
+        }
+
+        const totals = new Map<string, number>();
+        for (const a of answers || []) {
+          const pts = typeof a.points === "number" ? a.points : 0;
+          totals.set(a.player_id, (totals.get(a.player_id) || 0) + pts);
+        }
+
+        // 4) Guest names map guest_id → "First L."
+        const guestNameMap = new Map<string, string>();
+
+        if (guestIds.length > 0) {
+          const { data: guests, error: guestsErr } = await supabase
+            .from("guest_profiles")
+            .select("id,first_name,last_name")
+            .in("id", guestIds);
+
+          if (guestsErr) {
+            console.warn("⚠️ guest_profiles fetch error:", guestsErr);
+          } else {
+            for (const g of guests || []) {
+              const first = (g.first_name || "").trim();
+              const last = (g.last_name || "").trim();
+              const lastInitial = last ? `${last[0].toUpperCase()}.` : "";
+              const label = `${first}${lastInitial ? " " + lastInitial : ""}`.trim();
+              if (g.id && label) guestNameMap.set(g.id, label);
+            }
+          }
+        }
+
+        // 5) Build rows
+        const rows: LeaderRow[] = approved.map((p, index) => ({
+          playerId: p.id,
+          label:
+            (p.guest_id && guestNameMap.get(p.guest_id)) || `Player ${index + 1}`,
+          totalPoints: totals.get(p.id) || 0,
+        }));
+
+        rows.sort((a, b) => b.totalPoints - a.totalPoints);
+
+        if (!cancelled && !sameLeaderboard(rows, lastLeaderboardRef.current)) {
+          lastLeaderboardRef.current = rows;
+          setLeaderboard(rows);
+        }
+      } finally {
+        if (!cancelled) setLeaderboardLoading(false);
+      }
+    }
+
+    loadLeaderboard();
+    const id = window.setInterval(loadLeaderboard, 2000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [activeTab, trivia?.id]);
 
   /* ------------------------------------------------------------
      QUESTION ACTIONS
@@ -296,15 +443,10 @@ export default function TriviaCard({
 
   /* ------------------------------------------------------------
      ▶️ PLAY TRIVIA
-     - Reuse latest non-finished session (waiting/running)
-     - Require at least one APPROVED player
-     - Do NOT create a new session here (prevents ghost sessions)
-     - Uses LIVE cardStatus / cardCountdownActive
   ------------------------------------------------------------ */
   async function handlePlayTrivia() {
     if (cardCountdownActive || cardStatus === "running") return;
 
-    // 1️⃣ Find latest non-finished session for this card
     const { data: session, error: sessionErr } = await supabase
       .from("trivia_sessions")
       .select("id,status,created_at")
@@ -320,43 +462,35 @@ export default function TriviaCard({
       return;
     }
 
-    // 2️⃣ Check for at least one APPROVED player in this session
     const { data: players, error: playersErr } = await supabase
       .from("trivia_players")
       .select("id,status")
       .eq("session_id", session.id);
 
-    if (playersErr) {
-      console.error("❌ trivia_players check error:", playersErr);
-    }
+    if (playersErr) console.error("❌ trivia_players check error:", playersErr);
 
     const hasApproved =
       (players || []).some((p) => p.status === "approved") || false;
 
     if (!hasApproved) {
-      alert(
-        "You must approve at least one player before starting the game."
-      );
+      alert("You must approve at least one player before starting the game.");
       return;
     }
 
     const nowIso = new Date().toISOString();
 
-    // 3️⃣ Start countdown on the card (wall sees this and shows timer)
     await supabase
       .from("trivia_cards")
       .update({
         countdown_active: true,
         countdown_started_at: nowIso,
-        status: "waiting", // intermediate state during countdown
+        status: "waiting",
       })
       .eq("id", trivia.id);
 
-    // update local immediately (polling will keep it in sync too)
     setCardCountdownActive(true);
     setCardStatus("waiting");
 
-    // 4️⃣ After 10s → mark card as running + mark THIS session as running
     setTimeout(async () => {
       await supabase
         .from("trivia_cards")
@@ -378,12 +512,8 @@ export default function TriviaCard({
 
   /* ------------------------------------------------------------
      ⏹ STOP TRIVIA
-     - Put card back to finished → wall shows inactive QR page
-     - Mark any non-finished sessions for this card as finished
-       (so next join creates a fresh session)
   ------------------------------------------------------------ */
   async function handleStopTrivia() {
-    // Card goes to finished → inactive wall
     await supabase
       .from("trivia_cards")
       .update({
@@ -392,7 +522,6 @@ export default function TriviaCard({
       })
       .eq("id", trivia.id);
 
-    // Any waiting/running session for this card is now finished
     await supabase
       .from("trivia_sessions")
       .update({ status: "finished" })
@@ -411,10 +540,7 @@ export default function TriviaCard({
 
   const safePage = Math.min(currentPage, totalPages - 1);
   const startIndex = safePage * PAGE_SIZE;
-  const visibleQuestions = questions.slice(
-    startIndex,
-    startIndex + PAGE_SIZE
-  );
+  const visibleQuestions = questions.slice(startIndex, startIndex + PAGE_SIZE);
 
   const isActiveBorder = cardStatus === "running" || cardCountdownActive;
 
@@ -423,13 +549,17 @@ export default function TriviaCard({
       className={cn(
         "rounded-xl p-5 bg-[#1b2638] shadow-lg",
         "col-span-2 row-span-2 min-h-[420px] w-full",
-        // ✅ THICK green border when running / countdown, thin white otherwise
         isActiveBorder
           ? "border-4 border-lime-400 shadow-[0_0_28px_rgba(190,242,100,0.7)]"
           : "border border-white/10"
       )}
     >
-      <Tabs.Root defaultValue="menu">
+      <Tabs.Root
+        value={activeTab}
+        onValueChange={(val) =>
+          setActiveTab(val as "menu" | "questions" | "leaderboard" | "settings")
+        }
+      >
         <Tabs.List
           className={cn(
             "flex",
@@ -465,35 +595,21 @@ export default function TriviaCard({
 
         {/* ---------------- HOME ---------------- */}
         <Tabs.Content value="menu">
-          <div
-            className={cn(
-              "grid",
-              "grid-cols-3",
-              "gap-2",
-              "mb-4",
-              "items-center"
-            )}
-          >
+          <div className={cn("grid", "grid-cols-3", "gap-2", "mb-4", "items-center")}>
             <div>
               <p className={cn("text-sm", "opacity-70")}>Difficulty</p>
               <p className="font-semibold">{trivia.difficulty}</p>
             </div>
             <div className="text-center">
-              <p className={cn("text-lg", "font-semibold")}>
-                {trivia.public_name}
-              </p>
+              <p className={cn("text-lg", "font-semibold")}>{trivia.public_name}</p>
             </div>
             <div className="text-right">
               <p className={cn("text-sm", "opacity-70")}>Topic</p>
-              <p className="font-semibold">
-                {trivia.topic_prompt || "—"}
-              </p>
+              <p className="font-semibold">{trivia.topic_prompt || "—"}</p>
             </div>
           </div>
 
-          {/* 👉 Controls grid */}
           <div className={cn("grid", "grid-cols-3", "gap-3", "mt-4")}>
-            {/* Row 1 */}
             <button
               onClick={() => onLaunch(trivia.id)}
               className={cn(
@@ -530,14 +646,9 @@ export default function TriviaCard({
               )}
             >
               <p className={cn("text-xs", "opacity-75")}>Participants</p>
-              <p className={cn("text-lg", "font-bold")}>
-                {participantsCount}
-              </p>
+              <p className={cn("text-lg", "font-bold")}>{participantsCount}</p>
             </div>
 
-            {/* Row 2 */}
-
-            {/* Col 1: Play / Stop stack */}
             <div className={cn("flex", "flex-col", "gap-2")}>
               <button
                 onClick={handlePlayTrivia}
@@ -565,7 +676,6 @@ export default function TriviaCard({
               </button>
             </div>
 
-            {/* Col 2: spacer + Delete aligned with Stop */}
             <div className={cn("flex", "flex-col", "gap-2")}>
               <div
                 className={cn(
@@ -592,7 +702,6 @@ export default function TriviaCard({
               </button>
             </div>
 
-            {/* Col 3: Moderate Players */}
             <button
               onClick={() => onOpenModeration?.(trivia)}
               className={cn(
@@ -610,9 +719,7 @@ export default function TriviaCard({
               )}
             >
               <span>Moderate Players</span>
-              <span
-                className={cn("text-[11px]", "opacity-80", "mt-0.5")}
-              >
+              <span className={cn("text-[11px]", "opacity-80", "mt-0.5")}>
                 {`(Waiting ${pendingCount} Players)`}
               </span>
             </button>
@@ -620,11 +727,7 @@ export default function TriviaCard({
         </Tabs.Content>
 
         {/* ---------------- QUESTIONS ---------------- */}
-        <Tabs.Content
-          value="questions"
-          className={cn("mt-4", "space-y-3")}
-        >
-          {/* Top bar inside Questions tab */}
+        <Tabs.Content value="questions" className={cn("mt-4", "space-y-3")}>
           <div className={cn("flex", "items-center", "justify-between")}>
             <div className={cn("text-xs", "opacity-70")}>
               Total questions: {questions.length}
@@ -645,26 +748,15 @@ export default function TriviaCard({
             </button>
           </div>
 
-          {loadingQuestions && (
-            <p className="opacity-70">Loading questions…</p>
-          )}
+          {loadingQuestions && <p className="opacity-70">Loading questions…</p>}
 
           {!loadingQuestions && questions.length === 0 && (
-            <p className={cn("opacity-70", "italic")}>
-              No questions found.
-            </p>
+            <p className={cn("opacity-70", "italic")}>No questions found.</p>
           )}
 
           {!loadingQuestions && questions.length > 0 && (
             <>
-              <div
-                className={cn(
-                  "max-h-80",
-                  "overflow-y-auto",
-                  "space-y-3",
-                  "pr-1"
-                )}
-              >
+              <div className={cn("max-h-80", "overflow-y-auto", "space-y-3", "pr-1")}>
                 {visibleQuestions.map((q) => {
                   const isActive = !!q.is_active;
 
@@ -678,15 +770,7 @@ export default function TriviaCard({
                           : "border-red-500/40 opacity-80"
                       )}
                     >
-                      <div
-                        className={cn(
-                          "flex",
-                          "items-start",
-                          "justify-between",
-                          "gap-2",
-                          "mb-2"
-                        )}
-                      >
+                      <div className={cn("flex", "items-start", "justify-between", "gap-2", "mb-2")}>
                         <div>
                           <p className={cn("font-semibold")}>
                             R{q.round_number}. {q.question_text}
@@ -694,24 +778,17 @@ export default function TriviaCard({
                           <p
                             className={cn(
                               "text-[0.7rem] mt-1",
-                              isActive
-                                ? "text-green-300/80"
-                                : "text-red-300/80"
+                              isActive ? "text-green-300/80" : "text-red-300/80"
                             )}
                           >
-                            {isActive
-                              ? "Included in game"
-                              : "Not in game"}
+                            {isActive ? "Included in game" : "Not in game"}
                           </p>
                         </div>
 
-                        {/* + / - controls */}
                         <div className={cn("flex", "flex-col", "gap-1")}>
                           <button
                             type="button"
-                            onClick={() =>
-                              handleSetQuestionActive(q.id, true)
-                            }
+                            onClick={() => handleSetQuestionActive(q.id, true)}
                             disabled={isActive}
                             className={cn(
                               "w-7 h-7 flex items-center justify-center",
@@ -727,9 +804,7 @@ export default function TriviaCard({
 
                           <button
                             type="button"
-                            onClick={() =>
-                              handleSetQuestionActive(q.id, false)
-                            }
+                            onClick={() => handleSetQuestionActive(q.id, false)}
                             disabled={!isActive}
                             className={cn(
                               "w-7 h-7 flex items-center justify-center",
@@ -745,13 +820,7 @@ export default function TriviaCard({
                         </div>
                       </div>
 
-                      <ul
-                        className={cn(
-                          "grid",
-                          "grid-cols-2",
-                          "gap-2"
-                        )}
-                      >
+                      <ul className={cn("grid", "grid-cols-2", "gap-2")}>
                         {q.options.map((opt: string, i: number) => (
                           <li
                             key={i}
@@ -772,20 +841,10 @@ export default function TriviaCard({
               </div>
 
               {questions.length > PAGE_SIZE && (
-                <div
-                  className={cn(
-                    "flex",
-                    "items-center",
-                    "justify-between",
-                    "mt-2",
-                    "text-xs"
-                  )}
-                >
+                <div className={cn("flex", "items-center", "justify-between", "mt-2", "text-xs")}>
                   <button
                     type="button"
-                    onClick={() =>
-                      setCurrentPage((p) => Math.max(0, p - 1))
-                    }
+                    onClick={() => setCurrentPage((p) => Math.max(0, p - 1))}
                     disabled={safePage === 0}
                     className={cn(
                       "px-2 py-1 rounded-md border border-white/10",
@@ -804,9 +863,7 @@ export default function TriviaCard({
                   <button
                     type="button"
                     onClick={() =>
-                      setCurrentPage((p) =>
-                        Math.min(totalPages - 1, p + 1)
-                      )
+                      setCurrentPage((p) => Math.min(totalPages - 1, p + 1))
                     }
                     disabled={safePage >= totalPages - 1}
                     className={cn(
@@ -825,26 +882,71 @@ export default function TriviaCard({
         </Tabs.Content>
 
         {/* ---------------- LEADERBOARD ---------------- */}
-        <Tabs.Content value="leaderboard" className="mt-4" />
+        <Tabs.Content value="leaderboard" className={cn("mt-4", "space-y-3")}>
+          {leaderboardLoading && (
+            <p className={cn("text-xs", "opacity-70")}>Loading leaderboard…</p>
+          )}
+
+          {!leaderboardLoading && leaderboard.length === 0 && (
+            <p className={cn("text-sm", "opacity-75", "italic")}>
+              No scores yet. Leaderboard will appear once players start answering
+              questions.
+            </p>
+          )}
+
+          {!leaderboardLoading && leaderboard.length > 0 && (
+            <div className="space-y-2">
+              {leaderboard.map((row, idx) => (
+                <div
+                  key={row.playerId}
+                  className={cn(
+                    "flex",
+                    "items-center",
+                    "justify-between",
+                    "rounded-lg",
+                    "bg-gray-900/70",
+                    "border",
+                    "border-white/10",
+                    "px-3",
+                    "py-2"
+                  )}
+                >
+                  <div className={cn("flex", "items-center", "gap-3")}>
+                    <div
+                      className={cn(
+                        "w-8",
+                        "h-8",
+                        "rounded-full",
+                        "bg-blue-500/40",
+                        "flex",
+                        "items-center",
+                        "justify-center",
+                        "font-bold",
+                        "text-xs"
+                      )}
+                    >
+                      {idx + 1}
+                    </div>
+
+                    <div className={cn("text-sm", "font-semibold")}>
+                      {row.label}
+                    </div>
+                  </div>
+
+                  <div className={cn("text-lg", "font-bold")}>
+                    {row.totalPoints}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </Tabs.Content>
 
         {/* ---------------- SETTINGS ---------------- */}
-        <Tabs.Content
-          value="settings"
-          className={cn("mt-4", "space-y-4")}
-        >
-          {/* TIMER LENGTH */}
-          <div
-            className={cn(
-              "flex",
-              "items-center",
-              "justify-between",
-              "gap-4"
-            )}
-          >
+        <Tabs.Content value="settings" className={cn("mt-4", "space-y-4")}>
+          <div className={cn("flex", "items-center", "justify-between", "gap-4")}>
             <div>
-              <p className={cn("text-sm", "font-semibold")}>
-                Question Timer
-              </p>
+              <p className={cn("text-sm", "font-semibold")}>Question Timer</p>
               <p className={cn("text-xs", "opacity-70")}>
                 How long each question stays open before locking.
               </p>
@@ -870,22 +972,12 @@ export default function TriviaCard({
             </select>
           </div>
 
-          {/* GAME FLOW MODE */}
-          <div
-            className={cn(
-              "flex",
-              "items-center",
-              "justify-between",
-              "gap-4"
-            )}
-          >
+          <div className={cn("flex", "items-center", "justify-between", "gap-4")}>
             <div>
-              <p className={cn("text-sm", "font-semibold")}>
-                Game Flow Mode
-              </p>
+              <p className={cn("text-sm", "font-semibold")}>Game Flow Mode</p>
               <p className={cn("text-xs", "opacity-70")}>
-                Auto = questions advance automatically. Manual = host
-                advances with the keyboard (space bar).
+                Auto = questions advance automatically. Manual = host advances
+                with the keyboard (space bar).
               </p>
             </div>
             <select
@@ -908,19 +1000,9 @@ export default function TriviaCard({
             </select>
           </div>
 
-          {/* SCORING MODE */}
-          <div
-            className={cn(
-              "flex",
-              "items-center",
-              "justify-between",
-              "gap-4"
-            )}
-          >
+          <div className={cn("flex", "items-center", "justify-between", "gap-4")}>
             <div>
-              <p className={cn("text-sm", "font-semibold")}>
-                Scoring Mode
-              </p>
+              <p className={cn("text-sm", "font-semibold")}>Scoring Mode</p>
               <p className={cn("text-xs", "opacity-70")}>
                 Choose the point scale per question (faster answers earn more).
               </p>
@@ -942,25 +1024,13 @@ export default function TriviaCard({
             >
               <option value="100s">100s (max 100 pts / Q)</option>
               <option value="1000s">1000s (max 1,000 pts / Q)</option>
-              <option value="10000s">
-                10000s (max 10,000 pts / Q)
-              </option>
+              <option value="10000s">10000s (max 10,000 pts / Q)</option>
             </select>
           </div>
 
-          {/* REQUIRE SELFIE */}
-          <div
-            className={cn(
-              "flex",
-              "items-center",
-              "justify-between",
-              "gap-4"
-            )}
-          >
+          <div className={cn("flex", "items-center", "justify-between", "gap-4")}>
             <div>
-              <p className={cn("text-sm", "font-semibold")}>
-                Require Selfie
-              </p>
+              <p className={cn("text-sm", "font-semibold")}>Require Selfie</p>
               <p className={cn("text-xs", "opacity-70")}>
                 When enabled, players must upload a selfie and go through
                 moderation before appearing on the wall.
@@ -987,88 +1057,10 @@ export default function TriviaCard({
           </div>
 
           {savingSettings && (
-            <p className={cn("text-xs", "opacity-70")}>
-              Saving settings…
-            </p>
+            <p className={cn("text-xs", "opacity-70")}>Saving settings…</p>
           )}
         </Tabs.Content>
       </Tabs.Root>
-    </div>
-  );
-}
-
-/* Keeping this helper in case something else uses it */
-function QuestionsList({ triviaId }: { triviaId: string }) {
-  const [questions, setQuestions] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    async function load() {
-      const { data, error } = await supabase
-        .from("trivia_questions")
-        .select(
-          "id, round_number, question_text, options, correct_index, is_active"
-        )
-        .eq("trivia_card_id", triviaId)
-        .order("round_number", { ascending: true });
-
-      if (error) {
-        console.error("❌ Questions fetch error:", error);
-      } else {
-        setQuestions(data ?? []);
-      }
-
-      setLoading(false);
-    }
-
-    load();
-  }, [triviaId]);
-
-  if (loading) return <p className="opacity-60">Loading questions…</p>;
-
-  if (questions.length === 0) {
-    return (
-      <p className={cn("italic", "opacity-60")}>
-        No questions generated yet.
-      </p>
-    );
-  }
-
-  return (
-    <div className="space-y-4">
-      {questions.map((q, i) => (
-        <div
-          key={q.id}
-          className={cn(
-            "p-4",
-            "rounded-lg",
-            "bg-black/20",
-            "border",
-            "border-white/10"
-          )}
-        >
-          <p className="font-semibold">
-            Q{i + 1} (Round {q.round_number})
-          </p>
-
-          <p className="mt-1">{q.question_text}</p>
-
-          <ul className={cn("mt-2", "space-y-1", "text-sm")}>
-            {q.options.map((opt: string, idx: number) => (
-              <li
-                key={idx}
-                className={
-                  idx === q.correct_index
-                    ? "text-green-400 font-semibold"
-                    : "opacity-80"
-                }
-              >
-                {String.fromCharCode(65 + idx)}. {opt}
-              </li>
-            ))}
-          </ul>
-        </div>
-      ))}
     </div>
   );
 }
