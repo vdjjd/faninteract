@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { getSupabaseClient } from "@/lib/supabaseClient";
 
@@ -49,7 +49,13 @@ export default function TriviaUserInterfacePage() {
 
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [hasAnswered, setHasAnswered] = useState(false);
-  const [timeLeft, setTimeLeft] = useState<number | null>(null);
+
+  // Timer + phases (lockstep with ActiveWall style)
+  const [progress, setProgress] = useState<number>(1); // 1 → 0
+  const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
+  const [locked, setLocked] = useState(false);
+  const [showAnswerOverlay, setShowAnswerOverlay] = useState(false);
+  const [revealAnswer, setRevealAnswer] = useState(false);
 
   /* ---------------------------------------------------------
      Load guest profile
@@ -66,7 +72,7 @@ export default function TriviaUserInterfacePage() {
   }, [router, gameId]);
 
   /* ---------------------------------------------------------
-     Initial load (card + session + player + questions + host logo)
+     Initial load: trivia card, host logo, session, player row, questions
   --------------------------------------------------------- */
   useEffect(() => {
     if (!gameId || !profile?.id) return;
@@ -77,7 +83,7 @@ export default function TriviaUserInterfacePage() {
       setLoading(true);
       setLoadingMessage("Loading trivia game…");
 
-      // 1️⃣ Load trivia card (with host_id)
+      // 1️⃣ Load trivia card (include host_id so we can pull logo)
       const { data: card, error: cardErr } = await supabase
         .from("trivia_cards")
         .select(
@@ -103,30 +109,27 @@ export default function TriviaUserInterfacePage() {
 
       setTrivia(card);
 
-      // 2️⃣ Load host branding logo
+      // 2️⃣ Host logo (branding_logo_url → logo_url → fallback)
+      let logo = "/faninteractlogo.png";
       if (card.host_id) {
-        const { data: host, error: hostErr } = await supabase
+        const { data: hostRow, error: hostErr } = await supabase
           .from("hosts")
           .select("branding_logo_url, logo_url")
           .eq("id", card.host_id)
           .maybeSingle();
 
-        if (!cancelled) {
-          if (!hostErr && host) {
-            setHostLogoUrl(
-              host.branding_logo_url ||
-                host.logo_url ||
-                "/faninteractlogo.png"
-            );
-          } else {
-            setHostLogoUrl("/faninteractlogo.png");
-          }
+        if (!hostErr && hostRow) {
+          logo =
+            hostRow.branding_logo_url?.trim() ||
+            hostRow.logo_url?.trim() ||
+            logo;
         }
-      } else {
-        setHostLogoUrl("/faninteractlogo.png");
+      }
+      if (!cancelled) {
+        setHostLogoUrl(logo);
       }
 
-      // 3️⃣ Get latest session for this card
+      // 3️⃣ Latest session for this card (waiting or running)
       setLoadingMessage("Connecting to game session…");
 
       const { data: sessionRow, error: sessionErr } = await supabase
@@ -135,6 +138,7 @@ export default function TriviaUserInterfacePage() {
           "id,status,current_round,current_question,question_started_at,created_at"
         )
         .eq("trivia_card_id", gameId)
+        .neq("status", "finished")
         .order("created_at", { ascending: false })
         .limit(1)
         .maybeSingle();
@@ -171,7 +175,7 @@ export default function TriviaUserInterfacePage() {
 
       setPlayerId(playerRow.id);
 
-      // 5️⃣ Load active questions for the card
+      // 5️⃣ Load active questions for the card (ordered)
       setLoadingMessage("Loading questions…");
 
       const { data: qs, error: qErr } = await supabase
@@ -205,34 +209,13 @@ export default function TriviaUserInterfacePage() {
   }, [gameId, profile?.id]);
 
   /* ---------------------------------------------------------
-     Realtime: follow trivia_sessions in lockstep with wall
+     Poll trivia_sessions for current_question / status
+     (keep phones in "lock step" with the wall)
   --------------------------------------------------------- */
   useEffect(() => {
-    if (!session?.id) return;
+    if (!gameId || !session?.id) return;
 
-    // Realtime channel for this session
-    const channel = supabase
-      .channel(`trivia-session-${session.id}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "UPDATE",
-          schema: "public",
-          table: "trivia_sessions",
-          filter: `id=eq.${session.id}`,
-        },
-        (payload) => {
-          const newSession = payload.new as TriviaSession;
-          setSession((prev) => ({
-            ...(prev || newSession),
-            ...newSession,
-          }));
-        }
-      )
-      .subscribe();
-
-    // Optional: backup polling every few seconds
-    const poll = async () => {
+    const doPoll = async () => {
       const { data, error } = await supabase
         .from("trivia_sessions")
         .select(
@@ -241,24 +224,28 @@ export default function TriviaUserInterfacePage() {
         .eq("id", session.id)
         .maybeSingle();
 
-      if (!error && data) {
-        setSession((prev) => ({
-          ...(prev || data),
-          ...data,
-        }));
+      if (error || !data) {
+        console.error("❌ trivia_sessions poll error:", error);
+        return;
       }
+
+      setSession((prev) => ({
+        ...(prev || data),
+        ...data,
+      }));
     };
 
-    const intervalId = setInterval(poll, 5000);
+    // Initial poll + every 2s
+    doPoll();
+    const id = window.setInterval(doPoll, 2000);
 
     return () => {
-      supabase.removeChannel(channel);
-      clearInterval(intervalId);
+      window.clearInterval(id);
     };
-  }, [session?.id]);
+  }, [session?.id, gameId]);
 
   /* ---------------------------------------------------------
-     Derived question + timer
+     Derived current question (1-based index)
   --------------------------------------------------------- */
   const timerSeconds: number = trivia?.timer_seconds ?? 30;
   const scoringMode: string = trivia?.scoring_mode ?? "100s";
@@ -273,47 +260,86 @@ export default function TriviaUserInterfacePage() {
 
   const currentQuestion = questions[currentQuestionIndex] || null;
 
+  const isRunning = session?.status === "running";
+
+  /* ---------------------------------------------------------
+     Timer engine (aligned with ActiveWall style)
+     - Restart whenever the current question changes while running
+  --------------------------------------------------------- */
   useEffect(() => {
-    if (!session?.question_started_at || !timerSeconds || !currentQuestion) {
-      setTimeLeft(null);
+    if (!isRunning || !currentQuestion) return;
+
+    // Reset per-question state
+    setSelectedIndex(null);
+    setHasAnswered(false);
+    setLocked(false);
+    setShowAnswerOverlay(false);
+    setRevealAnswer(false);
+
+    const durationMs = (timerSeconds || 30) * 1000;
+    const start = performance.now();
+
+    // Initialize immediately
+    setProgress(1);
+    setSecondsLeft(timerSeconds);
+
+    const id = window.setInterval(() => {
+      const elapsed = performance.now() - start;
+      const remaining = Math.max(0, durationMs - elapsed);
+      const p = remaining / durationMs;
+      setProgress(p);
+
+      const secs = Math.max(0, Math.ceil(remaining / 1000));
+      setSecondsLeft(secs);
+
+      if (remaining <= 0) {
+        setLocked(true);
+        window.clearInterval(id);
+      }
+    }, 50);
+
+    return () => {
+      window.clearInterval(id);
+    };
+  }, [isRunning, currentQuestion?.id, timerSeconds]);
+
+  /* ---------------------------------------------------------
+     Answer reveal flow (overlay → reveal)
+  --------------------------------------------------------- */
+  useEffect(() => {
+    if (!locked) {
+      setShowAnswerOverlay(false);
+      setRevealAnswer(false);
       return;
     }
 
-    // New question started → reset local UI state
-    setSelectedIndex(null);
-    setHasAnswered(false);
+    // Step 1: show overlay "THE ANSWER IS"
+    setShowAnswerOverlay(true);
+    setRevealAnswer(false);
 
-    const startMs = new Date(session.question_started_at).getTime();
+    const overlayId = window.setTimeout(() => {
+      // Step 2: hide overlay, reveal highlights
+      setShowAnswerOverlay(false);
+      setRevealAnswer(true);
+    }, 3000); // 3 seconds on phone
 
-    const compute = () => {
-      const nowMs = Date.now();
-      const elapsed = Math.floor((nowMs - startMs) / 1000);
-      const remaining = timerSeconds - elapsed;
-      setTimeLeft(remaining > 0 ? remaining : 0);
+    return () => {
+      window.clearTimeout(overlayId);
     };
-
-    compute();
-    const id = setInterval(compute, 1000);
-    return () => clearInterval(id);
-  }, [session?.question_started_at, timerSeconds, currentQuestion?.id]);
-
-  const questionLocked = useMemo(
-    () => timeLeft !== null && timeLeft <= 0,
-    [timeLeft]
-  );
+  }, [locked]);
 
   /* ---------------------------------------------------------
-     Answer submission (locks in & highlights)
+     Answer submission
   --------------------------------------------------------- */
   async function handleSelectAnswer(idx: number) {
     if (!currentQuestion) return;
-    if (hasAnswered || questionLocked) return;
+    if (hasAnswered || locked) return;
     if (!playerId) return;
 
     setSelectedIndex(idx);
     setHasAnswered(true);
 
-    // Prevent duplicate answers for this question
+    // Prevent duplicate answers
     const { data: existing, error: existingErr } = await supabase
       .from("trivia_answers")
       .select("id")
@@ -324,7 +350,9 @@ export default function TriviaUserInterfacePage() {
     if (existingErr) {
       console.error("❌ trivia_answers existing check error:", existingErr);
     }
-    if (existing) return;
+    if (existing) {
+      return;
+    }
 
     const maxPoints =
       scoringMode === "1000s"
@@ -334,9 +362,12 @@ export default function TriviaUserInterfacePage() {
         : 100;
 
     const baseSeconds = timerSeconds || 1;
-    const secondsLeft =
-      timeLeft === null ? baseSeconds : Math.max(0, timeLeft);
-    const frac = Math.max(0, Math.min(1, secondsLeft / baseSeconds));
+    const safeSecondsLeft =
+      secondsLeft === null ? baseSeconds : Math.max(0, secondsLeft);
+    const frac = Math.max(
+      0,
+      Math.min(1, safeSecondsLeft / baseSeconds)
+    );
     const points = Math.round(maxPoints * frac);
 
     const isCorrect = idx === currentQuestion.correct_index;
@@ -435,7 +466,7 @@ export default function TriviaUserInterfacePage() {
 
   const baseSeconds = timerSeconds || 1;
   const safeTimeLeft =
-    timeLeft === null ? baseSeconds : Math.max(0, timeLeft);
+    secondsLeft === null ? baseSeconds : Math.max(0, secondsLeft);
   const minutes = Math.floor(safeTimeLeft / 60);
   const seconds = safeTimeLeft % 60;
   const pctWidth = Math.max(
@@ -444,10 +475,12 @@ export default function TriviaUserInterfacePage() {
   );
 
   let footerText = "";
-  if (!session.question_started_at) {
-    footerText = "Host hasn't opened this question yet. Get ready…";
-  } else if (questionLocked) {
-    footerText = "Time is up. Wait for the next question…";
+  if (!isRunning) {
+    footerText = "Game is paused. Waiting for the host…";
+  } else if (locked && !revealAnswer) {
+    footerText = "Time is up. Revealing the correct answer…";
+  } else if (revealAnswer) {
+    footerText = "Here’s the correct answer. Get ready for the next question…";
   } else if (hasAnswered) {
     footerText = "Answer submitted. You can’t change it for this question.";
   } else {
@@ -464,15 +497,15 @@ export default function TriviaUserInterfacePage() {
         padding: 20,
         display: "flex",
         flexDirection: "column",
+        position: "relative",
       }}
     >
-      {/* HEADER ROW (logo + title + question count) */}
+      {/* HEADER ROW (LOGO + TITLE) */}
       <div
         style={{
           display: "flex",
           alignItems: "center",
           marginBottom: 12,
-          gap: 10,
         }}
       >
         <div
@@ -487,6 +520,8 @@ export default function TriviaUserInterfacePage() {
             justifyContent: "center",
             fontSize: "0.7rem",
             fontWeight: 700,
+            marginRight: 10,
+            letterSpacing: 0.5,
             overflow: "hidden",
           }}
         >
@@ -494,7 +529,11 @@ export default function TriviaUserInterfacePage() {
             <img
               src={hostLogoUrl}
               alt="Host Logo"
-              style={{ width: "100%", height: "100%", objectFit: "cover" }}
+              style={{
+                width: "100%",
+                height: "100%",
+                objectFit: "contain",
+              }}
             />
           ) : (
             "LOGO"
@@ -548,7 +587,7 @@ export default function TriviaUserInterfacePage() {
         </div>
       </div>
 
-      {/* GREEN TIMER BAR */}
+      {/* GREEN TIMER BAR (same feel as wall) */}
       <div
         style={{
           marginBottom: 16,
@@ -561,6 +600,7 @@ export default function TriviaUserInterfacePage() {
           height: 26,
         }}
       >
+        {/* label */}
         <div
           style={{
             position: "absolute",
@@ -575,12 +615,16 @@ export default function TriviaUserInterfacePage() {
         >
           {minutes}:{seconds.toString().padStart(2, "0")}
         </div>
+        {/* fill */}
         <div
           style={{
             height: "100%",
             width: `${pctWidth}%`,
-            background: "linear-gradient(90deg,#22c55e,#16a34a,#15803d)",
-            transition: "width 0.25s linear",
+            background:
+              locked || revealAnswer
+                ? "linear-gradient(90deg,#ef4444,#dc2626)"
+                : "linear-gradient(90deg,#22c55e,#16a34a,#15803d)",
+            transition: "width 0.25s linear, background 0.2s ease",
           }}
         />
       </div>
@@ -599,44 +643,44 @@ export default function TriviaUserInterfacePage() {
       >
         {currentQuestion.options.map((opt: string, idx: number) => {
           const chosen = selectedIndex === idx;
-          const disabled = hasAnswered || questionLocked;
-          const isCorrect = idx === currentQuestion.correct_index;
+          const isCorrect =
+            typeof currentQuestion.correct_index === "number" &&
+            idx === currentQuestion.correct_index;
+
+          const disabled = hasAnswered || locked;
 
           let bg = "rgba(15,23,42,0.85)";
           let border = "1px solid rgba(148,163,184,0.4)";
           let opacity = 1;
-          let textColor = "#fff";
+          let boxShadow = "none";
 
-          if (!questionLocked) {
-            // Question still open
-            if (chosen) {
-              bg = "linear-gradient(90deg,#22c55e,#0ea5e9)";
-              border = "1px solid rgba(240,253,250,0.9)";
-            } else if (disabled) {
-              opacity = 0.6;
-            }
-          } else {
-            // Question locked → reveal correctness
-            if (isCorrect) {
-              bg = "linear-gradient(90deg,#22c55e,#15803d)";
-              border = "1px solid rgba(34,197,94,0.9)";
-            } else if (chosen && !isCorrect) {
-              bg = "linear-gradient(90deg,#ef4444,#b91c1c)";
-              border = "1px solid rgba(248,113,113,0.9)";
-            } else {
-              opacity = 0.5;
-              bg = "rgba(15,23,42,0.85)";
-            }
+          // While question is open: chosen answer is highlighted, but not red/green yet
+          if (!revealAnswer && chosen) {
+            bg = "linear-gradient(90deg,#22c55e,#15803d)";
+            border = "1px solid rgba(240,253,250,0.9)";
+            boxShadow = "0 0 12px rgba(74,222,128,0.6)";
           }
 
-          const scale =
-            chosen && !questionLocked
-              ? "scale(1.02)"
-              : "scale(1.0)";
-          const boxShadow =
-            chosen && !questionLocked
-              ? "0 0 12px rgba(56,189,248,0.7)"
-              : "none";
+          // After reveal: show correct / incorrect colors
+          if (revealAnswer) {
+            if (isCorrect) {
+              // Correct answer glow (even if user didn't pick it)
+              bg = "linear-gradient(90deg,#22c55e,#16a34a)";
+              border = "2px solid rgba(74,222,128,1)";
+              boxShadow = "0 0 20px rgba(74,222,128,0.9)";
+            } else if (chosen && !isCorrect) {
+              // User picked this but it's wrong
+              bg = "linear-gradient(90deg,#ef4444,#b91c1c)";
+              border = "2px solid rgba(248,113,113,1)";
+              boxShadow = "0 0 16px rgba(248,113,113,0.9)";
+            } else {
+              // Not chosen & not correct: dim it
+              opacity = 0.4;
+            }
+          } else if (disabled && !chosen) {
+            // Timer expired but reveal not done yet: dim unchosen ones a bit
+            opacity = 0.7;
+          }
 
           return (
             <button
@@ -650,7 +694,7 @@ export default function TriviaUserInterfacePage() {
                 background: bg,
                 border,
                 opacity,
-                color: textColor,
+                color: "#fff",
                 textAlign: "left",
                 display: "flex",
                 alignItems: "center",
@@ -658,10 +702,9 @@ export default function TriviaUserInterfacePage() {
                 fontSize: "0.95rem",
                 fontWeight: chosen ? 700 : 500,
                 minHeight: 72,
-                transform: scale,
                 boxShadow,
                 transition:
-                  "transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease, background 0.15s ease, border 0.15s ease",
+                  "opacity 0.25s ease, border 0.25s ease, background 0.25s ease, box-shadow 0.3s ease",
               }}
             >
               <span
@@ -678,7 +721,6 @@ export default function TriviaUserInterfacePage() {
                     ? "rgba(15,23,42,0.2)"
                     : "rgba(15,23,42,0.7)",
                   flexShrink: 0,
-                  marginTop: 0,
                 }}
               >
                 {String.fromCharCode(65 + idx)}
@@ -698,7 +740,7 @@ export default function TriviaUserInterfacePage() {
         })}
       </div>
 
-      {/* AD SLOT PLACEHOLDER (you can replace this later with live ads) */}
+      {/* AD SLOT PLACEHOLDER (you can wire this later) */}
       <div
         style={{
           marginBottom: 10,
@@ -728,6 +770,50 @@ export default function TriviaUserInterfacePage() {
       >
         {footerText}
       </div>
+
+      {/* THE ANSWER IS OVERLAY */}
+      {showAnswerOverlay && (
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            background: "rgba(0,0,0,0.75)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 50,
+          }}
+        >
+          <div
+            style={{
+              textAlign: "center",
+              textTransform: "uppercase",
+              letterSpacing: "0.08em",
+            }}
+          >
+            <div
+              style={{
+                fontFamily:
+                  "'SF Pro Display', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+                fontSize: "2rem",
+                fontWeight: 900,
+                marginBottom: "0.5rem",
+                color: "#e5f1ff",
+                textShadow:
+                  "0 0 2px #000000, 0 0 6px #000000, 0 0 18px rgba(15,23,42,0.9), 0 0 36px rgba(15,23,42,0.9), 0 0 72px rgba(59,130,246,0.9)",
+                padding: "0.4em 1.2em",
+                borderRadius: 18,
+                background:
+                  "radial-gradient(circle at 50% 50%, rgba(59,130,246,0.65), rgba(15,23,42,0.0))",
+                boxShadow:
+                  "0 0 30px rgba(59,130,246,0.9), 0 0 70px rgba(59,130,246,0.85)",
+              }}
+            >
+              THE ANSWER IS…
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
