@@ -272,6 +272,7 @@ export default function TriviaCard({
 
   /* ------------------------------------------------------------
      LEADERBOARD LOADER (shared by realtime + fallback poll)
+     ✅ FIX: no guest_profiles query; use trivia_players.display_name instead
  ------------------------------------------------------------ */
   async function loadLeaderboard(cancelledRef?: { current: boolean }) {
     if (!trivia?.id) return;
@@ -300,10 +301,10 @@ export default function TriviaCard({
         return;
       }
 
-      // 2) Players in that session (include guest_id)
+      // 2) Players in that session (✅ use display_name; avoid guest_profiles entirely)
       const { data: players, error: playersErr } = await supabase
         .from("trivia_players")
-        .select("id,status,guest_id")
+        .select("id,status,display_name,photo_url")
         .eq("session_id", session.id);
 
       if (playersErr || !players) {
@@ -330,7 +331,6 @@ export default function TriviaCard({
       }
 
       const playerIds = approved.map((p) => p.id);
-      const guestIds = approved.map((p) => p.guest_id).filter(Boolean);
 
       // 3) Answers → totals
       const { data: answers, error: answersErr } = await supabase
@@ -349,33 +349,10 @@ export default function TriviaCard({
         totals.set(a.player_id, (totals.get(a.player_id) || 0) + pts);
       }
 
-      // 4) Guest names map guest_id → "First L."
-      const guestNameMap = new Map<string, string>();
-
-      if (guestIds.length > 0) {
-        const { data: guests, error: guestsErr } = await supabase
-          .from("guest_profiles")
-          .select("id,first_name,last_name")
-          .in("id", guestIds);
-
-        if (guestsErr) {
-          console.warn("⚠️ guest_profiles fetch error:", guestsErr);
-        } else {
-          for (const g of guests || []) {
-            const first = (g.first_name || "").trim();
-            const last = (g.last_name || "").trim();
-            const lastInitial = last ? `${last[0].toUpperCase()}.` : "";
-            const label = `${first}${lastInitial ? " " + lastInitial : ""}`.trim();
-            if (g.id && label) guestNameMap.set(g.id, label);
-          }
-        }
-      }
-
-      // 5) Build rows
+      // 4) Build rows (✅ label from player.display_name)
       const rows: LeaderRow[] = approved.map((p, index) => ({
         playerId: p.id,
-        label:
-          (p.guest_id && guestNameMap.get(p.guest_id)) || `Player ${index + 1}`,
+        label: (p.display_name || "").trim() || `Player ${index + 1}`,
         totalPoints: totals.get(p.id) || 0,
       }));
 
@@ -478,9 +455,7 @@ export default function TriviaCard({
         },
         (payload: any) => {
           const qid =
-            payload?.new?.question_id ??
-            payload?.old?.question_id ??
-            null;
+            payload?.new?.question_id ?? payload?.old?.question_id ?? null;
 
           if (!qid) return;
 
@@ -863,7 +838,6 @@ export default function TriviaCard({
 
         {/* ---------------- QUESTIONS ---------------- */}
         <Tabs.Content value="questions" className={cn("mt-4", "space-y-3")}>
-          {/* unchanged */}
           <div className={cn("flex", "items-center", "justify-between")}>
             <div className={cn("text-xs", "opacity-70")}>
               Total questions: {questions.length}
@@ -1098,7 +1072,6 @@ export default function TriviaCard({
 
         {/* ---------------- SETTINGS ---------------- */}
         <Tabs.Content value="settings" className={cn("mt-4", "space-y-4")}>
-          {/* unchanged */}
           <div
             className={cn("flex", "items-center", "justify-between", "gap-4")}
           >
