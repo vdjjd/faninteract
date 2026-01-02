@@ -35,25 +35,12 @@ export default function GuestSignupPage() {
   const rawType = params.get("type");
   let pollId = params.get("poll");
 
-  // Handles malformed QR: ?type=poll=UUID
   if (!pollId && rawType?.startsWith("poll=")) {
     pollId = rawType.split("=")[1];
   }
 
   /* ------------------------------------------------- */
-  // ✅ DEFAULT HOST SETTINGS SO WE ALWAYS RENDER A FORM
-  const [hostSettings, setHostSettings] = useState<any>({
-    id: null,
-    require_last_name: true,
-    require_email: true,
-    require_phone: true,
-    require_street: true,
-    require_city: true,
-    require_state: true,
-    require_zip: true,
-    require_age: true,
-  });
-
+  const [hostSettings, setHostSettings] = useState<any>({});
   const [wall, setWall] = useState<any>(null);
 
   const [hostTerms, setHostTerms] = useState("");
@@ -74,7 +61,6 @@ export default function GuestSignupPage() {
 
   const [agree, setAgree] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-
   const [hostLoaded, setHostLoaded] = useState(false);
 
   /* ------------------------------------------------- */
@@ -103,11 +89,7 @@ export default function GuestSignupPage() {
         return;
       }
 
-      // Merge into defaults
-      setHostSettings((prev: any) => ({
-        ...prev,
-        ...host,
-      }));
+      setHostSettings(host);
 
       if (host.host_terms_markdown) setHostTerms(host.host_terms_markdown);
 
@@ -128,7 +110,6 @@ export default function GuestSignupPage() {
 
     async function loadContext() {
       try {
-        // Any one of these that has a host_id will hydrate hostSettings
         if (wallId) {
           const { data, error } = await supabase
             .from("fan_walls")
@@ -204,7 +185,7 @@ export default function GuestSignupPage() {
           }
         }
 
-        // If we got here, nothing provided a host → just mark as loaded
+        // nothing gave us a host
         setHostLoaded(true);
       } catch (err) {
         console.error("loadContext error:", err);
@@ -220,12 +201,14 @@ export default function GuestSignupPage() {
   ------------------------------------------------- */
   useEffect(() => {
     async function validateGuest() {
-      const deviceId = typeof window !== "undefined"
-        ? localStorage.getItem("guest_device_id")
-        : null;
-      const cached = typeof window !== "undefined"
-        ? localStorage.getItem("guest_profile")
-        : null;
+      const deviceId =
+        typeof window !== "undefined"
+          ? localStorage.getItem("guest_device_id")
+          : null;
+      const cached =
+        typeof window !== "undefined"
+          ? localStorage.getItem("guest_profile")
+          : null;
 
       if (!deviceId || !cached) return;
 
@@ -245,13 +228,12 @@ export default function GuestSignupPage() {
         return;
       }
 
-      // If coming from a page that gave us a redirect, go there first
       if (redirect) return router.push(redirect);
       if (wallId) return router.push(`/wall/${wallId}/submit`);
       if (wheelId) return router.push(`/prizewheel/${wheelId}/submit`);
       if (pollId) return router.push(`/polls/${pollId}/vote`);
-      if (basketballId) return router.push(`/basketball/${basketballId}/submit`);
-      // Fallback: trivia QR with no redirect → go to join
+      if (basketballId)
+        return router.push(`/basketball/${basketballId}/submit`);
       if (triviaId) return router.push(`/trivia/${triviaId}/join`);
     }
 
@@ -269,22 +251,29 @@ export default function GuestSignupPage() {
 
     try {
       const targetId =
-        wallId || wheelId || pollId || basketballId ||
+        wallId ||
+        wheelId ||
+        pollId ||
+        basketballId ||
         redirect?.match(/([0-9a-fA-F-]{36})/)?.[0];
 
       const type =
-        wallId ? "wall" :
-        wheelId ? "prizewheel" :
-        pollId ? "poll" :
-        basketballId ? "basketball" :
-        "";
+        wallId
+          ? "wall"
+          : wheelId
+          ? "prizewheel"
+          : pollId
+          ? "poll"
+          : basketballId
+          ? "basketball"
+          : "";
 
       const payload = {
         ...form,
         age: form.date_of_birth
           ? Math.floor(
               (Date.now() - new Date(form.date_of_birth).getTime()) /
-              (1000 * 60 * 60 * 24 * 365.25)
+                (1000 * 60 * 60 * 24 * 365.25)
             )
           : null,
       };
@@ -300,7 +289,6 @@ export default function GuestSignupPage() {
         localStorage.setItem("guest_profile", JSON.stringify(profile));
       }
 
-      // Redirect priority:
       if (redirect) router.push(redirect);
       else if (wallId) router.push(`/wall/${wallId}/submit`);
       else if (wheelId) router.push(`/prizewheel/${wheelId}/submit`);
@@ -317,19 +305,19 @@ export default function GuestSignupPage() {
   }
 
   /* -------------------------------------------------
-     FIELD FLAGS (default ON if null/undefined)
+     FIELD FLAGS — ONLY TRUE WHEN HOST SETS TRUE
   ------------------------------------------------- */
-  const requireLastName = hostSettings?.require_last_name ?? true;
-  const requireEmail    = hostSettings?.require_email ?? true;
-  const requirePhone    = hostSettings?.require_phone ?? true;
-  const requireStreet   = hostSettings?.require_street ?? true;
-  const requireCity     = hostSettings?.require_city ?? true;
-  const requireState    = hostSettings?.require_state ?? true;
-  const requireZip      = hostSettings?.require_zip ?? true;
-  const requireAge      = hostSettings?.require_age ?? true;
+  const requireLastName = hostSettings?.require_last_name === true;
+  const requireEmail    = hostSettings?.require_email === true;
+  const requirePhone    = hostSettings?.require_phone === true;
+  const requireStreet   = hostSettings?.require_street === true;
+  const requireCity     = hostSettings?.require_city === true;
+  const requireState    = hostSettings?.require_state === true;
+  const requireZip      = hostSettings?.require_zip === true;
+  const requireAge      = hostSettings?.require_age === true;
 
   /* -------------------------------------------------
-     While host is loading, at least show a dark bg
+     While host is loading, show dark loading screen
   ------------------------------------------------- */
   if (!hostLoaded) {
     return (
@@ -385,7 +373,7 @@ export default function GuestSignupPage() {
         </motion.h2>
 
         <form onSubmit={handleSubmit} className="space-y-3">
-          {/* REQUIRED FIELDS */}
+          {/* ALWAYS required */}
           <input
             required
             placeholder="First Name *"
@@ -434,7 +422,6 @@ export default function GuestSignupPage() {
             />
           )}
 
-          {/* ADDRESS */}
           {requireStreet && (
             <input
               required
@@ -489,7 +476,6 @@ export default function GuestSignupPage() {
             />
           )}
 
-          {/* DOB → AGE */}
           {requireAge && (
             <div className="relative">
               <input
