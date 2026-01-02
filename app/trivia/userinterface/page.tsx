@@ -329,8 +329,6 @@ export default function TriviaUserInterfacePage() {
 
   /* ---------------------------------------------------------
      TIMER: single source of truth = questionStartedAt
-     We just run a local setInterval (100ms) and compute progress.
-     No separate engine. Same concept as the wall.
   --------------------------------------------------------- */
   useEffect(() => {
     // clear any existing interval
@@ -574,7 +572,7 @@ export default function TriviaUserInterfacePage() {
       cancelled = true;
       window.clearInterval(id);
     };
-  }, [session?.id, view]);
+  }, [session?.id, view, leaderRows.length]);
 
   /* ---------------------------------------------------------
      Answer submission (⏱ uses computeTriviaPoints directly)
@@ -1006,22 +1004,67 @@ export default function TriviaUserInterfacePage() {
                       : "none",
                   }}
                 >
+                  {/* Circle with selfie instead of rank text */}
                   <span
                     style={{
+                      position: "relative",
                       width: 60,
                       height: 60,
                       borderRadius: "999px",
-                      border: "1px solid rgba(226,232,240,0.8)",
+                      border: row?.selfieUrl
+                        ? "1px solid rgba(226,232,240,0.8)"
+                        : "1px dashed rgba(226,232,240,0.8)",
+                      overflow: "hidden",
+                      background: "rgba(15,23,42,0.7)",
+                      flexShrink: 0,
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "center",
-                      fontSize: "1.4rem",
-                      background: "rgba(15,23,42,0.7)",
-                      flexShrink: 0,
                     }}
                   >
-                    {label}
+                    {row?.selfieUrl ? (
+                      <img
+                        src={row.selfieUrl}
+                        alt={row.name}
+                        style={{
+                          width: "100%",
+                          height: "100%",
+                          objectFit: "cover",
+                          display: "block",
+                        }}
+                      />
+                    ) : (
+                      <span
+                        style={{
+                          fontSize: "1.4rem",
+                          fontWeight: 900,
+                          opacity: 0.9,
+                        }}
+                      >
+                        {row?.name?.[0]?.toUpperCase() || "?"}
+                      </span>
+                    )}
+
+                    {/* Rank badge outside the circle edge */}
+                    {row && (
+                      <span
+                        style={{
+                          position: "absolute",
+                          bottom: -4,
+                          right: -4,
+                          padding: "2px 8px",
+                          borderRadius: 999,
+                          background: "rgba(15,23,42,0.95)",
+                          border: "1px solid rgba(226,232,240,0.9)",
+                          fontSize: "0.7rem",
+                          fontWeight: 800,
+                        }}
+                      >
+                        {label}
+                      </span>
+                    )}
                   </span>
+
                   <span
                     style={{
                       flex: 1,
