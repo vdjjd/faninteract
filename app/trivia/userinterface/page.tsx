@@ -3,9 +3,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { getSupabaseClient } from "@/lib/supabaseClient";
-
-// 🔧 engine imports
-import { TriviaTimerEngine } from "@/lib/trivia/triviaTimerEngine";
 import { computeTriviaPoints } from "@/lib/trivia/triviaScoringEngine";
 
 const supabase = getSupabaseClient();
@@ -95,25 +92,25 @@ export default function TriviaUserInterfacePage() {
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [hasAnswered, setHasAnswered] = useState(false);
 
-  // Timer + phases (lockstep with ActiveWall style)
+  // Timer + phases (lockstep with wall)
   const [progress, setProgress] = useState<number>(1); // 1 → 0
   const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
   const [locked, setLocked] = useState(false);
   const [showAnswerOverlay, setShowAnswerOverlay] = useState(false);
   const [revealAnswer, setRevealAnswer] = useState(false);
 
-  // View: question vs leaderboard (must mirror wall timing)
+  // View: question vs leaderboard
   const [view, setView] = useState<UIView>("question");
   const [leaderRows, setLeaderRows] = useState<LeaderRow[]>([]);
   const [leaderLoading, setLeaderLoading] = useState(false);
 
-  // DB-anchored start time (mirror wall)
+  // DB-anchored start time (same concept as wall)
   const [questionStartedAt, setQuestionStartedAt] = useState<string | null>(
     null
   );
 
-  // 🎯 Timer engine ref
-  const timerEngineRef = useRef<TriviaTimerEngine | null>(null);
+  // interval id for timer
+  const timerIntervalRef = useRef<number | null>(null);
 
   /* ---------------------------------------------------------
      Load guest profile
@@ -313,32 +310,14 @@ export default function TriviaUserInterfacePage() {
   const isRunning = session?.status === "running";
 
   /* ---------------------------------------------------------
-     When question changes → reset view & leaderboard state
+     When question changes → reset state + go back to question view
   --------------------------------------------------------- */
   useEffect(() => {
     if (!currentQuestion?.id) return;
     setView("question");
     setLeaderRows([]);
     setLeaderLoading(false);
-  }, [currentQuestion?.id]);
 
-  /* ---------------------------------------------------------
-     DB-synced timer engine using TriviaTimerEngine
-     - EXACT SAME STYLE AS WALL:
-       • uses questionStartedAt (one source of truth)
-       • only runs on view === 'question'
-  --------------------------------------------------------- */
-  useEffect(() => {
-    // stop engine when not running / no question / not on question view
-    if (!isRunning || !currentQuestion || view !== "question") {
-      if (timerEngineRef.current) {
-        timerEngineRef.current.stop();
-        timerEngineRef.current = null;
-      }
-      return;
-    }
-
-    // Reset per-question UI state
     setSelectedIndex(null);
     setHasAnswered(false);
     setLocked(false);
@@ -346,17 +325,40 @@ export default function TriviaUserInterfacePage() {
     setRevealAnswer(false);
     setProgress(1);
     setSecondsLeft(timerSeconds);
+  }, [currentQuestion?.id, timerSeconds]);
+
+  /* ---------------------------------------------------------
+     TIMER: single source of truth = questionStartedAt
+     We just run a local setInterval (100ms) and compute progress.
+     No separate engine. Same concept as the wall.
+  --------------------------------------------------------- */
+  useEffect(() => {
+    // clear any existing interval
+    if (timerIntervalRef.current !== null) {
+      window.clearInterval(timerIntervalRef.current);
+      timerIntervalRef.current = null;
+    }
+
+    // Only run timer when:
+    // - game is running
+    // - we have a current question
+    // - we have a non-null questionStartedAt
+    // - we're on the question view (not leaderboard)
+    if (
+      !isRunning ||
+      !currentQuestion ||
+      !questionStartedAt ||
+      view !== "question"
+    ) {
+      setProgress(1);
+      setSecondsLeft(timerSeconds);
+      return;
+    }
 
     const durationMs = (timerSeconds || 30) * 1000;
-    const maxPoints =
-      scoringMode === "1000s" ? 1000 : scoringMode === "10000s" ? 10000 : 100;
+    const startedMs = new Date(questionStartedAt).getTime();
 
     const updateFromDbTime = () => {
-      const startedAtIso = questionStartedAt;
-      const startedMs = startedAtIso
-        ? new Date(startedAtIso).getTime()
-        : Date.now();
-
       const now = Date.now();
       const elapsed = now - startedMs;
       const remaining = Math.max(0, durationMs - elapsed);
@@ -371,46 +373,24 @@ export default function TriviaUserInterfacePage() {
       }
     };
 
-    // Run immediately
+    // run once immediately
     updateFromDbTime();
 
-    // Stop any previous engine
-    if (timerEngineRef.current) {
-      timerEngineRef.current.stop();
-      timerEngineRef.current = null;
-    }
-
-    const engine = new TriviaTimerEngine(
-      {
-        durationMs,
-        maxPoints, // fed from scoringMode so config is consistent
-      },
-      {
-        onTick: () => {
-          // We ignore engine's own internal clock and
-          // keep everything anchored to questionStartedAt
-          updateFromDbTime();
-        },
-        onComplete: () => {
-          updateFromDbTime();
-          setLocked(true);
-        },
-      }
-    );
-
-    timerEngineRef.current = engine;
-    engine.start();
+    // tick every 100ms
+    const intervalId = window.setInterval(updateFromDbTime, 100);
+    timerIntervalRef.current = intervalId;
 
     return () => {
-      engine.stop();
-      timerEngineRef.current = null;
+      if (timerIntervalRef.current !== null) {
+        window.clearInterval(timerIntervalRef.current);
+        timerIntervalRef.current = null;
+      }
     };
   }, [
     isRunning,
     currentQuestion?.id,
-    timerSeconds,
-    scoringMode,
     questionStartedAt,
+    timerSeconds,
     view,
   ]);
 
@@ -453,7 +433,7 @@ export default function TriviaUserInterfacePage() {
 
   /* ---------------------------------------------------------
      Answer reveal flow (overlay → reveal)
-     (must match wall: 5s overlay, then reveal)
+     (must match wall: 5s overlay)
   --------------------------------------------------------- */
   useEffect(() => {
     if (!locked) {
