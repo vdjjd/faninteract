@@ -72,6 +72,19 @@ const UI = {
   avatar: 64,
 };
 
+/**
+ * 🔧 SAFE HORIZONTAL BOUNDS FOR LEADERBOARD ROWS
+ * - left: must clear the QR zone (bottom-left)
+ * - right: must clear the logo zone (top-right)
+ *
+ * Tweak these two values on localhost to line up perfectly
+ * with your QR + logo overlays on the main wall.
+ */
+const SAFE_BOUNDS = {
+  left: "18vw",  // move this right if QR still overlaps
+  right: "18vw", // move this left if logo still overlaps
+};
+
 export default function TriviaLeaderboardPage() {
   const params = useParams<{ triviaId: string }>();
   const triviaId = params?.triviaId;
@@ -146,7 +159,10 @@ export default function TriviaLeaderboardPage() {
         totals.set(a.player_id, (totals.get(a.player_id) || 0) + pts);
       }
 
-      const guestMap = new Map<string, { name: string; selfieUrl: string | null }>();
+      const guestMap = new Map<
+        string,
+        { name: string; selfieUrl: string | null }
+      >();
 
       if (guestIds.length > 0) {
         const { data: guests, error: guestsErr } = await supabase
@@ -238,9 +254,6 @@ export default function TriviaLeaderboardPage() {
 
       // last question?
       if (total != null && session.current_question >= total) {
-        // optional: mark session finished here if you want
-        // await supabase.from("trivia_sessions").update({ status: "finished" }).eq("id", session.id);
-
         router.replace(`/trivia/${triviaId}/podium`);
         return;
       }
@@ -274,6 +287,7 @@ export default function TriviaLeaderboardPage() {
         justifyContent: "center",
       }}
     >
+      {/* TITLE */}
       <div
         style={{
           position: "absolute",
@@ -289,12 +303,15 @@ export default function TriviaLeaderboardPage() {
         Leaderboard
       </div>
 
+      {/* LIST CONTAINER */}
       <div
         style={{
           position: "absolute",
           top: UI.listTop,
-          width: "92vw",
+          left: SAFE_BOUNDS.left,   // 🔧 start to the right of QR
+          right: SAFE_BOUNDS.right, // 🔧 end to the left of logo
           maxWidth: UI.maxWidth,
+          margin: "0 auto",
         }}
       >
         {loading && (
@@ -310,7 +327,13 @@ export default function TriviaLeaderboardPage() {
         )}
 
         {!loading && rows.length > 0 && (
-          <div style={{ display: "flex", flexDirection: "column", gap: UI.rowGap }}>
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: UI.rowGap,
+            }}
+          >
             {rows.slice(0, 10).map((r) => {
               const isTop3 = r.rank <= 3;
 
@@ -328,10 +351,19 @@ export default function TriviaLeaderboardPage() {
                     border: isTop3
                       ? "2px solid rgba(190,242,100,0.55)"
                       : "1px solid rgba(255,255,255,0.15)",
-                    boxShadow: isTop3 ? "0 0 28px rgba(190,242,100,0.22)" : "none",
+                    boxShadow: isTop3
+                      ? "0 0 28px rgba(190,242,100,0.22)"
+                      : "none",
                   }}
                 >
-                  <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 18,
+                    }}
+                  >
+                    {/* Avatar */}
                     <div
                       style={{
                         width: UI.avatar,
@@ -352,10 +384,20 @@ export default function TriviaLeaderboardPage() {
                         <img
                           src={r.selfieUrl}
                           alt={r.name}
-                          style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                          style={{
+                            width: "100%",
+                            height: "100%",
+                            objectFit: "cover",
+                          }}
                         />
                       ) : (
-                        <div style={{ fontWeight: 900, fontSize: "1.25rem", opacity: 0.9 }}>
+                        <div
+                          style={{
+                            fontWeight: 900,
+                            fontSize: "1.25rem",
+                            opacity: 0.9,
+                          }}
+                        >
                           {r.rank}
                         </div>
                       )}
@@ -370,7 +412,8 @@ export default function TriviaLeaderboardPage() {
                             height: 30,
                             borderRadius: "50%",
                             background: "rgba(0,0,0,0.75)",
-                            border: "1px solid rgba(255,255,255,0.25)",
+                            border:
+                              "1px solid rgba(255,255,255,0.25)",
                             display: "flex",
                             alignItems: "center",
                             justifyContent: "center",
@@ -382,6 +425,7 @@ export default function TriviaLeaderboardPage() {
                       )}
                     </div>
 
+                    {/* Name */}
                     <div
                       style={{
                         fontSize: "clamp(1.3rem,2.2vw,2.4rem)",
@@ -396,7 +440,13 @@ export default function TriviaLeaderboardPage() {
                     </div>
                   </div>
 
-                  <div style={{ fontSize: "clamp(1.6rem,2.6vw,3rem)", fontWeight: 900 }}>
+                  {/* Points */}
+                  <div
+                    style={{
+                      fontSize: "clamp(1.6rem,2.6vw,3rem)",
+                      fontWeight: 900,
+                    }}
+                  >
                     {r.points}
                   </div>
                 </div>
