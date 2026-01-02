@@ -3,6 +3,9 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { getSupabaseClient } from "@/lib/supabaseClient";
+
+// 🔧 engine imports
+import { TriviaTimerEngine } from "@/lib/trivia/triviaTimerEngine";
 import { computeTriviaPoints } from "@/lib/trivia/triviaScoringEngine";
 
 const supabase = getSupabaseClient();
@@ -29,10 +32,46 @@ interface TriviaSession {
   question_started_at: string | null;
 }
 
-/* ---------------------------------------------------------
-   TIMER CONFIG – MATCH ACTIVE WALL
---------------------------------------------------------- */
-const ANSWER_OVERLAY_MS = 5000; // 5s “THE ANSWER IS…” overlay
+type UIView = "question" | "leaderboard";
+
+type LeaderRow = {
+  rank: number;
+  name: string;
+  points: number;
+  selfieUrl?: string | null;
+};
+
+function formatName(first?: string, last?: string) {
+  const f = (first || "").trim();
+  const l = (last || "").trim();
+  const li = l ? `${l[0].toUpperCase()}.` : "";
+  return `${f}${li ? " " + li : ""}`.trim() || "Player";
+}
+
+function formatDisplayName(display?: string) {
+  const raw = (display || "").trim().replace(/\s+/g, " ");
+  if (!raw) return "Player";
+
+  const parts = raw.split(" ").filter(Boolean);
+  const first = parts[0] || "";
+  const last = parts.length > 1 ? parts[parts.length - 1] : "";
+  const li = last ? `${last[0].toUpperCase()}.` : "";
+
+  return `${first}${li ? " " + li : ""}`.trim() || "Player";
+}
+
+function pickSelfieUrl(guest: any): string | null {
+  return (
+    guest?.selfie_url ||
+    guest?.photo_url ||
+    guest?.avatar_url ||
+    guest?.image_url ||
+    guest?.selfie ||
+    guest?.photo ||
+    guest?.profile_photo_url ||
+    null
+  );
+}
 
 /* ---------------------------------------------------------
    Component
@@ -56,14 +95,20 @@ export default function TriviaUserInterfacePage() {
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [hasAnswered, setHasAnswered] = useState(false);
 
-  // Timer + phases (lockstep with ActiveWall)
+  // Timer + phases (lockstep with ActiveWall style)
   const [progress, setProgress] = useState<number>(1); // 1 → 0
+  const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
   const [locked, setLocked] = useState(false);
   const [showAnswerOverlay, setShowAnswerOverlay] = useState(false);
   const [revealAnswer, setRevealAnswer] = useState(false);
 
-  // just for debugging if you want later
-  const intervalRef = useRef<number | null>(null);
+  // View: question vs leaderboard (must mirror wall timing)
+  const [view, setView] = useState<UIView>("question");
+  const [leaderRows, setLeaderRows] = useState<LeaderRow[]>([]);
+  const [leaderLoading, setLeaderLoading] = useState(false);
+
+  // 🎯 Timer engine ref
+  const timerEngineRef = useRef<TriviaTimerEngine | null>(null);
 
   /* ---------------------------------------------------------
      Load guest profile
@@ -260,90 +305,103 @@ export default function TriviaUserInterfacePage() {
   const isRunning = session?.status === "running";
 
   /* ---------------------------------------------------------
-     TIMER – match Wall logic:
-     - progress = remaining / duration
-     - locked when remaining <= 0
+     When question changes → reset view & leaderboard state
   --------------------------------------------------------- */
   useEffect(() => {
-    // stop timer when no running session or no question
+    if (!currentQuestion?.id) return;
+    setView("question");
+    setLeaderRows([]);
+    setLeaderLoading(false);
+  }, [currentQuestion?.id]);
+
+  /* ---------------------------------------------------------
+     DB-synced timer engine using TriviaTimerEngine
+     - Engine just gives us animation ticks; we anchor time to question_started_at
+  --------------------------------------------------------- */
+  useEffect(() => {
+    // if no running session or no question, stop engine
     if (!isRunning || !currentQuestion) {
-      if (intervalRef.current !== null) {
-        window.clearInterval(intervalRef.current);
-        intervalRef.current = null;
+      if (timerEngineRef.current) {
+        timerEngineRef.current.stop();
+        timerEngineRef.current = null;
       }
-      setProgress(1);
-      setLocked(false);
-      setShowAnswerOverlay(false);
-      setRevealAnswer(false);
       return;
     }
 
-    // reset per-question UI
+    // Reset per-question UI state
     setSelectedIndex(null);
     setHasAnswered(false);
     setLocked(false);
     setShowAnswerOverlay(false);
     setRevealAnswer(false);
+    setProgress(1);
+    setSecondsLeft(timerSeconds);
 
     const durationMs = (timerSeconds || 30) * 1000;
-    const startedMs = session?.question_started_at
-      ? new Date(session.question_started_at).getTime()
-      : Date.now();
+    const maxPoints =
+      scoringMode === "1000s" ? 1000 : scoringMode === "10000s" ? 10000 : 100;
 
-    const tick = () => {
+    const updateFromDbTime = () => {
+      const startedAtIso = session?.question_started_at;
+      const startedMs = startedAtIso
+        ? new Date(startedAtIso).getTime()
+        : Date.now();
+
       const now = Date.now();
-      const elapsed = Math.max(0, now - startedMs);
+      const elapsed = now - startedMs;
       const remaining = Math.max(0, durationMs - elapsed);
       const frac = remaining / durationMs;
 
       setProgress(frac);
+      const secs = Math.max(0, Math.ceil(remaining / 1000));
+      setSecondsLeft(secs);
 
       if (remaining <= 0) {
         setLocked(true);
       }
     };
 
-    // run immediately
-    tick();
+    // Run immediately
+    updateFromDbTime();
 
-    if (intervalRef.current !== null) {
-      window.clearInterval(intervalRef.current);
-      intervalRef.current = null;
+    // Stop any previous engine
+    if (timerEngineRef.current) {
+      timerEngineRef.current.stop();
+      timerEngineRef.current = null;
     }
 
-    const id = window.setInterval(tick, 100);
-    intervalRef.current = id as unknown as number;
+    const engine = new TriviaTimerEngine(
+      {
+        durationMs,
+        maxPoints, // fed from scoringMode so config is consistent
+      },
+      {
+        onTick: () => {
+          // We ignore engine's own internal clock and
+          // keep everything anchored to question_started_at
+          updateFromDbTime();
+        },
+        onComplete: () => {
+          updateFromDbTime();
+          setLocked(true);
+        },
+      }
+    );
+
+    timerEngineRef.current = engine;
+    engine.start();
 
     return () => {
-      if (intervalRef.current !== null) {
-        window.clearInterval(intervalRef.current);
-        intervalRef.current = null;
-      }
+      engine.stop();
+      timerEngineRef.current = null;
     };
-  }, [isRunning, currentQuestion?.id, timerSeconds, session?.question_started_at]);
-
-  /* ---------------------------------------------------------
-     ANSWER REVEAL FLOW – match Wall:
-     - when locked flips true:
-       show overlay for 5s, then revealAnswer = true
-  --------------------------------------------------------- */
-  useEffect(() => {
-    if (!locked) {
-      setShowAnswerOverlay(false);
-      setRevealAnswer(false);
-      return;
-    }
-
-    setShowAnswerOverlay(true);
-    setRevealAnswer(false);
-
-    const overlayId = window.setTimeout(() => {
-      setShowAnswerOverlay(false);
-      setRevealAnswer(true);
-    }, ANSWER_OVERLAY_MS);
-
-    return () => window.clearTimeout(overlayId);
-  }, [locked]);
+  }, [
+    isRunning,
+    currentQuestion?.id,
+    timerSeconds,
+    scoringMode,
+    session?.question_started_at,
+  ]);
 
   /* ---------------------------------------------------------
      If user refreshes mid-question, reflect existing answer
@@ -383,7 +441,152 @@ export default function TriviaUserInterfacePage() {
   }, [playerId, currentQuestion?.id]);
 
   /* ---------------------------------------------------------
-     Answer submission (points use same question_started_at)
+     Answer reveal flow (overlay → reveal)
+     (must match wall: 5s overlay, then reveal)
+  --------------------------------------------------------- */
+  useEffect(() => {
+    if (!locked) {
+      setShowAnswerOverlay(false);
+      setRevealAnswer(false);
+      return;
+    }
+
+    setShowAnswerOverlay(true);
+    setRevealAnswer(false);
+    setView("question");
+
+    const overlayId = window.setTimeout(() => {
+      setShowAnswerOverlay(false);
+      setRevealAnswer(true);
+    }, 5000); // 5s overlay (same as wall)
+
+    return () => window.clearTimeout(overlayId);
+  }, [locked]);
+
+  /* ---------------------------------------------------------
+     After reveal → switch to leaderboard view (must match wall)
+     Wall waits 8s after reveal starts before showing leaderboard
+  --------------------------------------------------------- */
+  useEffect(() => {
+    if (!revealAnswer) return;
+    if (!isRunning) return;
+    if (!currentQuestion) return;
+
+    const toLeaderboard = window.setTimeout(() => {
+      setView("leaderboard");
+      setLeaderLoading(true);
+    }, 8000); // 8s, same as wall
+
+    return () => window.clearTimeout(toLeaderboard);
+  }, [revealAnswer, isRunning, currentQuestion?.id]);
+
+  /* ---------------------------------------------------------
+     Load leaderboard (TOP 4) when view === 'leaderboard'
+  --------------------------------------------------------- */
+  useEffect(() => {
+    if (!session?.id) return;
+    if (view !== "leaderboard") return;
+
+    let cancelled = false;
+
+    async function loadLeaderboard() {
+      if (!leaderRows.length) setLeaderLoading(true);
+
+      const { data: players, error: playersErr } = await supabase
+        .from("trivia_players")
+        .select("id,status,guest_id,display_name,photo_url")
+        .eq("session_id", session.id)
+        .eq("status", "approved");
+
+      if (playersErr || !players || players.length === 0) {
+        if (!cancelled) {
+          setLeaderRows([]);
+          setLeaderLoading(false);
+        }
+        return;
+      }
+
+      const playerIds = players.map((p: any) => p.id);
+      const guestIds = players.map((p: any) => p.guest_id).filter(Boolean);
+
+      const { data: answers, error: answersErr } = await supabase
+        .from("trivia_answers")
+        .select("player_id,points")
+        .in("player_id", playerIds);
+
+      if (answersErr) {
+        console.error("❌ trivia_answers fetch error:", answersErr);
+        if (!cancelled) setLeaderLoading(false);
+        return;
+      }
+
+      const totals = new Map<string, number>();
+      for (const a of answers || []) {
+        const pts = typeof a.points === "number" ? a.points : 0;
+        totals.set(a.player_id, (totals.get(a.player_id) || 0) + pts);
+      }
+
+      const guestMap = new Map<
+        string,
+        { name: string; selfieUrl: string | null }
+      >();
+
+      if (guestIds.length > 0) {
+        const { data: guests, error: guestsErr } = await supabase
+          .from("guest_profiles")
+          .select(
+            "id,first_name,last_name,photo_url,selfie_url,avatar_url,image_url,profile_photo_url"
+          )
+          .in("id", guestIds);
+
+        if (guestsErr) {
+          console.warn("⚠️ guest_profiles fetch error:", guestsErr);
+        } else {
+          for (const g of guests || []) {
+            guestMap.set(g.id, {
+              name: formatName(g?.first_name, g?.last_name),
+              selfieUrl: pickSelfieUrl(g),
+            });
+          }
+        }
+      }
+
+      const built = players
+        .map((p: any) => {
+          const guest = p.guest_id ? guestMap.get(p.guest_id) : undefined;
+          const safeName = guest?.name || formatDisplayName(p.display_name);
+          const safeSelfie = guest?.selfieUrl || p.photo_url || null;
+
+          return {
+            rank: 0,
+            name: safeName,
+            points: totals.get(p.id) || 0,
+            selfieUrl: safeSelfie,
+          };
+        })
+        .sort((a: any, b: any) => b.points - a.points)
+        .map((r: any, idx: number) => ({ ...r, rank: idx + 1 }));
+
+      const hasPoints = built.some((r) => r.points > 0);
+      const finalRows = hasPoints ? built : [];
+
+      if (!cancelled) {
+        setLeaderRows(finalRows);
+        setLeaderLoading(false);
+      }
+    }
+
+    loadLeaderboard();
+    const id = window.setInterval(loadLeaderboard, 1000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [session?.id, view]);
+
+  /* ---------------------------------------------------------
+     Answer submission (⏱ uses computeTriviaPoints directly)
   --------------------------------------------------------- */
   async function handleSelectAnswer(idx: number) {
     if (!currentQuestion) return;
@@ -408,6 +611,7 @@ export default function TriviaUserInterfacePage() {
 
     const isCorrect = idx === currentQuestion.correct_index;
 
+    // ⭐ Only award points for correct answers
     const points = isCorrect
       ? computeTriviaPoints({
           scoringMode,
@@ -517,15 +721,18 @@ export default function TriviaUserInterfacePage() {
   }
 
   const pctWidth = Math.max(0, Math.min(100, progress * 100));
+  const rankLabels = ["1st", "2nd", "3rd", "4th"];
 
   let footerText = "";
-  if (!isRunning) {
+  if (view === "leaderboard") {
+    footerText = "Leaderboard — next question starting soon…";
+  } else if (!isRunning) {
     footerText = "Game is paused. Waiting for the host…";
   } else if (locked && !revealAnswer) {
     footerText = "Time is up. Revealing the correct answer…";
   } else if (revealAnswer) {
     footerText =
-      "Here’s the correct answer. Get ready for the next question…";
+      "Here’s the correct answer. Get ready for the leaderboard…";
   } else if (hasAnswered) {
     footerText = "Answer submitted. You can’t change it for this question.";
   } else {
@@ -599,12 +806,16 @@ export default function TriviaUserInterfacePage() {
                 marginTop: 2,
               }}
             >
-              Question {currentQuestionIndex + 1} of {questions.length}
+              {view === "leaderboard"
+                ? "Leaderboard"
+                : `Question ${currentQuestionIndex + 1} of ${
+                    questions.length
+                  }`}
             </div>
           </div>
         </div>
 
-        {/* QUESTION BOX */}
+        {/* QUESTION / LEADERBOARD TITLE BOX */}
         <div
           style={{
             padding: 18,
@@ -623,13 +834,17 @@ export default function TriviaUserInterfacePage() {
               fontWeight: 700,
               lineHeight: 1.4,
               wordWrap: "break-word",
+              textAlign: "center",
+              width: "100%",
             }}
           >
-            {currentQuestion.question_text}
+            {view === "leaderboard"
+              ? "Leaderboard — Top Players"
+              : currentQuestion.question_text}
           </div>
         </div>
 
-        {/* TIMER BAR (NO NUMBERS) */}
+        {/* TIMER BAR (NO NUMBERS, EVER) */}
         <div
           style={{
             marginBottom: 16,
@@ -647,7 +862,7 @@ export default function TriviaUserInterfacePage() {
               height: "100%",
               width: `${pctWidth}%`,
               background:
-                locked || revealAnswer
+                locked || revealAnswer || view === "leaderboard"
                   ? "linear-gradient(90deg,#ef4444,#dc2626)"
                   : "linear-gradient(90deg,#22c55e,#16a34a,#15803d)",
               transition: "width 0.1s linear, background 0.2s ease",
@@ -655,7 +870,7 @@ export default function TriviaUserInterfacePage() {
           />
         </div>
 
-        {/* ANSWER BUTTONS */}
+        {/* ANSWER BUTTONS / LEADERBOARD CARDS */}
         <div
           style={{
             display: "grid",
@@ -667,104 +882,170 @@ export default function TriviaUserInterfacePage() {
             paddingRight: 2,
           }}
         >
-          {currentQuestion.options.map((opt: string, idx: number) => {
-            const chosen = selectedIndex === idx;
-            const isCorrect =
-              typeof currentQuestion.correct_index === "number" &&
-              idx === currentQuestion.correct_index;
+          {view === "question" &&
+            currentQuestion.options.map((opt: string, idx: number) => {
+              const chosen = selectedIndex === idx;
+              const isCorrect =
+                typeof currentQuestion.correct_index === "number" &&
+                idx === currentQuestion.correct_index;
 
-            const disabled = hasAnswered || locked;
+              const disabled = hasAnswered || locked;
 
-            let bg = "rgba(15,23,42,0.85)";
-            let border = "1px solid rgba(148,163,184,0.4)";
-            let opacity = 1;
-            let boxShadow = "none";
+              let bg = "rgba(15,23,42,0.85)";
+              let border = "1px solid rgba(148,163,184,0.4)";
+              let opacity = 1;
+              let boxShadow = "none";
 
-            const gotItRightPulse = revealAnswer && chosen && isCorrect;
+              const gotItRightPulse = revealAnswer && chosen && isCorrect;
 
-            if (!revealAnswer && chosen) {
-              bg = "linear-gradient(90deg,#22c55e,#15803d)";
-              border = "1px solid rgba(240,253,250,0.9)";
-              boxShadow = "0 0 12px rgba(74,222,128,0.6)";
-            }
-
-            if (revealAnswer) {
-              if (isCorrect) {
-                bg = "linear-gradient(90deg,#22c55e,#16a34a)";
-                border = "2px solid rgba(74,222,128,1)";
-                boxShadow = gotItRightPulse
-                  ? "0 0 26px rgba(74,222,128,1)"
-                  : "0 0 20px rgba(74,222,128,0.9)";
-              } else if (chosen && !isCorrect) {
-                bg = "linear-gradient(90deg,#ef4444,#b91c1c)";
-                border = "2px solid rgba(248,113,113,1)";
-                boxShadow = "0 0 16px rgba(248,113,113,0.9)";
-              } else {
-                opacity = 0.4;
+              if (!revealAnswer && chosen) {
+                bg = "linear-gradient(90deg,#22c55e,#15803d)";
+                border = "1px solid rgba(240,253,250,0.9)";
+                boxShadow = "0 0 12px rgba(74,222,128,0.6)";
               }
-            } else if (disabled && !chosen) {
-              opacity = 0.7;
-            }
 
-            return (
-              <button
-                key={idx}
-                onClick={() => handleSelectAnswer(idx)}
-                disabled={disabled}
-                style={{
-                  width: "100%",
-                  padding: "6px 12px",
-                  borderRadius: 20,
-                  background: bg,
-                  border,
-                  opacity,
-                  color: "#fff",
-                  textAlign: "left",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 15,
-                  fontSize: "0.95rem",
-                  fontWeight: chosen ? 700 : 500,
-                  minHeight: 72,
-                  boxShadow,
-                  transition:
-                    "opacity 0.25s ease, border 0.25s ease, background 0.25s ease, box-shadow 0.3s ease",
-                  animation: gotItRightPulse
-                    ? "fiCorrectPulse 1.25s ease-in-out infinite alternate"
-                    : "none",
-                }}
-              >
-                <span
+              if (revealAnswer) {
+                if (isCorrect) {
+                  bg = "linear-gradient(90deg,#22c55e,#16a34a)";
+                  border = "2px solid rgba(74,222,128,1)";
+                  boxShadow = gotItRightPulse
+                    ? "0 0 26px rgba(74,222,128,1)"
+                    : "0 0 20px rgba(74,222,128,0.9)";
+                } else if (chosen && !isCorrect) {
+                  bg = "linear-gradient(90deg,#ef4444,#b91c1c)";
+                  border = "2px solid rgba(248,113,113,1)";
+                  boxShadow = "0 0 16px rgba(248,113,113,0.9)";
+                } else {
+                  opacity = 0.4;
+                }
+              } else if (disabled && !chosen) {
+                opacity = 0.7;
+              }
+
+              return (
+                <button
+                  key={idx}
+                  onClick={() => handleSelectAnswer(idx)}
+                  disabled={disabled}
                   style={{
-                    width: 60,
-                    height: 60,
-                    borderRadius: "999px",
-                    border: "1px solid rgba(226,232,240,0.8)",
+                    width: "100%",
+                    padding: "6px 12px",
+                    borderRadius: 20,
+                    background: bg,
+                    border,
+                    opacity,
+                    color: "#fff",
+                    textAlign: "left",
                     display: "flex",
                     alignItems: "center",
-                    justifyContent: "center",
-                    fontSize: "2.0rem",
-                    background: chosen
-                      ? "rgba(15,23,42,0.2)"
-                      : "rgba(15,23,42,0.7)",
-                    flexShrink: 0,
+                    gap: 15,
+                    fontSize: "0.95rem",
+                    fontWeight: chosen ? 700 : 500,
+                    minHeight: 72,
+                    boxShadow,
+                    transition:
+                      "opacity 0.25s ease, border 0.25s ease, background 0.25s ease, box-shadow 0.3s ease",
+                    animation: gotItRightPulse
+                      ? "fiCorrectPulse 1.25s ease-in-out infinite alternate"
+                      : "none",
                   }}
                 >
-                  {String.fromCharCode(65 + idx)}
-                </span>
-                <span
+                  <span
+                    style={{
+                      width: 60,
+                      height: 60,
+                      borderRadius: "999px",
+                      border: "1px solid rgba(226,232,240,0.8)",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      fontSize: "2.0rem",
+                      background: chosen
+                        ? "rgba(15,23,42,0.2)"
+                        : "rgba(15,23,42,0.7)",
+                      flexShrink: 0,
+                    }}
+                  >
+                    {String.fromCharCode(65 + idx)}
+                  </span>
+                  <span
+                    style={{
+                      flex: 1,
+                      lineHeight: 1.3,
+                      wordWrap: "break-word",
+                      whiteSpace: "normal",
+                    }}
+                  >
+                    {opt}
+                  </span>
+                </button>
+              );
+            })}
+
+          {view === "leaderboard" &&
+            rankLabels.map((label, idx) => {
+              const row = leaderRows[idx]; // already sorted by points desc
+              const isFirst = idx === 0;
+
+              return (
+                <button
+                  key={idx}
+                  disabled
                   style={{
-                    flex: 1,
-                    lineHeight: 1.3,
-                    wordWrap: "break-word",
-                    whiteSpace: "normal",
+                    width: "100%",
+                    padding: "6px 12px",
+                    borderRadius: 20,
+                    background: "rgba(15,23,42,0.85)",
+                    border: isFirst
+                      ? "2px solid rgba(74,222,128,0.9)"
+                      : "1px solid rgba(148,163,184,0.4)",
+                    opacity: row ? 1 : 0.5,
+                    color: "#fff",
+                    textAlign: "left",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 15,
+                    fontSize: "0.95rem",
+                    fontWeight: 700,
+                    minHeight: 72,
+                    boxShadow: isFirst
+                      ? "0 0 18px rgba(74,222,128,0.7)"
+                      : "none",
                   }}
                 >
-                  {opt}
-                </span>
-              </button>
-            );
-          })}
+                  <span
+                    style={{
+                      width: 60,
+                      height: 60,
+                      borderRadius: "999px",
+                      border: "1px solid rgba(226,232,240,0.8)",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      fontSize: "1.4rem",
+                      background: "rgba(15,23,42,0.7)",
+                      flexShrink: 0,
+                    }}
+                  >
+                    {label}
+                  </span>
+                  <span
+                    style={{
+                      flex: 1,
+                      lineHeight: 1.3,
+                      wordWrap: "break-word",
+                      whiteSpace: "normal",
+                    }}
+                  >
+                    {leaderLoading && !row
+                      ? "Loading..."
+                      : row
+                      ? `${row.name} — ${row.points} pts`
+                      : "—"}
+                  </span>
+                </button>
+              );
+            })}
         </div>
 
         {/* AD SLOT PLACEHOLDER */}
