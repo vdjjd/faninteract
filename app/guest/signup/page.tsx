@@ -26,30 +26,26 @@ export default function GuestSignupPage() {
   /* -------------------------------------------------
      🔥 NORMALIZE QR PARAMS
   ------------------------------------------------- */
-  const redirect = params.get("redirect") || undefined;
-  const wallId = params.get("wall") || undefined;
-  const wheelId = params.get("prizewheel") || undefined;
-  const basketballId = params.get("basketball") || undefined;
-  const triviaId = params.get("trivia") || undefined; // ✅ trivia source
+  const redirect = params.get("redirect");
+  const wallId = params.get("wall");
+  const wheelId = params.get("prizewheel");
+  const basketballId = params.get("basketball");
+  const triviaId = params.get("trivia"); // trivia source
 
   const rawType = params.get("type");
-  let pollId = params.get("poll") || undefined;
+  let pollId = params.get("poll");
 
-  // Handles malformed QR: ?type=poll=UUID
   if (!pollId && rawType?.startsWith("poll=")) {
     pollId = rawType.split("=")[1];
   }
 
   /* ------------------------------------------------- */
   const [wall, setWall] = useState<any>(null);
-  const [hostSettings, setHostSettings] = useState<any | null>(null);
+  const [hostSettings, setHostSettings] = useState<any>(null);
 
   const [hostTerms, setHostTerms] = useState("");
   const [masterTerms, setMasterTerms] = useState("");
   const [showTermsModal, setShowTermsModal] = useState(false);
-
-  const [loadingHost, setLoadingHost] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
 
   const [form, setForm] = useState({
     first_name: "",
@@ -72,39 +68,27 @@ export default function GuestSignupPage() {
   }, []);
 
   /* -------------------------------------------------
-     LOAD HOST CONTEXT (WALL / WHEEL / POLL / BB / TRIVIA)
+     LOAD HOST CONTEXT
   ------------------------------------------------- */
   useEffect(() => {
     async function loadHostById(hostId: string) {
-      const { data: host, error } = await supabase
+      const { data: host } = await supabase
         .from("hosts")
         .select("*, master_id")
         .eq("id", hostId)
         .single();
 
-      if (error) {
-        console.error("❌ loadHostById error:", error);
-        setLoadError("Unable to load host settings.");
-        return;
-      }
-      if (!host) {
-        setLoadError("Host not found.");
-        return;
-      }
+      if (!host) return;
 
       setHostSettings(host);
       if (host.host_terms_markdown) setHostTerms(host.host_terms_markdown);
 
       if (host.master_id) {
-        const { data: master, error: masterErr } = await supabase
+        const { data: master } = await supabase
           .from("master_accounts")
           .select("master_terms_markdown")
           .eq("id", host.master_id)
           .single();
-
-        if (masterErr) {
-          console.error("❌ load master_terms error:", masterErr);
-        }
 
         if (master?.master_terms_markdown) {
           setMasterTerms(master.master_terms_markdown);
@@ -113,209 +97,93 @@ export default function GuestSignupPage() {
     }
 
     async function loadContext() {
-      setLoadingHost(true);
-      setLoadError(null);
+      if (wallId) {
+        const { data } = await supabase
+          .from("fan_walls")
+          .select("background_value, host_id")
+          .eq("id", wallId)
+          .single();
+        setWall(data);
+        if (data?.host_id) loadHostById(data.host_id);
+      }
 
-      try {
-        let hostId: string | null = null;
+      if (wheelId) {
+        const { data } = await supabase
+          .from("prize_wheels")
+          .select("host_id")
+          .eq("id", wheelId)
+          .single();
+        if (data?.host_id) loadHostById(data.host_id);
+      }
 
-        // 1️⃣ Fan Wall
-        if (wallId) {
-          const { data, error } = await supabase
-            .from("fan_walls")
-            .select("background_value, host_id")
-            .eq("id", wallId)
-            .single();
+      if (pollId) {
+        const { data } = await supabase
+          .from("polls")
+          .select("host_id")
+          .eq("id", pollId)
+          .single();
+        if (data?.host_id) loadHostById(data.host_id);
+      }
 
-          if (error) {
-            console.error("❌ load fan_walls error:", error);
-          }
+      if (basketballId) {
+        const { data } = await supabase
+          .from("bb_games")
+          .select("host_id")
+          .eq("id", basketballId)
+          .single();
+        if (data?.host_id) loadHostById(data.host_id);
+      }
 
-          if (data) {
-            setWall({ background_value: data.background_value });
-            hostId = data.host_id;
-          }
-        }
+      // trivia QR → load host + background from trivia card
+      if (triviaId) {
+        const { data } = await supabase
+          .from("trivia_cards")
+          .select("background_type, background_value, host_id")
+          .eq("id", triviaId)
+          .single();
 
-        // 2️⃣ Prize Wheel
-        if (!hostId && wheelId) {
-          const { data, error } = await supabase
-            .from("prize_wheels")
-            .select("host_id")
-            .eq("id", wheelId)
-            .single();
-
-          if (error) {
-            console.error("❌ load prize_wheels error:", error);
-          }
-
-          if (data) {
-            hostId = data.host_id;
-          }
-        }
-
-        // 3️⃣ Poll
-        if (!hostId && pollId) {
-          const { data, error } = await supabase
-            .from("polls")
-            .select("host_id")
-            .eq("id", pollId)
-            .single();
-
-          if (error) {
-            console.error("❌ load polls error:", error);
-          }
-
-          if (data) {
-            hostId = data.host_id;
-          }
-        }
-
-        // 4️⃣ Basketball
-        if (!hostId && basketballId) {
-          const { data, error } = await supabase
-            .from("bb_games")
-            .select("host_id")
-            .eq("id", basketballId)
-            .single();
-
-          if (error) {
-            console.error("❌ load bb_games error:", error);
-          }
-
-          if (data) {
-            hostId = data.host_id;
-          }
-        }
-
-        // 5️⃣ Trivia QR → use trivia card for host + background
-        if (!hostId && triviaId) {
-          const { data, error } = await supabase
-            .from("trivia_cards")
-            .select("background_type, background_value, host_id")
-            .eq("id", triviaId)
-            .single();
-
-          if (error) {
-            console.error("❌ load trivia_cards error:", error);
-          }
-
-          if (data) {
-            const bg =
-              data.background_type === "image"
-                ? data.background_value
-                : data.background_value;
-            setWall({ background_value: bg });
-            if (data.host_id) hostId = data.host_id;
-          }
-        }
-
-        // If we have a host, load its settings
-        if (hostId) {
-          await loadHostById(hostId);
-        } else {
-          // No host found at all → create a very safe fallback
-          console.warn("⚠️ No host found for signup context.");
-          setHostSettings({
-            id: null,
-            require_last_name: false,
-            require_email: false,
-            require_phone: false,
-            require_street: false,
-            require_city: false,
-            require_state: false,
-            require_zip: false,
-            require_age: false,
+        if (data) {
+          setWall({
+            background_value: data.background_value,
           });
+          if (data.host_id) loadHostById(data.host_id);
         }
-      } catch (err) {
-        console.error("❌ loadContext fatal error:", err);
-        setLoadError("Failed to load signup settings.");
-      } finally {
-        setLoadingHost(false);
       }
     }
 
     loadContext();
-  }, [
-    wallId,
-    wheelId,
-    pollId,
-    basketballId,
-    triviaId,
-    supabase,
-  ]);
+  }, [wallId, wheelId, pollId, basketballId, triviaId, supabase]);
 
   /* -------------------------------------------------
-     AUTO-REDIRECT IF GUEST ALREADY EXISTS
+     AUTO-REDIRECT IF GUEST EXISTS
   ------------------------------------------------- */
   useEffect(() => {
     async function validateGuest() {
-      try {
-        const deviceId = localStorage.getItem("guest_device_id");
-        const cached = localStorage.getItem("guest_profile");
+      const deviceId = localStorage.getItem("guest_device_id");
+      const cached = localStorage.getItem("guest_profile");
+      if (!deviceId || !cached) return;
 
-        if (!deviceId || !cached) {
-          return;
-        }
+      const { data } = await supabase
+        .from("guest_profiles")
+        .select("id")
+        .eq("device_id", deviceId)
+        .maybeSingle();
 
-        const { data, error } = await supabase
-          .from("guest_profiles")
-          .select("id")
-          .eq("device_id", deviceId)
-          .maybeSingle();
-
-        if (error) {
-          console.error("❌ validateGuest error:", error);
-        }
-
-        if (!data) {
-          // device id exists but DB row gone → nuke stale local cache
-          localStorage.removeItem("guest_profile");
-          return;
-        }
-
-        // ✅ We have a valid guest — send them where they were trying to go
-        if (redirect) {
-          router.replace(redirect);
-          return;
-        }
-        if (wallId) {
-          router.replace(`/wall/${wallId}/submit`);
-          return;
-        }
-        if (wheelId) {
-          router.replace(`/prizewheel/${wheelId}/submit`);
-          return;
-        }
-        if (pollId) {
-          router.replace(`/polls/${pollId}/vote`);
-          return;
-        }
-        if (basketballId) {
-          router.replace(`/basketball/${basketballId}/submit`);
-          return;
-        }
-        if (triviaId) {
-          router.replace(`/trivia/${triviaId}/join`);
-          return;
-        }
-      } catch (err) {
-        console.error("❌ validateGuest fatal error:", err);
+      if (!data) {
+        localStorage.removeItem("guest_profile");
+        return;
       }
+
+      if (redirect) return router.push(redirect);
+      if (wallId) return router.push(`/wall/${wallId}/submit`);
+      if (wheelId) return router.push(`/prizewheel/${wheelId}/submit`);
+      if (pollId) return router.push(`/polls/${pollId}/vote`);
+      if (basketballId) return router.push(`/basketball/${basketballId}/submit`);
+      if (triviaId) return router.push(`/trivia/${triviaId}/join`);
     }
 
     validateGuest();
-  }, [
-    redirect,
-    wallId,
-    wheelId,
-    pollId,
-    basketballId,
-    triviaId,
-    router,
-    supabase,
-  ]);
+  }, [redirect, wallId, wheelId, pollId, basketballId, triviaId, router, supabase]);
 
   /* -------------------------------------------------
      SUBMIT
@@ -324,32 +192,19 @@ export default function GuestSignupPage() {
     e.preventDefault();
     if (!agree) return alert("You must agree to the Terms.");
 
-    if (!hostSettings) {
-      alert("Host settings not loaded yet. Please try again.");
-      return;
-    }
-
     setSubmitting(true);
 
     try {
       const targetId =
-        wallId ||
-        wheelId ||
-        pollId ||
-        basketballId ||
-        // trivia uses host-scoped profile only; no specific targetId required
+        wallId || wheelId || pollId || basketballId ||
         redirect?.match(/([0-9a-fA-F-]{36})/)?.[0];
 
       const type =
-        wallId
-          ? "wall"
-          : wheelId
-          ? "prizewheel"
-          : pollId
-          ? "poll"
-          : basketballId
-          ? "basketball"
-          : "";
+        wallId ? "wall" :
+        wheelId ? "prizewheel" :
+        pollId ? "poll" :
+        basketballId ? "basketball" :
+        "";
 
       const payload = {
         ...form,
@@ -365,74 +220,52 @@ export default function GuestSignupPage() {
         type,
         targetId,
         payload,
-        hostSettings.id || null
+        hostSettings?.id
       );
 
       localStorage.setItem("guest_profile", JSON.stringify(profile));
 
-      // ✅ Redirect priority:
-      // 1. explicit redirect (/trivia/[id]/join from the join page)
-      if (redirect) {
-        router.replace(redirect);
-      } else if (wallId) {
-        router.replace(`/wall/${wallId}/submit`);
-      } else if (wheelId) {
-        router.replace(`/prizewheel/${wheelId}/submit`);
-      } else if (pollId) {
-        router.replace(`/polls/${pollId}/vote`);
-      } else if (basketballId) {
-        router.replace(`/basketball/${basketballId}/submit`);
-      } else if (triviaId) {
-        // fallback: trivia QR with no explicit redirect
-        router.replace(`/trivia/${triviaId}/join`);
-      } else {
-        router.replace("/");
-      }
+      if (redirect) router.push(redirect);
+      else if (wallId) router.push(`/wall/${wallId}/submit`);
+      else if (wheelId) router.push(`/prizewheel/${wheelId}/submit`);
+      else if (pollId) router.push(`/polls/${pollId}/vote`);
+      else if (basketballId) router.push(`/basketball/${basketballId}/submit`);
+      else if (triviaId) router.push(`/trivia/${triviaId}/join`);
+      else router.push("/");
     } catch (err) {
-      console.error("❌ handleSubmit error:", err);
+      console.error(err);
       alert("Error saving your information.");
-    } finally {
-      setSubmitting(false);
     }
+
+    setSubmitting(false);
   }
 
-  /* -------------------------------------------------
-     LOADING / ERROR STATES
-  ------------------------------------------------- */
-  if (loadingHost) {
-    return (
-      <main className={cn('flex', 'items-center', 'justify-center', 'h-screen', 'bg-black', 'text-white')}>
-        Loading signup…
-      </main>
-    );
-  }
-
-  if (loadError) {
-    return (
-      <main className={cn('flex', 'flex-col', 'items-center', 'justify-center', 'h-screen', 'bg-black', 'text-white', 'px-4', 'text-center')}>
-        <p className={cn('mb-2', 'font-semibold')}>There was a problem loading this event.</p>
-        <p className={cn('text-sm', 'opacity-80')}>{loadError}</p>
-      </main>
-    );
-  }
-
+  /* ------------------------------------------------- */
   if (!hostSettings) {
     return (
-      <main className={cn('flex', 'items-center', 'justify-center', 'h-screen', 'bg-black', 'text-white')}>
-        No host configured for this signup link.
+      <main className={cn('text-white', 'flex', 'items-center', 'justify-center', 'h-screen')}>
+        Loading…
       </main>
     );
   }
+
+  // ✅ DEFAULT ALL FIELDS TO ON if flags are null/undefined
+  const requireLastName   = hostSettings.require_last_name   ?? true;
+  const requireEmail      = hostSettings.require_email       ?? true;
+  const requirePhone      = hostSettings.require_phone       ?? true;
+  const requireStreet     = hostSettings.require_street      ?? true;
+  const requireCity       = hostSettings.require_city        ?? true;
+  const requireState      = hostSettings.require_state       ?? true;
+  const requireZip        = hostSettings.require_zip         ?? true;
+  const requireAge        = hostSettings.require_age         ?? true;
 
   /* -------------------------------------------------
      RENDER
   ------------------------------------------------- */
   return (
-    <main className={cn(
-      "relative flex items-center justify-center min-h-screen w-full text-white"
-    )}>
+    <main className={cn('relative', 'flex', 'items-center', 'justify-center', 'min-h-screen', 'w-full', 'text-white')}>
       <div
-        className={cn("absolute inset-0 bg-cover bg-center")}
+        className={cn('absolute', 'inset-0', 'bg-cover', 'bg-center')}
         style={{
           backgroundImage: wall?.background_value?.includes("http")
             ? `url(${wall.background_value})`
@@ -446,10 +279,7 @@ export default function GuestSignupPage() {
         initial={{ opacity: 0, y: 30, scale: 0.97 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
         transition={{ duration: 0.5 }}
-        className={cn(
-          "relative z-10 w-[95%] max-w-md rounded-2xl p-8",
-          "border border-white/10 bg-white/10 backdrop-blur-lg"
-        )}
+        className={cn('relative', 'z-10', 'w-[95%]', 'max-w-md', 'rounded-2xl', 'p-8', 'border', 'border-white/10', 'bg-white/10', 'backdrop-blur-lg')}
       >
         <div className={cn('flex', 'justify-center', 'mb-6')}>
           <Image
@@ -461,100 +291,78 @@ export default function GuestSignupPage() {
           />
         </div>
 
-        <motion.h2
-          className={cn('text-center', 'text-2xl', 'font-semibold', 'text-sky-300', 'mb-6')}
-        >
+        <motion.h2 className={cn('text-center', 'text-2xl', 'font-semibold', 'text-sky-300', 'mb-6')}>
           Join the Fan Zone
         </motion.h2>
 
         <form onSubmit={handleSubmit} className="space-y-3">
+
           {/* REQUIRED FIELDS */}
           <input
             required
             placeholder="First Name *"
-            className={cn(
-              "w-full p-3 rounded-xl bg-black/40",
-              "border border-white/20"
-            )}
+            className={cn('w-full', 'p-3', 'rounded-xl', 'bg-black/40', 'border', 'border-white/20')}
             value={form.first_name}
             onChange={e => setForm({ ...form, first_name: e.target.value })}
           />
 
-          {hostSettings.require_last_name && (
+          {requireLastName && (
             <input
               required
               placeholder="Last Name *"
-              className={cn(
-                "w-full p-3 rounded-xl bg-black/40",
-                "border border-white/20"
-              )}
+              className={cn('w-full', 'p-3', 'rounded-xl', 'bg-black/40', 'border', 'border-white/20')}
               value={form.last_name}
               onChange={e => setForm({ ...form, last_name: e.target.value })}
             />
           )}
 
-          {hostSettings.require_email && (
+          {requireEmail && (
             <input
               required
               type="email"
               placeholder="Email *"
-              className={cn(
-                "w-full p-3 rounded-xl bg-black/40",
-                "border border-white/20"
-              )}
+              className={cn('w-full', 'p-3', 'rounded-xl', 'bg-black/40', 'border', 'border-white/20')}
               value={form.email}
               onChange={e => setForm({ ...form, email: e.target.value })}
             />
           )}
 
-          {hostSettings.require_phone && (
+          {requirePhone && (
             <input
               required
               type="tel"
               placeholder="Phone *"
-              className={cn(
-                "w-full p-3 rounded-xl bg-black/40",
-                "border border-white/20"
-              )}
+              className={cn('w-full', 'p-3', 'rounded-xl', 'bg-black/40', 'border', 'border-white/20')}
               value={form.phone}
               onChange={e => setForm({ ...form, phone: e.target.value })}
             />
           )}
 
           {/* ADDRESS */}
-          {hostSettings.require_street && (
+          {requireStreet && (
             <input
               required
               placeholder="Street Address *"
-              className={cn(
-                "w-full p-3 rounded-xl bg-black/40",
-                "border border-white/20"
-              )}
+              className={cn('w-full', 'p-3', 'rounded-xl', 'bg-black/40', 'border', 'border-white/20')}
               value={form.street}
               onChange={e => setForm({ ...form, street: e.target.value })}
             />
           )}
 
-          {hostSettings.require_city && (
+          {requireCity && (
             <input
               required
               placeholder="City *"
-              className={cn(
-                "w-full p-3 rounded-xl bg-black/40",
-                "border border-white/20"
-              )}
+              className={cn('w-full', 'p-3', 'rounded-xl', 'bg-black/40', 'border', 'border-white/20')}
               value={form.city}
               onChange={e => setForm({ ...form, city: e.target.value })}
             />
           )}
 
-          {hostSettings.require_state && (
+          {requireState && (
             <select
               required
-              className={cn(
-                "w-full p-3 rounded-xl bg-black/40",
-                "border border-white/20"
-              )}
+              className={cn('w-full', 'p-3', 'rounded-xl', 'bg-black/40', 'border', 'border-white/20')}
               value={form.state}
               onChange={e => setForm({ ...form, state: e.target.value })}
             >
@@ -567,21 +375,18 @@ export default function GuestSignupPage() {
             </select>
           )}
 
-          {hostSettings.require_zip && (
+          {requireZip && (
             <input
               required
               placeholder="ZIP Code *"
-              className={cn(
-                "w-full p-3 rounded-xl bg-black/40",
-                "border border-white/20"
-              )}
+              className={cn('w-full', 'p-3', 'rounded-xl', 'bg-black/40', 'border', 'border-white/20')}
               value={form.zip}
               onChange={e => setForm({ ...form, zip: e.target.value })}
             />
           )}
 
           {/* DOB → AGE */}
-          {hostSettings.require_age && (
+          {requireAge && (
             <div className="relative">
               <input
                 required
@@ -611,11 +416,7 @@ export default function GuestSignupPage() {
             </div>
           )}
 
-          <label
-            className={cn(
-              "flex items-center gap-2 text-sm text-gray-300 mt-2"
-            )}
-          >
+          <label className={cn('flex', 'items-center', 'gap-2', 'text-sm', 'text-gray-300', 'mt-2')}>
             <input
               type="checkbox"
               checked={agree}
@@ -625,7 +426,7 @@ export default function GuestSignupPage() {
             <button
               type="button"
               onClick={() => setShowTermsModal(true)}
-              className={cn("underline text-sky-400")}
+              className={cn('underline', 'text-sky-400')}
             >
               Terms
             </button>
@@ -633,11 +434,7 @@ export default function GuestSignupPage() {
 
           <button
             disabled={submitting}
-            className={cn(
-              "w-full py-3 rounded-xl bg-gradient-to-r",
-              "from-sky-500 to-blue-600 font-semibold",
-              submitting && "opacity-60"
-            )}
+            className={cn('w-full', 'py-3', 'rounded-xl', 'bg-gradient-to-r', 'from-sky-500', 'to-blue-600', 'font-semibold')}
           >
             {submitting ? "Submitting..." : "Continue"}
           </button>
