@@ -3,8 +3,6 @@
 import { useEffect, useState, useRef } from "react";
 import { QRCodeCanvas } from "qrcode.react";
 import { getSupabaseClient } from "@/lib/supabaseClient";
-// You can remove TriviaTimerEngine import if you like; wall no longer uses it
-// import { TriviaTimerEngine } from "@/lib/trivia/triviaTimerEngine";
 
 const supabase = getSupabaseClient();
 
@@ -85,7 +83,7 @@ const LEADER_UI = {
 const fallbackLogo = "/faninteractlogo.png";
 
 /* ---------------------------------------------------- */
-/* TIMER CONFIG                                         */
+/* TIMER CONFIG (DEFAULT/FALLBACK)                      */
 /* ---------------------------------------------------- */
 const QUESTION_DURATION_MS = 30000;
 
@@ -179,9 +177,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
     null
   );
 
-  // 🔢 Timer state
-  const [progress, setProgress] = useState(1); // 1 → 0
-  const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
+  const [progress, setProgress] = useState(1);
   const [locked, setLocked] = useState(false);
 
   const [showAnswerOverlay, setShowAnswerOverlay] = useState(false);
@@ -201,7 +197,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
   const timerSeconds: number = trivia?.timer_seconds ?? 30;
 
   /* -------------------------------------------------- */
-  /* FETCH CURRENT QUESTION (POLLING)                    */
+  /* FETCH CURRENT QUESTION (POLLING)                   */
   /* -------------------------------------------------- */
   useEffect(() => {
     if (!trivia?.id) return;
@@ -274,7 +270,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
   }, [trivia?.id]);
 
   /* -------------------------------------------------- */
-  /* TOP 3 RANKINGS (AUTO UPDATE)                        */
+  /* TOP 3 RANKINGS (AUTO UPDATE)                       */
   /* -------------------------------------------------- */
   useEffect(() => {
     if (!trivia?.id) return;
@@ -424,7 +420,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
   }, [trivia?.id, isRunning]);
 
   /* -------------------------------------------------- */
-  /* FULL LEADERBOARD LOADER (VIEW=leaderboard)          */
+  /* FULL LEADERBOARD LOADER                            */
   /* -------------------------------------------------- */
   useEffect(() => {
     if (!trivia?.id) return;
@@ -553,70 +549,62 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
   }, [trivia?.id, isRunning, view]);
 
   /* -------------------------------------------------- */
-  /* 🟢 SMOOTH TIMER: requestAnimationFrame LOOP         */
+  /* TIMER — ONE SOURCE (question_started_at)           */
   /* -------------------------------------------------- */
   useEffect(() => {
-    // stop when not running, no question, or we're on leaderboard
-    if (!isRunning || currentQuestionNumber == null || view !== "question") {
+    if (
+      !isRunning ||
+      view !== "question" ||
+      currentQuestionNumber == null ||
+      !questionStartedAt
+    ) {
+      setProgress(1);
+      setLocked(false);
       return;
     }
-
-    // per-question reset
-    setLocked(false);
-    setRevealAnswer(false);
-    setShowAnswerOverlay(false);
-    setProgress(1);
-    setSecondsLeft(timerSeconds);
-    transitionLockRef.current = false;
 
     const durationMs =
       typeof trivia?.timer_seconds === "number" && trivia.timer_seconds > 0
         ? trivia.timer_seconds * 1000
         : QUESTION_DURATION_MS;
 
-    const startedAtMs = questionStartedAt
-      ? new Date(questionStartedAt).getTime()
-      : Date.now();
+    const startedMs = new Date(questionStartedAt).getTime();
 
-    let frameId: number | null = null;
+    setLocked(false);
+    setProgress(1);
+    setShowAnswerOverlay(false);
+    setRevealAnswer(false);
+    transitionLockRef.current = false;
 
-    const loop = () => {
+    const tick = () => {
       const now = Date.now();
-      const elapsed = now - startedAtMs;
+      const elapsed = now - startedMs;
       const remaining = Math.max(0, durationMs - elapsed);
+      const frac = remaining / durationMs;
 
-      const frac = Math.max(0, Math.min(1, remaining / durationMs));
       setProgress(frac);
-
-      const secs = Math.max(0, Math.ceil(remaining / 1000));
-      setSecondsLeft(secs);
 
       if (remaining <= 0) {
         setLocked(true);
-        return;
       }
-
-      frameId = window.requestAnimationFrame(loop);
     };
 
-    frameId = window.requestAnimationFrame(loop);
+    tick();
+    const id = window.setInterval(tick, 100); // 10 fps, smoother but not crazy
 
     return () => {
-      if (frameId !== null) {
-        window.cancelAnimationFrame(frameId);
-      }
+      window.clearInterval(id);
     };
   }, [
     isRunning,
+    view,
     currentQuestionNumber,
     questionStartedAt,
     trivia?.timer_seconds,
-    timerSeconds,
-    view,
   ]);
 
   /* -------------------------------------------------- */
-  /* ANSWER REVEAL FLOW                                  */
+  /* ANSWER REVEAL FLOW                                 */
   /* -------------------------------------------------- */
   useEffect(() => {
     if (view !== "question") return;
@@ -639,7 +627,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
   }, [locked, view]);
 
   /* -------------------------------------------------- */
-  /* AFTER 8s REVEAL → SHOW LEADERBOARD                  */
+  /* AFTER REVEAL → SHOW LEADERBOARD                    */
   /* -------------------------------------------------- */
   useEffect(() => {
     if (view !== "question") return;
@@ -659,7 +647,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
   }, [revealAnswer, isRunning, currentQuestionNumber, view]);
 
   /* -------------------------------------------------- */
-  /* LEADERBOARD VIEW TIMER (15s) THEN ADVANCE QUESTION   */
+  /* LEADERBOARD VIEW TIMER (15s) THEN ADVANCE QUESTION */
   /* -------------------------------------------------- */
   useEffect(() => {
     if (view !== "leaderboard") return;
@@ -669,7 +657,6 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
     const timeoutId = window.setTimeout(async () => {
       try {
         if (totalQuestions != null && currentQuestionNumber >= totalQuestions) {
-          // last question: stay on leaderboard (podium later)
           return;
         }
 
@@ -768,13 +755,6 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
 
   const qrValue = `${origin}/trivia/${trivia?.id}/join`;
 
-  // ✅ Bar width from secondsLeft / timerSeconds
-  const baseSeconds = timerSeconds || 1;
-  const safeTimeLeft =
-    secondsLeft === null ? baseSeconds : Math.max(0, secondsLeft);
-  const timeFraction = Math.min(1, Math.max(0, safeTimeLeft / baseSeconds));
-  const pctWidth = timeFraction * 100;
-
   return (
     <>
       <div
@@ -823,7 +803,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                 : "Waiting for game to start"}
             </div>
 
-            {/* TIMER BAR */}
+            {/* TIMER BAR — NO NUMBERS */}
             <div
               style={{
                 width: "100%",
@@ -836,13 +816,13 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
             >
               <div
                 style={{
-                  width: `${pctWidth}%`,
+                  width: `${Math.max(0, Math.min(100, progress * 100))}%`,
                   height: "100%",
                   background:
                     revealAnswer || locked
                       ? "linear-gradient(to right,#ef4444,#dc2626)"
                       : "linear-gradient(to right,#4ade80,#22c55e)",
-                  transition: "width 0.08s linear, background 0.2s ease",
+                  transition: "width 0.12s linear, background 0.2s ease",
                 }}
               />
             </div>
@@ -1156,7 +1136,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
           </div>
         )}
 
-        {/* QR CODE */}
+        {/* QR CODE — BOTTOM LEFT */}
         <div
           style={{
             position: "absolute",
@@ -1196,7 +1176,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
           />
         </div>
 
-        {/* TOP 3 LEADERS */}
+        {/* TOP 3 LEADERS (only in question view) */}
         {view === "question" && (
           <div
             style={{

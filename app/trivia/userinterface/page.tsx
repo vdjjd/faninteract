@@ -1,11 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { getSupabaseClient } from "@/lib/supabaseClient";
-
-// 🔧 engine imports
-// ⛔ No longer using TriviaTimerEngine here; UI uses requestAnimationFrame
 import { computeTriviaPoints } from "@/lib/trivia/triviaScoringEngine";
 
 const supabase = getSupabaseClient();
@@ -54,9 +51,8 @@ export default function TriviaUserInterfacePage() {
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [hasAnswered, setHasAnswered] = useState(false);
 
-  // Timer + phases (lockstep with ActiveWall style)
-  const [progress, setProgress] = useState<number>(1); // 1 → 0 (bar)
-  const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
+  // Timer + phases
+  const [progress, setProgress] = useState<number>(1); // 1 → 0
   const [locked, setLocked] = useState(false);
   const [showAnswerOverlay, setShowAnswerOverlay] = useState(false);
   const [revealAnswer, setRevealAnswer] = useState(false);
@@ -74,7 +70,7 @@ export default function TriviaUserInterfacePage() {
   }, [router, gameId]);
 
   /* ---------------------------------------------------------
-     Initial load: trivia card, host logo, session, player row, questions
+     Initial load
   --------------------------------------------------------- */
   useEffect(() => {
     if (!gameId || !profile?.id) return;
@@ -85,7 +81,7 @@ export default function TriviaUserInterfacePage() {
       setLoading(true);
       setLoadingMessage("Loading trivia game…");
 
-      // 1️⃣ Load trivia card (include host_id so we can pull logo)
+      // 1️⃣ Load trivia card
       const { data: card, error: cardErr } = await supabase
         .from("trivia_cards")
         .select(
@@ -111,7 +107,7 @@ export default function TriviaUserInterfacePage() {
 
       setTrivia(card);
 
-      // 2️⃣ Host logo (branding_logo_url → logo_url → fallback)
+      // 2️⃣ Host logo
       let logo = "/faninteractlogo.png";
       if (card.host_id) {
         const { data: hostRow, error: hostErr } = await supabase
@@ -129,7 +125,7 @@ export default function TriviaUserInterfacePage() {
       }
       if (!cancelled) setHostLogoUrl(logo);
 
-      // 3️⃣ Latest session for this card (waiting or running)
+      // 3️⃣ Latest session
       setLoadingMessage("Connecting to game session…");
 
       const { data: sessionRow, error: sessionErr } = await supabase
@@ -154,7 +150,7 @@ export default function TriviaUserInterfacePage() {
 
       setSession(sessionRow as TriviaSession);
 
-      // 4️⃣ Ensure we have this player row for the session
+      // 4️⃣ Player row
       setLoadingMessage("Finding your player seat…");
 
       const { data: playerRow, error: playerErr } = await supabase
@@ -175,7 +171,7 @@ export default function TriviaUserInterfacePage() {
 
       setPlayerId(playerRow.id);
 
-      // 5️⃣ Load active questions for the card (ordered)
+      // 5️⃣ Questions
       setLoadingMessage("Loading questions…");
 
       const { data: qs, error: qErr } = await supabase
@@ -209,7 +205,7 @@ export default function TriviaUserInterfacePage() {
   }, [gameId, profile?.id, router]);
 
   /* ---------------------------------------------------------
-     Poll trivia_sessions for current_question / status
+     Poll trivia_sessions for question/status
   --------------------------------------------------------- */
   useEffect(() => {
     if (!gameId || !session?.id) return;
@@ -239,7 +235,7 @@ export default function TriviaUserInterfacePage() {
   }, [session?.id, gameId]);
 
   /* ---------------------------------------------------------
-     Derived current question (1-based index)
+     Derived current question
   --------------------------------------------------------- */
   const timerSeconds: number = trivia?.timer_seconds ?? 30;
   const scoringMode: string = trivia?.scoring_mode ?? "100s";
@@ -256,71 +252,50 @@ export default function TriviaUserInterfacePage() {
   const isRunning = session?.status === "running";
 
   /* ---------------------------------------------------------
-     🟢 SMOOTH TIMER: requestAnimationFrame LOOP
-     - Anchored to session.question_started_at
-     - One source of time for UI + scoring
+     TIMER: one source of time (question_started_at)
   --------------------------------------------------------- */
   useEffect(() => {
     if (!isRunning || !currentQuestion) {
-      // Stop and reset when not running or no question
       setProgress(1);
-      setSecondsLeft(timerSeconds);
       setLocked(false);
       return;
     }
 
-    // Per-question UI reset
+    const durationMs = (timerSeconds || 30) * 1000;
+    const startedAtIso = session?.question_started_at;
+    const startedMs = startedAtIso
+      ? new Date(startedAtIso).getTime()
+      : Date.now();
+
+    // Reset per-question UI
     setSelectedIndex(null);
     setHasAnswered(false);
     setLocked(false);
     setShowAnswerOverlay(false);
     setRevealAnswer(false);
     setProgress(1);
-    setSecondsLeft(timerSeconds);
 
-    const durationMs = (timerSeconds || 30) * 1000;
-
-    const startedAtIso = session?.question_started_at;
-    const startedMs = startedAtIso
-      ? new Date(startedAtIso).getTime()
-      : Date.now();
-
-    let frameId: number | null = null;
-
-    const loop = () => {
+    const tick = () => {
       const now = Date.now();
       const elapsed = now - startedMs;
       const remaining = Math.max(0, durationMs - elapsed);
       const frac = remaining / durationMs;
 
-      // Smooth bar & numeric time
       setProgress(frac);
-      const secs = Math.max(0, Math.ceil(remaining / 1000));
-      setSecondsLeft(secs);
 
       if (remaining <= 0) {
         setLocked(true);
-        return;
       }
-
-      frameId = window.requestAnimationFrame(loop);
     };
 
-    // Run immediately
-    frameId = window.requestAnimationFrame(loop);
+    tick();
+    const id = window.setInterval(tick, 100); // 10 fps
 
     return () => {
-      if (frameId !== null) {
-        window.cancelAnimationFrame(frameId);
-      }
+      window.clearInterval(id);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    isRunning,
-    currentQuestion?.id,
-    timerSeconds,
-    session?.question_started_at,
-  ]);
+  }, [isRunning, currentQuestion?.id, timerSeconds, session?.question_started_at]);
 
   /* ---------------------------------------------------------
      If user refreshes mid-question, reflect existing answer
@@ -360,7 +335,7 @@ export default function TriviaUserInterfacePage() {
   }, [playerId, currentQuestion?.id]);
 
   /* ---------------------------------------------------------
-     Answer reveal flow (overlay → reveal)
+     Answer reveal flow
   --------------------------------------------------------- */
   useEffect(() => {
     if (!locked) {
@@ -381,7 +356,7 @@ export default function TriviaUserInterfacePage() {
   }, [locked]);
 
   /* ---------------------------------------------------------
-     Answer submission (⏱ uses computeTriviaPoints directly)
+     Answer submission
   --------------------------------------------------------- */
   async function handleSelectAnswer(idx: number) {
     if (!currentQuestion) return;
@@ -391,7 +366,6 @@ export default function TriviaUserInterfacePage() {
     setSelectedIndex(idx);
     setHasAnswered(true);
 
-    // Prevent duplicate answers
     const { data: existing, error: existingErr } = await supabase
       .from("trivia_answers")
       .select("id")
@@ -406,7 +380,6 @@ export default function TriviaUserInterfacePage() {
 
     const isCorrect = idx === currentQuestion.correct_index;
 
-    // ⭐ Only award points for correct answers
     const points = isCorrect
       ? computeTriviaPoints({
           scoringMode,
@@ -414,14 +387,6 @@ export default function TriviaUserInterfacePage() {
           questionStartedAt: session?.question_started_at ?? null,
         })
       : 0;
-
-    console.log("🎯 Trivia scoring debug", {
-      isCorrect,
-      scoringMode,
-      timerSeconds,
-      questionStartedAt: session?.question_started_at,
-      points,
-    });
 
     const { error: insertErr } = await supabase.from("trivia_answers").insert({
       player_id: playerId,
@@ -515,11 +480,6 @@ export default function TriviaUserInterfacePage() {
     );
   }
 
-  const baseSeconds = timerSeconds || 1;
-  const safeTimeLeft =
-    secondsLeft === null ? baseSeconds : Math.max(0, secondsLeft);
-  const minutes = Math.floor(safeTimeLeft / 60);
-  const seconds = safeTimeLeft % 60;
   const pctWidth = Math.max(0, Math.min(100, progress * 100));
 
   let footerText = "";
@@ -633,7 +593,7 @@ export default function TriviaUserInterfacePage() {
           </div>
         </div>
 
-        {/* TIMER BAR */}
+        {/* TIMER BAR — NO NUMBERS */}
         <div
           style={{
             marginBottom: 16,
@@ -648,27 +608,13 @@ export default function TriviaUserInterfacePage() {
         >
           <div
             style={{
-              position: "absolute",
-              inset: 0,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              fontSize: "0.85rem",
-              fontWeight: 700,
-              zIndex: 2,
-            }}
-          >
-            {minutes}:{seconds.toString().padStart(2, "0")}
-          </div>
-          <div
-            style={{
               height: "100%",
               width: `${pctWidth}%`,
               background:
                 locked || revealAnswer
                   ? "linear-gradient(90deg,#ef4444,#dc2626)"
                   : "linear-gradient(90deg,#22c55e,#16a34a,#15803d)",
-              transition: "width 0.08s linear, background 0.2s ease",
+              transition: "width 0.12s linear, background 0.2s ease",
             }}
           />
         </div>
@@ -785,7 +731,7 @@ export default function TriviaUserInterfacePage() {
           })}
         </div>
 
-        {/* AD SLOT PLACEHOLDER */}
+        {/* AD SLOT */}
         <div
           style={{
             marginBottom: 10,
@@ -861,7 +807,6 @@ export default function TriviaUserInterfacePage() {
         )}
       </div>
 
-      {/* 🔵 PULSE KEYFRAME FOR CORRECT ANSWER */}
       <style jsx global>{`
         @keyframes fiCorrectPulse {
           0% {
