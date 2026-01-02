@@ -24,13 +24,6 @@ function getStoredGuestProfile() {
   }
 }
 
-function parseCountdownSeconds(value?: string | null): number {
-  if (!value) return 10;
-  const [numStr] = value.split(" ");
-  const n = parseInt(numStr, 10);
-  return Number.isNaN(n) ? 10 : n;
-}
-
 interface TriviaSession {
   id: string;
   status: string;
@@ -71,15 +64,6 @@ export default function TriviaUserInterfacePage() {
   // 🎯 Timer engine ref
   const timerEngineRef = useRef<TriviaTimerEngine | null>(null);
 
-  // 🕒 Card-level countdown (same source of truth as walls)
-  const [cardStatus, setCardStatus] = useState<string | null>(null);
-  const [cardCountdown, setCardCountdown] = useState<string>("10 seconds");
-  const [cardCountdownActive, setCardCountdownActive] = useState(false);
-  const [cardCountdownStartedAt, setCardCountdownStartedAt] = useState<
-    string | null
-  >(null);
-  const [countdownNow, setCountdownNow] = useState<number>(() => Date.now());
-
   /* ---------------------------------------------------------
      Load guest profile
   --------------------------------------------------------- */
@@ -104,7 +88,7 @@ export default function TriviaUserInterfacePage() {
       setLoading(true);
       setLoadingMessage("Loading trivia game…");
 
-      // 1️⃣ Load trivia card (include countdown + status)
+      // 1️⃣ Load trivia card (include host_id so we can pull logo)
       const { data: card, error: cardErr } = await supabase
         .from("trivia_cards")
         .select(
@@ -113,11 +97,7 @@ export default function TriviaUserInterfacePage() {
           public_name,
           timer_seconds,
           scoring_mode,
-          host_id,
-          status,
-          countdown,
-          countdown_active,
-          countdown_started_at
+          host_id
         `
         )
         .eq("id", gameId)
@@ -133,12 +113,6 @@ export default function TriviaUserInterfacePage() {
       }
 
       setTrivia(card);
-
-      // Card-level timing state
-      setCardStatus(card.status ?? null);
-      setCardCountdown(card.countdown || "10 seconds");
-      setCardCountdownActive(card.countdown_active === true);
-      setCardCountdownStartedAt(card.countdown_started_at || null);
 
       // 2️⃣ Host logo (branding_logo_url → logo_url → fallback)
       let logo = "/faninteractlogo.png";
@@ -238,44 +212,6 @@ export default function TriviaUserInterfacePage() {
   }, [gameId, profile?.id, router]);
 
   /* ---------------------------------------------------------
-     Poll trivia_cards for live countdown/status
-     (keeps player UI in lock-step with walls)
-  --------------------------------------------------------- */
-  useEffect(() => {
-    if (!gameId) return;
-
-    let cancelled = false;
-
-    const pollCard = async () => {
-      const { data, error } = await supabase
-        .from("trivia_cards")
-        .select("status,countdown,countdown_active,countdown_started_at")
-        .eq("id", gameId)
-        .maybeSingle();
-
-      if (cancelled) return;
-
-      if (error || !data) {
-        if (error) console.error("❌ trivia_cards poll error:", error);
-        return;
-      }
-
-      setCardStatus(data.status ?? null);
-      setCardCountdown(data.countdown || "10 seconds");
-      setCardCountdownActive(data.countdown_active === true);
-      setCardCountdownStartedAt(data.countdown_started_at || null);
-    };
-
-    pollCard();
-    const id = window.setInterval(pollCard, 500);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(id);
-    };
-  }, [gameId]);
-
-  /* ---------------------------------------------------------
      Poll trivia_sessions for current_question / status
   --------------------------------------------------------- */
   useEffect(() => {
@@ -321,34 +257,6 @@ export default function TriviaUserInterfacePage() {
 
   const currentQuestion = questions[currentQuestionIndex] || null;
   const isRunning = session?.status === "running";
-
-  const hasSession = !!session;
-  const hasQuestions = questions.length > 0;
-  const hasCurrentQuestion = !!currentQuestion;
-
-  // Are we in the host countdown phase? (matches walls)
-  const isCountdownPhase =
-    !!cardCountdownActive &&
-    !!cardCountdownStartedAt &&
-    !isRunning &&
-    hasSession;
-
-  /* ---------------------------------------------------------
-     Countdown tick (card-level countdown)
-  --------------------------------------------------------- */
-  useEffect(() => {
-    if (!isCountdownPhase) return;
-
-    setCountdownNow(Date.now());
-
-    const id = window.setInterval(() => {
-      setCountdownNow(Date.now());
-    }, 250);
-
-    return () => {
-      window.clearInterval(id);
-    };
-  }, [isCountdownPhase, cardCountdownStartedAt]);
 
   /* ---------------------------------------------------------
      DB-synced timer engine using TriviaTimerEngine
@@ -613,68 +521,7 @@ export default function TriviaUserInterfacePage() {
     );
   }
 
-  // 🔔 PRE-GAME COUNTDOWN (runs BEFORE "waiting for host" check)
-  if (isCountdownPhase) {
-    const totalSeconds = parseCountdownSeconds(cardCountdown);
-    let remaining = totalSeconds;
-
-    if (cardCountdownStartedAt) {
-      const startMs = new Date(cardCountdownStartedAt).getTime();
-      const elapsed = Math.max(0, (countdownNow - startMs) / 1000);
-      remaining = Math.max(0, totalSeconds - elapsed);
-    }
-
-    const m = Math.floor(remaining / 60);
-    const s = Math.floor(remaining % 60);
-
-    return (
-      <div
-        style={{
-          minHeight: "100vh",
-          background:
-            "radial-gradient(circle at top,#1d4ed8 0,#020617 55%,#000 100%)",
-          color: "#fff",
-          padding: 20,
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          justifyContent: "center",
-          textAlign: "center",
-          gap: 16,
-        }}
-      >
-        <div
-          style={{
-            fontSize: "1rem",
-            opacity: 0.8,
-            marginBottom: 8,
-          }}
-        >
-          Game starting in…
-        </div>
-        <div
-          style={{
-            fontSize: "3rem",
-            fontWeight: 900,
-          }}
-        >
-          {m}:{s.toString().padStart(2, "0")}
-        </div>
-        <div
-          style={{
-            marginTop: 8,
-            fontSize: "0.9rem",
-            opacity: 0.75,
-          }}
-        >
-          Get ready, the first question will appear when this reaches 0.
-        </div>
-      </div>
-    );
-  }
-
-  // 🟡 No session / no questions / no current question yet (and not in countdown)
-  if (!hasSession || !hasQuestions || !hasCurrentQuestion) {
+  if (!session || !questions.length || !currentQuestion) {
     return (
       <div
         style={{
