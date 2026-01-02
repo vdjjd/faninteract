@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { getSupabaseClient } from "@/lib/supabaseClient";
 
 // 🔧 engine imports
-import { TriviaTimerEngine } from "@/lib/trivia/triviaTimerEngine";
+// ⛔ No longer using TriviaTimerEngine here; UI uses requestAnimationFrame
 import { computeTriviaPoints } from "@/lib/trivia/triviaScoringEngine";
 
 const supabase = getSupabaseClient();
@@ -54,15 +54,12 @@ export default function TriviaUserInterfacePage() {
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [hasAnswered, setHasAnswered] = useState(false);
 
-  // Timer + phases
-  const [progress, setProgress] = useState<number>(1); // 1 → 0 (kept for future, but bar uses secondsLeft)
+  // Timer + phases (lockstep with ActiveWall style)
+  const [progress, setProgress] = useState<number>(1); // 1 → 0 (bar)
   const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
   const [locked, setLocked] = useState(false);
   const [showAnswerOverlay, setShowAnswerOverlay] = useState(false);
   const [revealAnswer, setRevealAnswer] = useState(false);
-
-  // 🎯 Timer engine ref
-  const timerEngineRef = useRef<TriviaTimerEngine | null>(null);
 
   /* ---------------------------------------------------------
      Load guest profile
@@ -259,20 +256,20 @@ export default function TriviaUserInterfacePage() {
   const isRunning = session?.status === "running";
 
   /* ---------------------------------------------------------
-     DB-synced timer engine using TriviaTimerEngine
-     - Engine just gives us animation ticks; we anchor time to question_started_at
+     🟢 SMOOTH TIMER: requestAnimationFrame LOOP
+     - Anchored to session.question_started_at
+     - One source of time for UI + scoring
   --------------------------------------------------------- */
   useEffect(() => {
-    // if no running session or no question, stop engine
     if (!isRunning || !currentQuestion) {
-      if (timerEngineRef.current) {
-        timerEngineRef.current.stop();
-        timerEngineRef.current = null;
-      }
+      // Stop and reset when not running or no question
+      setProgress(1);
+      setSecondsLeft(timerSeconds);
+      setLocked(false);
       return;
     }
 
-    // Reset per-question UI state
+    // Per-question UI reset
     setSelectedIndex(null);
     setHasAnswered(false);
     setLocked(false);
@@ -282,68 +279,46 @@ export default function TriviaUserInterfacePage() {
     setSecondsLeft(timerSeconds);
 
     const durationMs = (timerSeconds || 30) * 1000;
-    const maxPoints =
-      scoringMode === "1000s" ? 1000 : scoringMode === "10000s" ? 10000 : 100;
 
-    const updateFromDbTime = () => {
-      const startedAtIso = session?.question_started_at;
-      const startedMs = startedAtIso
-        ? new Date(startedAtIso).getTime()
-        : Date.now();
+    const startedAtIso = session?.question_started_at;
+    const startedMs = startedAtIso
+      ? new Date(startedAtIso).getTime()
+      : Date.now();
 
+    let frameId: number | null = null;
+
+    const loop = () => {
       const now = Date.now();
       const elapsed = now - startedMs;
       const remaining = Math.max(0, durationMs - elapsed);
       const frac = remaining / durationMs;
 
+      // Smooth bar & numeric time
       setProgress(frac);
       const secs = Math.max(0, Math.ceil(remaining / 1000));
       setSecondsLeft(secs);
 
       if (remaining <= 0) {
         setLocked(true);
+        return;
       }
+
+      frameId = window.requestAnimationFrame(loop);
     };
 
     // Run immediately
-    updateFromDbTime();
-
-    // Stop any previous engine
-    if (timerEngineRef.current) {
-      timerEngineRef.current.stop();
-      timerEngineRef.current = null;
-    }
-
-    const engine = new TriviaTimerEngine(
-      {
-        durationMs,
-        maxPoints, // fed from scoringMode so config is consistent
-      },
-      {
-        onTick: () => {
-          // We ignore engine's own internal clock and
-          // keep everything anchored to question_started_at
-          updateFromDbTime();
-        },
-        onComplete: () => {
-          updateFromDbTime();
-          setLocked(true);
-        },
-      }
-    );
-
-    timerEngineRef.current = engine;
-    engine.start();
+    frameId = window.requestAnimationFrame(loop);
 
     return () => {
-      engine.stop();
-      timerEngineRef.current = null;
+      if (frameId !== null) {
+        window.cancelAnimationFrame(frameId);
+      }
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     isRunning,
     currentQuestion?.id,
     timerSeconds,
-    scoringMode,
     session?.question_started_at,
   ]);
 
@@ -400,7 +375,7 @@ export default function TriviaUserInterfacePage() {
     const overlayId = window.setTimeout(() => {
       setShowAnswerOverlay(false);
       setRevealAnswer(true);
-    }, 5000); // 5s overlay to match wall
+    }, 3000);
 
     return () => window.clearTimeout(overlayId);
   }, [locked]);
@@ -540,12 +515,12 @@ export default function TriviaUserInterfacePage() {
     );
   }
 
-  // ✅ Drive bar directly from secondsLeft (which we KNOW is updating)
   const baseSeconds = timerSeconds || 1;
   const safeTimeLeft =
     secondsLeft === null ? baseSeconds : Math.max(0, secondsLeft);
-  const timeFraction = Math.min(1, Math.max(0, safeTimeLeft / baseSeconds));
-  const pctWidth = timeFraction * 100;
+  const minutes = Math.floor(safeTimeLeft / 60);
+  const seconds = safeTimeLeft % 60;
+  const pctWidth = Math.max(0, Math.min(100, progress * 100));
 
   let footerText = "";
   if (!isRunning) {
@@ -658,7 +633,7 @@ export default function TriviaUserInterfacePage() {
           </div>
         </div>
 
-        {/* TIMER BAR (bar only, no numbers) */}
+        {/* TIMER BAR */}
         <div
           style={{
             marginBottom: 16,
@@ -673,13 +648,27 @@ export default function TriviaUserInterfacePage() {
         >
           <div
             style={{
+              position: "absolute",
+              inset: 0,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontSize: "0.85rem",
+              fontWeight: 700,
+              zIndex: 2,
+            }}
+          >
+            {minutes}:{seconds.toString().padStart(2, "0")}
+          </div>
+          <div
+            style={{
               height: "100%",
               width: `${pctWidth}%`,
               background:
                 locked || revealAnswer
                   ? "linear-gradient(90deg,#ef4444,#dc2626)"
                   : "linear-gradient(90deg,#22c55e,#16a34a,#15803d)",
-              transition: "width 0.1s linear, background 0.2s ease",
+              transition: "width 0.08s linear, background 0.2s ease",
             }}
           />
         </div>
