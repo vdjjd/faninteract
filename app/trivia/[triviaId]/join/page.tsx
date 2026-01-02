@@ -146,11 +146,11 @@ export default function TriviaJoinPage() {
     let cancelled = false;
 
     async function loadTrivia() {
-      // Load trivia card + host in one query (like fan_walls)
+      // Step 1: load trivia card with host_id
       const { data, error } = await supabase
         .from("trivia_cards")
         .select(
-          "id, public_name, background_type, background_value, require_selfie, host:host_id (id, branding_logo_url, logo_url)"
+          "id, public_name, background_type, background_value, require_selfie, host_id"
         )
         .eq("id", triviaId)
         .maybeSingle();
@@ -171,7 +171,30 @@ export default function TriviaJoinPage() {
         return;
       }
 
-      setTrivia(data);
+      // Step 2: load host row explicitly if host_id exists
+      let host: any = null;
+      if (data.host_id) {
+        const { data: hostRow, error: hostErr } = await supabase
+          .from("hosts")
+          .select("id, venue_name, branding_logo_url, logo_url")
+          .eq("id", data.host_id)
+          .maybeSingle();
+
+        if (hostErr) {
+          console.error("Load trivia host error:", hostErr);
+        }
+
+        if (hostRow) {
+          host = hostRow;
+        }
+      }
+
+      const combined = { ...data, host };
+      console.log("Trivia join combined record:", combined);
+
+      if (!cancelled) {
+        setTrivia(combined);
+      }
     }
 
     loadTrivia();
@@ -536,6 +559,12 @@ export default function TriviaJoinPage() {
       trivia.host.logo_url.trim()) ||
     "/faninteractlogo.png";
 
+  const debugHost = JSON.stringify(
+    { host: trivia.host, computedLogo: logo },
+    null,
+    2
+  );
+
   return (
     <div
       style={{
@@ -766,6 +795,22 @@ export default function TriviaJoinPage() {
         >
           Your selfie may be shown on the big screen after host approval.
         </p>
+
+        {/* Debug box - safe to remove once you're happy */}
+        <pre
+          style={{
+            marginTop: 16,
+            fontSize: 10,
+            textAlign: "left",
+            maxHeight: 120,
+            overflow: "auto",
+            background: "rgba(0,0,0,0.6)",
+            padding: 8,
+            borderRadius: 8,
+          }}
+        >
+          {debugHost}
+        </pre>
       </form>
     </div>
   );
