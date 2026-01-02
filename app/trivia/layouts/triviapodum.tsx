@@ -1,125 +1,77 @@
-'use client';
+"use client";
 
-import { useEffect, useState, useRef } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { QRCodeCanvas } from 'qrcode.react';
-import React from 'react';
+import React, { useEffect, useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import { getSupabaseClient } from "@/lib/supabaseClient";
 
-/* ---------------------------------------------------- */
-/*  TRANSITION RESOLVER (UNCHANGED)                     */
-/* ---------------------------------------------------- */
+const supabase = getSupabaseClient();
 
-const SPEED_MAP: Record<string, number> = {
-  Slow: 1.2,
-  Medium: 0.7,
-  Fast: 0.35,
-};
+/* ---------- TYPES ---------- */
 
-function resolveTransition(type?: string, speed?: string) {
-  const duration = SPEED_MAP[speed || 'Medium'] ?? 0.7;
-
-  if (type === 'Random') {
-    const options = [
-      'Fade In / Fade Out',
-      'Slide Left / Slide Right',
-      'Slide Right / Slide Left',
-      'Slide Up / Slide Out',
-      'Slide Down / Slide Out',
-      'Zoom In / Zoom Out',
-      'Zoom Out / Zoom In',
-      'Flip',
-      'Rotate In / Rotate Out',
-    ];
-    type = options[Math.floor(Math.random() * options.length)];
-  }
-
-  switch (type) {
-    case 'Slide Left / Slide Right':
-      return {
-        initial: { opacity: 0, x: 120 },
-        animate: { opacity: 1, x: 0 },
-        exit: { opacity: 0, x: -120 },
-        transition: { duration, ease: 'easeOut' },
-      };
-
-    case 'Slide Right / Slide Left':
-      return {
-        initial: { opacity: 0, x: -120 },
-        animate: { opacity: 1, x: 0 },
-        exit: { opacity: 0, x: 120 },
-        transition: { duration, ease: 'easeOut' },
-      };
-
-    case 'Slide Up / Slide Out':
-      return {
-        initial: { opacity: 0, y: 80 },
-        animate: { opacity: 1, y: 0 },
-        exit: { opacity: 0, y: -80 },
-        transition: { duration, ease: 'easeOut' },
-      };
-
-    case 'Slide Down / Slide Out':
-      return {
-        initial: { opacity: 0, y: -80 },
-        animate: { opacity: 1, y: 0 },
-        exit: { opacity: 0, y: 80 },
-        transition: { duration, ease: 'easeOut' },
-      };
-
-    case 'Zoom In / Zoom Out':
-      return {
-        initial: { opacity: 0, scale: 0.7 },
-        animate: { opacity: 1, scale: 1 },
-        exit: { opacity: 0, scale: 1.2 },
-        transition: { duration },
-      };
-
-    case 'Zoom Out / Zoom In':
-      return {
-        initial: { opacity: 0, scale: 1.2 },
-        animate: { opacity: 1, scale: 1 },
-        exit: { opacity: 0, scale: 0.7 },
-        transition: { duration },
-      };
-
-    case 'Flip':
-      return {
-        initial: { opacity: 0, rotateY: 90 },
-        animate: { opacity: 1, rotateY: 0 },
-        exit: { opacity: 0, rotateY: -90 },
-        transition: { duration, ease: 'easeOut' },
-      };
-
-    case 'Rotate In / Rotate Out':
-      return {
-        initial: { opacity: 0, rotate: -15 },
-        animate: { opacity: 1, rotate: 0 },
-        exit: { opacity: 0, rotate: 15 },
-        transition: { duration, ease: 'easeOut' },
-      };
-
-    case 'Fade In / Fade Out':
-    default:
-      return {
-        initial: { opacity: 0 },
-        animate: { opacity: 1 },
-        exit: { opacity: 0 },
-        transition: { duration },
-      };
-  }
+interface TriviaPodiumProps {
+  trivia: any; // same object you pass into TriviaActiveWall
 }
 
-/* ---------------------------------------------------- */
-/*  STYLE CONTROL BLOCK                                  */
-/* ---------------------------------------------------- */
+type PodiumRow = {
+  placeLabel: "1st" | "2nd" | "3rd";
+  rank: number; // numeric rank (1,2,3)
+  playerId: string;
+  guestId?: string | null;
+  name: string;
+  selfieUrl?: string | null;
+  points: number;
+};
+
+/* ---------- DISPLAY CONSTANTS ---------- */
+
+const STEP_DURATION_MS = 5000; // 5 seconds between 3rd → 2nd → 1st
+
+const fallbackLogo = "/faninteractlogo.png";
+const fallbackPhoto = "/fallback.png";
+
+/* ---------- HELPERS (same logic flavor as wall) ---------- */
+
+function formatName(first?: string, last?: string) {
+  const f = (first || "").trim();
+  const l = (last || "").trim();
+  const li = l ? `${l[0].toUpperCase()}.` : "";
+  return `${f}${li ? " " + li : ""}`.trim() || "Player";
+}
+
+function formatDisplayName(display?: string) {
+  const raw = (display || "").trim().replace(/\s+/g, " ");
+  if (!raw) return "Player";
+
+  const parts = raw.split(" ").filter(Boolean);
+  const first = parts[0] || "";
+  const last = parts.length > 1 ? parts[parts.length - 1] : "";
+  const li = last ? `${last[0].toUpperCase()}.` : "";
+
+  return `${first}${li ? " " + li : ""}`.trim() || "Player";
+}
+
+function pickSelfieUrl(guest: any): string | null {
+  return (
+    guest?.selfie_url ||
+    guest?.photo_url ||
+    guest?.avatar_url ||
+    guest?.image_url ||
+    guest?.selfie ||
+    guest?.photo ||
+    guest?.profile_photo_url ||
+    null
+  );
+}
+
+/* ---------- STYLES (adapted from SingleHighlight look) ---------- */
 
 const STYLE: Record<string, React.CSSProperties> = {
   title: {
-    color: '#fff',
-    marginTop: '-9vh',
-    marginBottom: '-1vh',
+    color: "#fff",
+    marginTop: "-9vh",
+    marginBottom: "-1vh",
     fontWeight: 900,
-    fontSize: 'clamp(2.5rem,4vw,5rem)',
+    fontSize: "clamp(2.5rem,4vw,5rem)",
     textShadow: `
       2px 2px 2px #000,
       -2px 2px 2px #000,
@@ -133,20 +85,20 @@ const STYLE: Record<string, React.CSSProperties> = {
   },
 
   greyBar: {
-    width: '90%',
-    height: '14px',
-    marginTop: '2vh',
-    marginBottom: '2vh',
-    marginLeft: '3.5%',
-    background: 'linear-gradient(to right, #000, #4444)',
-    borderRadius: '6px',
+    width: "90%",
+    height: "14px",
+    marginTop: "2vh",
+    marginBottom: "2vh",
+    marginLeft: "3.5%",
+    background: "linear-gradient(to right, #000, #4444)",
+    borderRadius: "6px",
   },
 
-  nickname: {
-    fontSize: 'clamp(3rem,4vw,5rem)',
+  placeText: {
+    fontSize: "clamp(2.4rem,3.4vw,4rem)",
     fontWeight: 900,
-    color: '#fff',
-    textTransform: 'uppercase',
+    color: "#ffffff",
+    textTransform: "uppercase",
     margin: 0,
     textShadow: `
       2px 2px 2px #000,
@@ -154,339 +106,406 @@ const STYLE: Record<string, React.CSSProperties> = {
       2px -2px 2px #000,
       -2px -2px 2px #000
     `,
+    letterSpacing: "0.08em",
   },
 
-  // Invisible box that defines the available message area
-  messageBox: {
-    width: '90%',
-    height: 'clamp(120px, 30vh, 220px)', // adjust this to change the zone
-    marginTop: '2vh',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    boxSizing: 'border-box',
-    overflow: 'hidden', // text must stay inside this
-  },
-
-  // Text itself; font-size is controlled in JS so we don't set it here
-  message: {
-    color: '#fff',
-    textAlign: 'center',
-    maxWidth: '100%',
-    margin: 0,
-    fontWeight: 600,
+  name: {
+    fontSize: "clamp(2.4rem,3.2vw,3.6rem)",
+    fontWeight: 900,
+    color: "#ffffff",
+    marginTop: "1.4vh",
+    marginBottom: "0.6vh",
     textShadow: `
       2px 2px 2px #000,
       -2px 2px 2px #000,
       2px -2px 2px #000,
       -2px -2px 2px #000
     `,
-    wordWrap: 'break-word',
-    overflow: 'hidden',
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    maxWidth: "88%",
+    textAlign: "center",
   },
 
-  scanText: {
-    color: '#fff',
+  points: {
+    fontSize: "clamp(1.4rem,2vw,2.2rem)",
     fontWeight: 700,
-    marginBottom: '0.6vh',
-    fontSize: 'clamp(1rem,1.4vw,1.4rem)',
-  },
-
-  qrWrapper: {
-    padding: '4px',
-    borderRadius: '20px',
-    background: 'rgba(255,255,255,0.10)',
-    boxShadow: '0 0 25px rgba(255,255,255,0.6), 0 0 40px rgba(255,255,255,0.3)',
-  },
-
-  qrContainer: {
-    position: 'absolute',
-    bottom: '4vh',
-    left: '2vw',
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
+    color: "rgba(255,255,255,0.9)",
+    marginTop: "0.4vh",
+    textShadow: `
+      2px 2px 2px #000,
+      -2px 2px 2px #000,
+      2px -2px 2px #000,
+      -2px -2px 2px #000
+    `,
   },
 };
 
-/* ---------------------------------------------------- */
-/*      BADGE + VISIT CONTROL (BACK TO ORIGINAL)        */
-/* ---------------------------------------------------- */
+/* ---------- COMPONENT ---------- */
 
-const BADGE_CTRL = {
-  badge: {
-    bottom: '0vh',
-    right: '48vw',
-    size: 150,
-  },
-  visits: {
-    bottom: '10.5vh',
-    right: '44vw',
-  },
-};
-
-/* ---------------------------------------------------- */
-/*      SingleHighlightWall                              */
-/* ---------------------------------------------------- */
-
-export default function SingleHighlightWall({
-  event,
-  posts,
-  tickSubmissionDisplayed,
-  pauseFlag,
-}: any) {
-  const [livePosts, setLivePosts] = useState(posts || []);
+export default function TriviaPodum({ trivia }: TriviaPodiumProps) {
+  const [podiumRows, setPodiumRows] = useState<PodiumRow[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
+  const [loading, setLoading] = useState(true);
 
-  const messageBoxRef = useRef<HTMLDivElement | null>(null);
-  const messageTextRef = useRef<HTMLParagraphElement | null>(null);
+  const logoSrc =
+    trivia?.host?.branding_logo_url?.trim() ||
+    trivia?.host?.logo_url?.trim() ||
+    fallbackLogo;
 
-  const title = event?.title || 'Fan Zone Wall';
+  const title = trivia?.title || "Trivia Podium";
 
-  const logo =
-    event?.host?.branding_logo_url?.trim()
-      ? event.host.branding_logo_url
-      : '/faninteractlogo.png';
-
-  const bg =
-    event?.background_type === 'image'
-      ? `url(${event.background_value}) center/cover no-repeat`
-      : event?.background_value || 'linear-gradient(135deg,#1b2735,#090a0f)';
-
-  const brightness = event?.background_brightness ?? 100;
-
-  const motionPreset = resolveTransition(
-    event?.post_transition,
-    event?.transition_speed
-  );
-
+  /* --- Load final leaderboard & build top 3 --- */
   useEffect(() => {
-    setLivePosts(posts || []);
-    setCurrentIndex(0);
-  }, [posts]);
+    if (!trivia?.id) return;
 
-  useEffect(() => {
-    if (!livePosts.length) return;
+    let cancelled = false;
 
-    const interval = setInterval(() => {
-      if (pauseFlag.current) return;
-      tickSubmissionDisplayed();
-      setCurrentIndex(i => (i + 1) % livePosts.length);
-    }, 8000);
+    async function loadPodium() {
+      try {
+        setLoading(true);
 
-    return () => clearInterval(interval);
-  }, [livePosts.length, pauseFlag, tickSubmissionDisplayed]);
+        // Latest session for this trivia card (running or just finished)
+        const { data: session, error: sessionErr } = await supabase
+          .from("trivia_sessions")
+          .select("id,status,created_at")
+          .eq("trivia_card_id", trivia.id)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
 
-  const current = livePosts[currentIndex] || null;
+        if (sessionErr || !session?.id) {
+          console.error("❌ podium session fetch error:", sessionErr);
+          if (!cancelled) setPodiumRows([]);
+          return;
+        }
 
-  // 🔧 Auto-scale message text to fit inside the messageBox
-  useEffect(() => {
-    const box = messageBoxRef.current;
-    const textEl = messageTextRef.current;
+        // Approved players
+        const { data: players, error: playersErr } = await supabase
+          .from("trivia_players")
+          .select("id,status,guest_id,display_name,photo_url")
+          .eq("session_id", session.id)
+          .eq("status", "approved");
 
-    if (!box || !textEl) return;
+        if (playersErr || !players || players.length === 0) {
+          console.error("❌ podium players fetch error:", playersErr);
+          if (!cancelled) setPodiumRows([]);
+          return;
+        }
 
-    let fontSize = 56; // px – starting size
-    textEl.style.fontSize = `${fontSize}px`;
+        const playerIds = players.map((p: any) => p.id);
+        const guestIds = players.map((p: any) => p.guest_id).filter(Boolean);
 
-    const adjust = () => {
-      if (!box || !textEl) return;
+        // All answers to compute total points
+        const { data: answers, error: answersErr } = await supabase
+          .from("trivia_answers")
+          .select("player_id,points")
+          .in("player_id", playerIds);
 
-      let iterations = 0;
-      const minFont = 10;
+        if (answersErr) {
+          console.error("❌ podium answers fetch error:", answersErr);
+          if (!cancelled) setPodiumRows([]);
+          return;
+        }
 
-      while (
-        textEl.scrollHeight > box.clientHeight &&
-        fontSize > minFont &&
-        iterations < 50
-      ) {
-        fontSize -= 2;
-        textEl.style.fontSize = `${fontSize}px`;
-        iterations++;
+        const totals = new Map<string, number>();
+        for (const a of answers || []) {
+          const pts = typeof a.points === "number" ? a.points : 0;
+          totals.set(a.player_id, (totals.get(a.player_id) || 0) + pts);
+        }
+
+        // Guest data for names/selfies
+        const guestMap = new Map<
+          string,
+          { name: string; selfieUrl: string | null }
+        >();
+
+        if (guestIds.length > 0) {
+          const { data: guests, error: guestsErr } = await supabase
+            .from("guest_profiles")
+            .select(
+              "id,first_name,last_name,photo_url,selfie_url,avatar_url,image_url,profile_photo_url"
+            )
+            .in("id", guestIds);
+
+          if (guestsErr) {
+            console.warn("⚠️ podium guest_profiles fetch error:", guestsErr);
+          } else {
+            for (const g of guests || []) {
+              guestMap.set(g.id, {
+                name: formatName(g?.first_name, g?.last_name),
+                selfieUrl: pickSelfieUrl(g),
+              });
+            }
+          }
+        }
+
+        const baseRows = players
+          .map((p: any) => {
+            const guest = p.guest_id ? guestMap.get(p.guest_id) : undefined;
+            const safeName = guest?.name || formatDisplayName(p.display_name);
+            const safeSelfie = guest?.selfieUrl || p.photo_url || null;
+
+            return {
+              rank: 0,
+              playerId: p.id,
+              guestId: p.guest_id,
+              name: safeName,
+              selfieUrl: safeSelfie,
+              points: totals.get(p.id) || 0,
+            };
+          })
+          .sort((a: any, b: any) => b.points - a.points)
+          .map((r: any, idx: number) => ({ ...r, rank: idx + 1 }));
+
+        if (!baseRows.length) {
+          if (!cancelled) setPodiumRows([]);
+          return;
+        }
+
+        const top = baseRows.slice(0, 3);
+
+        const podium: PodiumRow[] = [];
+
+        if (top.length === 1) {
+          podium.push({
+            placeLabel: "1st",
+            rank: 1,
+            playerId: top[0].playerId,
+            guestId: top[0].guestId,
+            name: top[0].name,
+            selfieUrl: top[0].selfieUrl,
+            points: top[0].points,
+          });
+        } else if (top.length === 2) {
+          // show 2nd then 1st
+          podium.push({
+            placeLabel: "2nd",
+            rank: 2,
+            playerId: top[1].playerId,
+            guestId: top[1].guestId,
+            name: top[1].name,
+            selfieUrl: top[1].selfieUrl,
+            points: top[1].points,
+          });
+          podium.push({
+            placeLabel: "1st",
+            rank: 1,
+            playerId: top[0].playerId,
+            guestId: top[0].guestId,
+            name: top[0].name,
+            selfieUrl: top[0].selfieUrl,
+            points: top[0].points,
+          });
+        } else {
+          // 3 players: show 3rd → 2nd → 1st
+          podium.push({
+            placeLabel: "3rd",
+            rank: 3,
+            playerId: top[2].playerId,
+            guestId: top[2].guestId,
+            name: top[2].name,
+            selfieUrl: top[2].selfieUrl,
+            points: top[2].points,
+          });
+          podium.push({
+            placeLabel: "2nd",
+            rank: 2,
+            playerId: top[1].playerId,
+            guestId: top[1].guestId,
+            name: top[1].name,
+            selfieUrl: top[1].selfieUrl,
+            points: top[1].points,
+          });
+          podium.push({
+            placeLabel: "1st",
+            rank: 1,
+            playerId: top[0].playerId,
+            guestId: top[0].guestId,
+            name: top[0].name,
+            selfieUrl: top[0].selfieUrl,
+            points: top[0].points,
+          });
+        }
+
+        if (!cancelled) {
+          setPodiumRows(podium);
+          setCurrentIndex(0);
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
       }
+    }
+
+    loadPodium();
+
+    return () => {
+      cancelled = true;
     };
+  }, [trivia?.id]);
 
-    const id = requestAnimationFrame(adjust);
-    return () => cancelAnimationFrame(id);
-  }, [currentIndex, current?.message]);
+  /* --- Step 3rd → 2nd → 1st every 5s, winner stays --- */
+  useEffect(() => {
+    if (!podiumRows.length) return;
 
-  const origin =
-    typeof window !== 'undefined'
-      ? window.location.origin
-      : 'https://faninteract.vercel.app';
+    // if only 1 row or we are already on last index, keep winner there
+    if (podiumRows.length === 1 || currentIndex >= podiumRows.length - 1) {
+      return;
+    }
+
+    const id = window.setTimeout(() => {
+      setCurrentIndex((prev) =>
+        Math.min(prev + 1, podiumRows.length - 1)
+      );
+    }, STEP_DURATION_MS);
+
+    return () => window.clearTimeout(id);
+  }, [podiumRows, currentIndex]);
+
+  const current = podiumRows[currentIndex] || null;
 
   return (
     <div
       style={{
-        width: '100vw',        // back to explicit viewport sizing
-        height: '100vh',
-        background: bg,
-        filter: `brightness(${brightness}%)`,
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        overflow: 'hidden',
-        position: 'relative',
+        width: "100vw",
+        height: "100vh",
+        background: "linear-gradient(135deg,#1b2735,#090a0f)",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        overflow: "hidden",
+        position: "relative",
       }}
     >
+      {/* Title */}
       <h1 style={STYLE.title}>{title}</h1>
 
       {/* MAIN CARD */}
       <div
         style={{
-          width: 'min(92vw,1800px)',
-          height: 'min(83vh,950px)',
-          background: 'rgba(255,255,255,0.08)',
-          backdropFilter: 'blur(20px)',
+          width: "min(92vw,1800px)",
+          height: "min(83vh,950px)",
+          background: "rgba(255,255,255,0.08)",
+          backdropFilter: "blur(20px)",
           borderRadius: 24,
-          border: '1px solid rgba(255,255,255,0.15)',
-          position: 'relative',
-          overflow: 'hidden',
-          display: 'flex',
+          border: "1px solid rgba(255,255,255,0.15)",
+          position: "relative",
+          overflow: "hidden",
+          display: "flex",
         }}
       >
-        {/* Left Photo */}
+        {/* LEFT PHOTO AREA */}
         <div
           style={{
-            position: 'absolute',
-            top: '4%',
-            left: '2%',
-            width: '46%',
-            height: '92%',
+            position: "absolute",
+            top: "4%",
+            left: "2%",
+            width: "46%",
+            height: "92%",
             borderRadius: 18,
-            overflow: 'hidden',
+            overflow: "hidden",
+            background: "rgba(0,0,0,0.4)",
           }}
         >
           <AnimatePresence mode="wait">
-            <motion.img
-              key={`${current?.id || 'blank'}-${currentIndex}`}
-              src={current?.photo_url || '/fallback.png'}
-              {...motionPreset}
-              style={{
-                width: '100%',
-                height: '100%',
-                objectFit: 'cover',
-                borderRadius: 18,
-              }}
-            />
+            {current && (
+              <motion.img
+                key={current.playerId}
+                src={current.selfieUrl || fallbackPhoto}
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 1.05 }}
+                transition={{ duration: 0.6, ease: "easeOut" }}
+                style={{
+                  width: "100%",
+                  height: "100%",
+                  objectFit: "cover",
+                  borderRadius: 18,
+                }}
+              />
+            )}
           </AnimatePresence>
         </div>
 
-        {/* Right Panel */}
+        {/* RIGHT PANEL */}
         <div
           style={{
             flexGrow: 1,
-            marginLeft: '46%',
-            paddingTop: '4vh',
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            position: 'relative',
+            marginLeft: "46%",
+            paddingTop: "4vh",
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            position: "relative",
           }}
         >
-          {/* Logo */}
+          {/* LOGO */}
           <div
             style={{
-              width: 'clamp(400px,28vw,380px)',
-              height: 'clamp(180px,18vw,260px)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
+              width: "clamp(320px,26vw,380px)",
+              height: "clamp(150px,16vw,240px)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
             }}
           >
             <img
-              src={logo}
+              src={logoSrc}
+              alt="Host Logo"
               style={{
-                width: '100%',
-                height: '100%',
-                objectFit: 'contain',
-                filter: 'drop-shadow(0 0 14px rgba(0,0,0,0.85))',
+                width: "100%",
+                height: "100%",
+                objectFit: "contain",
+                filter: "drop-shadow(0 0 14px rgba(0,0,0,0.85))",
               }}
             />
           </div>
 
+          {/* GREY BAR */}
           <div style={STYLE.greyBar} />
 
-          {/* Nickname */}
-          <p style={STYLE.nickname}>{current?.nickname || 'Guest'}</p>
+          {/* PLACE + NAME + POINTS */}
+          <AnimatePresence mode="wait">
+            {current && (
+              <motion.div
+                key={current.playerId}
+                initial={{ opacity: 0, y: 30 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -30 }}
+                transition={{ duration: 0.6, ease: "easeOut" }}
+                style={{
+                  marginTop: "1vh",
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                }}
+              >
+                <p style={STYLE.placeText}>
+                  IN {current.placeLabel.toUpperCase()} PLACE
+                </p>
+                <p style={STYLE.name}>{current.name}</p>
+                <p style={STYLE.points}>{current.points} pts</p>
+              </motion.div>
+            )}
+          </AnimatePresence>
 
-          {/* Invisible Message Box that auto-scales text to fit */}
-          <div style={STYLE.messageBox} ref={messageBoxRef}>
-            <p style={STYLE.message} ref={messageTextRef}>
-              {current?.message || ''}
-            </p>
-          </div>
+          {/* Loading / No data fallback */}
+          {!loading && !current && (
+            <div
+              style={{
+                marginTop: "6vh",
+                color: "#fff",
+                fontSize: "1.6rem",
+                opacity: 0.8,
+              }}
+            >
+              Waiting for final scores…
+            </div>
+          )}
         </div>
       </div>
-
-      {/* QR (bottom-left) */}
-      <div style={STYLE.qrContainer}>
-        <p style={STYLE.scanText}>Scan Me To Join</p>
-        <div style={STYLE.qrWrapper}>
-          <QRCodeCanvas
-            value={`${origin}/guest/signup?wall=${event?.id}`}
-            size={210}
-            level="H"
-            bgColor="#fff"
-            fgColor="#000"
-            style={{ borderRadius: 12 }}
-          />
-        </div>
-      </div>
-
-      {/* BADGE (back to original anchoring) */}
-      {current?.badge_icon_url && (
-        <div
-          style={{
-            position: 'absolute',
-            bottom: BADGE_CTRL.badge.bottom,
-            right: BADGE_CTRL.badge.right,
-            width: BADGE_CTRL.badge.size,
-            height: BADGE_CTRL.badge.size,
-            zIndex: 20,
-            pointerEvents: 'none',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}
-        >
-          <img
-            src={current.badge_icon_url}
-            alt="Badge"
-            style={{
-              maxWidth: '100%',
-              maxHeight: '100%',
-              objectFit: 'contain',
-              filter: 'drop-shadow(0 0 10px rgba(0,0,0,0.8))',
-            }}
-          />
-        </div>
-      )}
-
-      {/* VISIT COUNT */}
-      {typeof current?.visit_count === 'number' && (
-        <div
-          style={{
-            position: 'absolute',
-            bottom: BADGE_CTRL.visits.bottom,
-            right: BADGE_CTRL.visits.right,
-            zIndex: 21,
-            padding: '6px 14px',
-            borderRadius: '999px',
-            background: 'rgba(0,0,0,0.65)',
-            backdropFilter: 'blur(6px)',
-            color: '#fff',
-            fontWeight: 800,
-            fontSize: '1.1rem',
-            textShadow: '1px 1px 2px #000',
-            pointerEvents: 'none',
-            boxShadow: '0 0 10px rgba(0,0,0,0.6)',
-          }}
-        >
-          Visit #{current.visit_count}
-        </div>
-      )}
     </div>
   );
 }
