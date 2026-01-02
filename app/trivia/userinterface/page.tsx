@@ -32,7 +32,7 @@ interface TriviaSession {
   question_started_at: string | null;
 }
 
-/* ---------- COUNTDOWN COMPONENT (shared with InactiveWall) ---------- */
+/* ---------- COUNTDOWN COMPONENT (shared-ish with InactiveWall) ---------- */
 function CountdownDisplay({
   countdown,
   countdownActive,
@@ -128,7 +128,7 @@ export default function TriviaUserInterfacePage() {
   // 🎯 Timer engine ref
   const timerEngineRef = useRef<TriviaTimerEngine | null>(null);
 
-  // 📺 Card-level countdown (matches InactiveWall)
+  // 📺 Card-level countdown (matches walls)
   const [cardStatus, setCardStatus] = useState<string | null>(null);
   const [cardCountdown, setCardCountdown] = useState<string>("10 seconds");
   const [cardCountdownActive, setCardCountdownActive] = useState(false);
@@ -150,7 +150,7 @@ export default function TriviaUserInterfacePage() {
 
   /* ---------------------------------------------------------
      Initial load: trivia card, host logo, session, player row, questions
-     (this is your ORIGINAL working flow)
+     (same logic as your original, plus countdown fields)
   --------------------------------------------------------- */
   useEffect(() => {
     if (!gameId || !profile?.id) return;
@@ -293,8 +293,8 @@ export default function TriviaUserInterfacePage() {
   }, [gameId, profile?.id, router]);
 
   /* ---------------------------------------------------------
-     Poll trivia_cards for live countdown/status (keeps in sync with walls)
-     (this does NOT touch session/questions, just countdown)
+     Poll trivia_cards for live countdown/status
+     (keeps countdown in sync with wall; does NOT touch session/questions)
   --------------------------------------------------------- */
   useEffect(() => {
     if (!gameId) return;
@@ -324,7 +324,7 @@ export default function TriviaUserInterfacePage() {
     };
 
     pollCard();
-    const id = window.setInterval(pollCard, 500); // a bit tighter
+    const id = window.setInterval(pollCard, 500);
 
     return () => {
       cancelled = true;
@@ -334,7 +334,7 @@ export default function TriviaUserInterfacePage() {
 
   /* ---------------------------------------------------------
      Poll trivia_sessions for current_question / status
-     (this is your ORIGINAL polling, based on session.id)
+     (identical idea to your original: keyed on session.id)
   --------------------------------------------------------- */
   useEffect(() => {
     if (!gameId || !session?.id) return;
@@ -380,7 +380,7 @@ export default function TriviaUserInterfacePage() {
   const currentQuestion = questions[currentQuestionIndex] || null;
   const isRunning = session?.status === "running";
 
-  // Are we in the host countdown phase? (card-level)
+  // Are we in the host countdown phase (card-level, like InactiveWall)?
   const isCountdownPhase =
     !!cardCountdownActive &&
     !!cardCountdownStartedAt &&
@@ -388,7 +388,6 @@ export default function TriviaUserInterfacePage() {
 
   /* ---------------------------------------------------------
      DB-synced timer engine using TriviaTimerEngine
-     - Engine just gives us animation ticks; we anchor time to question_started_at
   --------------------------------------------------------- */
   useEffect(() => {
     // if no running session or no question, stop engine
@@ -445,12 +444,10 @@ export default function TriviaUserInterfacePage() {
     const engine = new TriviaTimerEngine(
       {
         durationMs,
-        maxPoints, // fed from scoringMode so config is consistent
+        maxPoints,
       },
       {
         onTick: () => {
-          // We ignore engine's own internal clock and
-          // keep everything anchored to question_started_at
           updateFromDbTime();
         },
         onComplete: () => {
@@ -534,7 +531,7 @@ export default function TriviaUserInterfacePage() {
   }, [locked]);
 
   /* ---------------------------------------------------------
-     Answer submission (⏱ uses computeTriviaPoints directly)
+     Answer submission
   --------------------------------------------------------- */
   async function handleSelectAnswer(idx: number) {
     if (!currentQuestion) return;
@@ -559,7 +556,6 @@ export default function TriviaUserInterfacePage() {
 
     const isCorrect = idx === currentQuestion.correct_index;
 
-    // ⭐ Only award points for correct answers
     const points = isCorrect
       ? computeTriviaPoints({
           scoringMode,
@@ -649,7 +645,8 @@ export default function TriviaUserInterfacePage() {
     );
   }
 
-  // ⏱ PRE-GAME COUNTDOWN: matches InactiveWall
+  // 👉 SHOW COUNTDOWN FIRST if the card is in countdown phase,
+  // regardless of whether session is ready yet.
   if (
     isCountdownPhase &&
     cardCountdownStartedAt &&
@@ -698,7 +695,9 @@ export default function TriviaUserInterfacePage() {
     );
   }
 
-  if (!session || !questions.length || !currentQuestion) {
+  // 👉 Only call it "waiting for host" if we truly have no session
+  // or no questions at all. We NO LONGER gate on currentQuestion here.
+  if (!session || !questions.length) {
     return (
       <div
         style={{
@@ -737,6 +736,10 @@ export default function TriviaUserInterfacePage() {
   } else {
     footerText = "Tap an answer to lock in your choice.";
   }
+
+  const options: string[] = Array.isArray(currentQuestion?.options)
+    ? currentQuestion!.options
+    : [];
 
   return (
     <>
@@ -831,7 +834,8 @@ export default function TriviaUserInterfacePage() {
               wordWrap: "break-word",
             }}
           >
-            {currentQuestion.question_text}
+            {currentQuestion?.question_text ||
+              "Waiting for the host to start the game…"}
           </div>
         </div>
 
@@ -887,13 +891,13 @@ export default function TriviaUserInterfacePage() {
             paddingRight: 2,
           }}
         >
-          {currentQuestion.options.map((opt: string, idx: number) => {
+          {options.map((opt: string, idx: number) => {
             const chosen = selectedIndex === idx;
             const isCorrect =
-              typeof currentQuestion.correct_index === "number" &&
-              idx === currentQuestion.correct_index;
+              typeof currentQuestion?.correct_index === "number" &&
+              idx === currentQuestion!.correct_index;
 
-            const disabled = hasAnswered || locked;
+            const disabled = hasAnswered || locked || !currentQuestion;
 
             let bg = "rgba(15,23,42,0.85)";
             let border = "1px solid rgba(148,163,184,0.4)";
