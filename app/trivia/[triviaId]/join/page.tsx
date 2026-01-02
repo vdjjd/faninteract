@@ -40,7 +40,7 @@ export default function TriviaJoinPage() {
   const [playerId, setPlayerId] = useState<string | null>(null);
   const [waitingApproval, setWaitingApproval] = useState(false);
 
-  // Track whether we’ve checked localStorage profile yet
+  // Track whether we’ve checked localStorage + DB profile yet
   const [profileChecked, setProfileChecked] = useState(false);
 
   /* Image / crop state (selfie) */
@@ -53,38 +53,77 @@ export default function TriviaJoinPage() {
   const fileRef = useRef<HTMLInputElement>(null);
 
   /* -------------------------------------------------- */
-  /* LOAD PROFILE OR REDIRECT TO SIGNUP                 */
+  /* LOAD PROFILE OR REDIRECT TO SIGNUP (DB-validated)  */
   /* -------------------------------------------------- */
   useEffect(() => {
-    // Wait until we actually have a triviaId
     if (!triviaId) return;
 
-    const p = getStoredGuestProfile();
+    let cancelled = false;
 
-    // Validate profile: must exist & have an id
-    const hasValidProfile = p && typeof p.id === "string" && p.id.length > 0;
+    async function loadAndValidateProfile() {
+      const p = getStoredGuestProfile();
 
-    if (!hasValidProfile) {
-      // Clear any bad localStorage so we don't get stuck with junk
-      try {
-        localStorage.removeItem("guest_profile");
-        localStorage.removeItem("guestInfo");
-      } catch {
-        // ignore
+      const hasValidLocal = p && typeof p.id === "string" && p.id.length > 0;
+
+      if (!hasValidLocal) {
+        // No local profile → straight to signup
+        try {
+          localStorage.removeItem("guest_profile");
+          localStorage.removeItem("guestInfo");
+        } catch {
+          // ignore
+        }
+
+        const backTo = `/trivia/${triviaId}/join`;
+        router.replace(
+          `/guest/signup?trivia=${triviaId}&redirect=${encodeURIComponent(
+            backTo
+          )}`
+        );
+        return;
       }
 
-      // 🔁 Send them to signup for THIS trivia, then back here
-      const backTo = `/trivia/${triviaId}/join`;
-      router.replace(
-        `/guest/signup?trivia=${triviaId}&redirect=${encodeURIComponent(
-          backTo
-        )}`
-      );
-      return;
+      // ✅ NEW: verify that this profile actually exists in guest_profiles
+      const { data, error } = await supabase
+        .from("guest_profiles")
+        .select("id")
+        .eq("id", p.id)
+        .maybeSingle();
+
+      if (cancelled) return;
+
+      if (error) {
+        console.error("❌ guest_profiles DB check error:", error);
+      }
+
+      if (!data) {
+        // Local profile is stale / deleted from DB → clear and send to signup
+        try {
+          localStorage.removeItem("guest_profile");
+          localStorage.removeItem("guestInfo");
+        } catch {
+          // ignore
+        }
+
+        const backTo = `/trivia/${triviaId}/join`;
+        router.replace(
+          `/guest/signup?trivia=${triviaId}&redirect=${encodeURIComponent(
+            backTo
+          )}`
+        );
+        return;
+      }
+
+      // All good: local + DB are in sync
+      setProfile(p);
+      setProfileChecked(true);
     }
 
-    setProfile(p);
-    setProfileChecked(true);
+    loadAndValidateProfile();
+
+    return () => {
+      cancelled = true;
+    };
   }, [router, triviaId]);
 
   /* -------------------------------------------------- */
@@ -323,7 +362,7 @@ export default function TriviaJoinPage() {
 
         if (updateErr) {
           console.error("❌ trivia_players update error:", updateErr);
-          setJoinError("Could not update your info. Please try again.");
+          setJoinError("Could not join the game. Please try again.");
           return;
         }
 
@@ -412,7 +451,7 @@ export default function TriviaJoinPage() {
   /* -------------------------------------------------- */
 
   // While we haven’t checked profile yet, or trivia is loading, don’t render the page.
-  // If there is no valid profile, we’ll redirect above.
+  // If there is no valid profile or DB row, we’ll redirect above.
   if (!profileChecked || loadingTrivia) {
     return null;
   }
