@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { getSupabaseClient } from "@/lib/supabaseClient";
 
@@ -30,6 +30,70 @@ interface TriviaSession {
   current_round: number;
   current_question: number;
   question_started_at: string | null;
+}
+
+/* ---------- COUNTDOWN COMPONENT (shared with InactiveWall) ---------- */
+function CountdownDisplay({
+  countdown,
+  countdownActive,
+  countdownStartedAt,
+}: {
+  countdown: string;
+  countdownActive: boolean;
+  countdownStartedAt?: string | null;
+}) {
+  const [now, setNow] = useState<number>(() => Date.now());
+
+  const totalSeconds = useMemo(() => {
+    const value =
+      countdown && countdown !== "none" ? countdown : "10 seconds";
+    const [numStr] = value.split(" ");
+    const num = parseInt(numStr, 10);
+    return isNaN(num) ? 10 : num;
+  }, [countdown]);
+
+  useEffect(() => {
+    if (!countdownActive || !countdownStartedAt) return;
+
+    const id = setInterval(() => {
+      setNow(Date.now());
+    }, 250);
+
+    return () => clearInterval(id);
+  }, [countdownActive, countdownStartedAt]);
+
+  if (!countdownActive || !countdownStartedAt) {
+    const mFull = Math.floor(totalSeconds / 60);
+    const sFull = totalSeconds % 60;
+    return (
+      <div
+        style={{
+          fontSize: "3rem",
+          fontWeight: 900,
+        }}
+      >
+        {mFull}:{sFull.toString().padStart(2, "0")}
+      </div>
+    );
+  }
+
+  const startMs = new Date(countdownStartedAt).getTime();
+  const elapsed = Math.max(0, (now - startMs) / 1000);
+  const remaining = Math.max(0, totalSeconds - elapsed);
+
+  const m = Math.floor(remaining / 60);
+  const s = Math.floor(remaining % 60);
+
+  return (
+    <div
+      style={{
+        fontSize: "3rem",
+        fontWeight: 900,
+      }}
+    >
+      {m}:{s.toString().padStart(2, "0")}
+    </div>
+  );
 }
 
 /* ---------------------------------------------------------
@@ -64,6 +128,14 @@ export default function TriviaUserInterfacePage() {
   // 🎯 Timer engine ref
   const timerEngineRef = useRef<TriviaTimerEngine | null>(null);
 
+  // 📺 Card-level countdown (matches InactiveWall)
+  const [cardStatus, setCardStatus] = useState<string | null>(null);
+  const [cardCountdown, setCardCountdown] = useState<string>("10 seconds");
+  const [cardCountdownActive, setCardCountdownActive] = useState(false);
+  const [cardCountdownStartedAt, setCardCountdownStartedAt] = useState<
+    string | null
+  >(null);
+
   /* ---------------------------------------------------------
      Load guest profile
   --------------------------------------------------------- */
@@ -77,7 +149,8 @@ export default function TriviaUserInterfacePage() {
   }, [router, gameId]);
 
   /* ---------------------------------------------------------
-     Initial load: trivia card, host logo, session, player row, questions
+     Initial load: trivia card, host logo, questions
+     (session & countdown are also read here but updated via polling)
   --------------------------------------------------------- */
   useEffect(() => {
     if (!gameId || !profile?.id) return;
@@ -88,7 +161,7 @@ export default function TriviaUserInterfacePage() {
       setLoading(true);
       setLoadingMessage("Loading trivia game…");
 
-      // 1️⃣ Load trivia card (include host_id so we can pull logo)
+      // 1️⃣ Load trivia card (include countdown + status)
       const { data: card, error: cardErr } = await supabase
         .from("trivia_cards")
         .select(
@@ -97,7 +170,11 @@ export default function TriviaUserInterfacePage() {
           public_name,
           timer_seconds,
           scoring_mode,
-          host_id
+          host_id,
+          status,
+          countdown,
+          countdown_active,
+          countdown_started_at
         `
         )
         .eq("id", gameId)
@@ -113,6 +190,10 @@ export default function TriviaUserInterfacePage() {
       }
 
       setTrivia(card);
+      setCardStatus(card.status ?? null);
+      setCardCountdown(card.countdown || "10 seconds");
+      setCardCountdownActive(card.countdown_active === true);
+      setCardCountdownStartedAt(card.countdown_started_at || null);
 
       // 2️⃣ Host logo (branding_logo_url → logo_url → fallback)
       let logo = "/faninteractlogo.png";
@@ -132,56 +213,14 @@ export default function TriviaUserInterfacePage() {
       }
       if (!cancelled) setHostLogoUrl(logo);
 
-      // 3️⃣ Latest session for this card (waiting or running)
-      setLoadingMessage("Connecting to game session…");
-
-      const { data: sessionRow, error: sessionErr } = await supabase
-        .from("trivia_sessions")
-        .select(
-          "id,status,current_round,current_question,question_started_at,created_at"
-        )
-        .eq("trivia_card_id", gameId)
-        .neq("status", "finished")
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      if (cancelled) return;
-
-      if (sessionErr || !sessionRow) {
-        console.error("❌ trivia_sessions fetch error (UI):", sessionErr);
-        setLoadingMessage("The host has not opened this trivia game yet.");
-        setLoading(false);
-        return;
-      }
-
-      setSession(sessionRow as TriviaSession);
-
-      // 4️⃣ Ensure we have this player row for the session
-      setLoadingMessage("Finding your player seat…");
-
-      const { data: playerRow, error: playerErr } = await supabase
-        .from("trivia_players")
-        .select("id,status")
-        .eq("session_id", sessionRow.id)
-        .eq("guest_id", profile.id)
-        .maybeSingle();
-
-      if (cancelled) return;
-
-      if (playerErr || !playerRow) {
-        console.error("❌ trivia_players fetch error (UI):", playerErr);
-        setLoadingMessage("Could not find your player entry for this game.");
-        setLoading(false);
-        return;
-      }
-
-      setPlayerId(playerRow.id);
-
-      // 5️⃣ Load active questions for the card (ordered)
+      // 3️⃣ Load active questions for the card (ordered),
+      //    falling back to ALL questions if no active ones.
       setLoadingMessage("Loading questions…");
 
-      const { data: qs, error: qErr } = await supabase
+      const {
+        data: activeQs,
+        error: activeErr,
+      } = await supabase
         .from("trivia_questions")
         .select(
           "id, round_number, question_text, options, correct_index, is_active"
@@ -193,8 +232,33 @@ export default function TriviaUserInterfacePage() {
 
       if (cancelled) return;
 
-      if (qErr || !qs) {
-        console.error("❌ trivia_questions fetch error (UI):", qErr);
+      let qs: any[] | null = null;
+      let qErr: any = null;
+
+      if (!activeErr && activeQs && activeQs.length > 0) {
+        qs = activeQs;
+      } else {
+        const {
+          data: allQs,
+          error: allErr,
+        } = await supabase
+          .from("trivia_questions")
+          .select(
+            "id, round_number, question_text, options, correct_index, is_active"
+          )
+          .eq("trivia_card_id", gameId)
+          .order("round_number", { ascending: true })
+          .order("created_at", { ascending: true });
+
+        qErr = allErr;
+        qs = allQs ?? null;
+      }
+
+      if (cancelled) return;
+
+      if (qErr || !qs || qs.length === 0) {
+        console.error("❌ trivia_questions fetch error (UI) or none:", qErr);
+        setQuestions([]);
         setLoadingMessage("No questions are available for this game.");
         setLoading(false);
         return;
@@ -212,20 +276,76 @@ export default function TriviaUserInterfacePage() {
   }, [gameId, profile?.id, router]);
 
   /* ---------------------------------------------------------
-     Poll trivia_sessions for current_question / status
+     Poll trivia_cards for live countdown/status (keeps in sync with walls)
   --------------------------------------------------------- */
   useEffect(() => {
-    if (!gameId || !session?.id) return;
+    if (!gameId) return;
+
+    let cancelled = false;
+
+    const pollCard = async () => {
+      const { data, error } = await supabase
+        .from("trivia_cards")
+        .select(
+          "status,countdown,countdown_active,countdown_started_at"
+        )
+        .eq("id", gameId)
+        .maybeSingle();
+
+      if (cancelled) return;
+
+      if (error || !data) {
+        if (error) console.error("❌ trivia_cards poll error:", error);
+        return;
+      }
+
+      setCardStatus(data.status ?? null);
+      setCardCountdown(data.countdown || "10 seconds");
+      setCardCountdownActive(data.countdown_active === true);
+      setCardCountdownStartedAt(data.countdown_started_at || null);
+    };
+
+    pollCard();
+    const id = window.setInterval(pollCard, 500); // snappy
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [gameId]);
+
+  /* ---------------------------------------------------------
+     Poll trivia_sessions for current_question / status
+     ✅ Always looks up the latest non-finished session for this card
+     so we don't get stuck if the host creates/changes sessions.
+  --------------------------------------------------------- */
+  useEffect(() => {
+    if (!gameId) return;
+
+    let cancelled = false;
 
     const doPoll = async () => {
       const { data, error } = await supabase
         .from("trivia_sessions")
-        .select("id,status,current_round,current_question,question_started_at")
-        .eq("id", session.id)
+        .select(
+          "id,status,current_round,current_question,question_started_at,created_at"
+        )
+        .eq("trivia_card_id", gameId)
+        .neq("status", "finished")
+        .order("created_at", { ascending: false })
+        .limit(1)
         .maybeSingle();
 
-      if (error || !data) {
+      if (cancelled) return;
+
+      if (error) {
         console.error("❌ trivia_sessions poll error:", error);
+        return;
+      }
+
+      if (!data) {
+        setSession(null);
+        setPlayerId(null);
         return;
       }
 
@@ -233,13 +353,30 @@ export default function TriviaUserInterfacePage() {
         ...(prev || (data as any)),
         ...(data as any),
       }));
+
+      // Ensure we have a player row for this session
+      if (profile?.id) {
+        const { data: playerRow, error: playerErr } = await supabase
+          .from("trivia_players")
+          .select("id,status")
+          .eq("session_id", data.id)
+          .eq("guest_id", profile.id)
+          .maybeSingle();
+
+        if (!playerErr && playerRow) {
+          setPlayerId(playerRow.id);
+        }
+      }
     };
 
     doPoll();
-    const id = window.setInterval(doPoll, 1000);
+    const id = window.setInterval(doPoll, 500); // feels "live"
 
-    return () => window.clearInterval(id);
-  }, [session?.id, gameId]);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [gameId, profile?.id]);
 
   /* ---------------------------------------------------------
      Derived current question (1-based index)
@@ -258,9 +395,15 @@ export default function TriviaUserInterfacePage() {
   const currentQuestion = questions[currentQuestionIndex] || null;
   const isRunning = session?.status === "running";
 
+  // Are we in the host countdown phase? (card-level)
+  const isCountdownPhase =
+    !!cardCountdownActive &&
+    !!cardCountdownStartedAt &&
+    !isRunning;
+
   /* ---------------------------------------------------------
      DB-synced timer engine using TriviaTimerEngine
-     - Engine just gives us animation ticks; we anchor time to question_started_at
+     - Engine gives us animation ticks; we anchor time to question_started_at
   --------------------------------------------------------- */
   useEffect(() => {
     // if no running session or no question, stop engine
@@ -317,12 +460,10 @@ export default function TriviaUserInterfacePage() {
     const engine = new TriviaTimerEngine(
       {
         durationMs,
-        maxPoints, // fed from scoringMode so config is consistent
+        maxPoints,
       },
       {
         onTick: () => {
-          // We ignore engine's own internal clock and
-          // keep everything anchored to question_started_at
           updateFromDbTime();
         },
         onComplete: () => {
@@ -517,6 +658,55 @@ export default function TriviaUserInterfacePage() {
         }}
       >
         {loadingMessage}
+      </div>
+    );
+  }
+
+  // ⏱ PRE-GAME COUNTDOWN: matches InactiveWall
+  if (
+    !!cardCountdownActive &&
+    !!cardCountdownStartedAt &&
+    (!session || session.status !== "running")
+  ) {
+    return (
+      <div
+        style={{
+          minHeight: "100vh",
+          background:
+            "radial-gradient(circle at top,#1d4ed8 0,#020617 55%,#000 100%)",
+          color: "#fff",
+          padding: 20,
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          textAlign: "center",
+          gap: 16,
+        }}
+      >
+        <div
+          style={{
+            fontSize: "1rem",
+            opacity: 0.8,
+            marginBottom: 8,
+          }}
+        >
+          Game starting in…
+        </div>
+        <CountdownDisplay
+          countdown={cardCountdown}
+          countdownActive={cardCountdownActive}
+          countdownStartedAt={cardCountdownStartedAt}
+        />
+        <div
+          style={{
+            marginTop: 8,
+            fontSize: "0.9rem",
+            opacity: 0.75,
+          }}
+        >
+          Get ready, the first question will appear when this reaches 0.
+        </div>
       </div>
     );
   }
