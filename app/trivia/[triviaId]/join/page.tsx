@@ -558,10 +558,19 @@ export default function TriviaJoinPage() {
       ? `url(${trivia.background_value})`
       : trivia?.background_value || "linear-gradient(135deg,#020617,#0f172a)";
 
-  const logo =
-    trivia?.host?.branding_logo_url?.trim() ||
-    trivia?.host?.logo_url?.trim() ||
-    "/faninteractlogo.png";
+  // ✅ Host logo logic: branding → logo → FanInteract default
+  const logo = (() => {
+    const host = trivia?.host;
+    if (!host) return "/faninteractlogo.png";
+
+    const branding = host.branding_logo_url?.trim();
+    const primary = host.logo_url?.trim();
+
+    if (branding) return branding;
+    if (primary) return primary;
+
+    return "/faninteractlogo.png";
+  })();
 
   return (
     <div
