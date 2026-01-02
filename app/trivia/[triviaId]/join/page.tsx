@@ -6,7 +6,7 @@ import Cropper from "react-easy-crop";
 import imageCompression from "browser-image-compression";
 import { getSupabaseClient } from "@/lib/supabaseClient";
 
-/* ---------- Load stored guest profile (same semantics as wall submit) ---------- */
+/* ---------- Load stored guest profile ---------- */
 function getStoredGuestProfile() {
   if (typeof window === "undefined") return null;
   try {
@@ -30,13 +30,11 @@ export default function TriviaJoinPage() {
     : (params.triviaId as string);
 
   const [trivia, setTrivia] = useState<any | null>(null);
-  const [triviaError, setTriviaError] = useState<string | null>(null);
 
-  // profile:
-  //   undefined = still checking
-  //   null       = redirecting / missing
-  //   object     = ready
   const [profile, setProfile] = useState<any | null | undefined>(undefined);
+  // undefined = still checking
+  // null       = redirecting / missing
+  // object     = ready
 
   const [joining, setJoining] = useState(false);
   const [joinError, setJoinError] = useState("");
@@ -54,7 +52,7 @@ export default function TriviaJoinPage() {
   const fileRef = useRef<HTMLInputElement>(null);
 
   /* -------------------------------------------------- */
-  /* 1️⃣ LOAD PROFILE OR REDIRECT TO SIGNUP (NO DB CHECK) */
+  /* 1️⃣ LOAD PROFILE OR REDIRECT TO SIGNUP             */
   /* -------------------------------------------------- */
   useEffect(() => {
     if (!triviaId) {
@@ -62,29 +60,81 @@ export default function TriviaJoinPage() {
       return;
     }
 
-    const p = getStoredGuestProfile();
+    let cancelled = false;
 
-    if (!p || !p.id) {
-      // No local profile → hard redirect to signup
-      try {
-        localStorage.removeItem("guest_profile");
-        localStorage.removeItem("guestInfo");
-      } catch {
-        // ignore
+    async function loadAndValidateProfile() {
+      const p = getStoredGuestProfile();
+
+      const hasValidLocal = p && typeof p.id === "string" && p.id.length > 0;
+
+      // No local profile → redirect to signup
+      if (!hasValidLocal) {
+        try {
+          localStorage.removeItem("guest_profile");
+          localStorage.removeItem("guestInfo");
+        } catch {
+          // ignore
+        }
+
+        const backTo = `/trivia/${triviaId}/join`;
+        router.replace(
+          `/guest/signup?trivia=${triviaId}&redirect=${encodeURIComponent(
+            backTo
+          )}`
+        );
+
+        setProfile(null); // show "Redirecting..." instead of white
+        return;
       }
 
-      const backTo = `/trivia/${triviaId}/join`;
-      router.replace(
-        `/guest/signup?trivia=${triviaId}&redirect=${encodeURIComponent(
-          backTo
-        )}`
-      );
+      // ✅ Check that this guest actually still exists in guest_profiles
+      const { data, error } = await supabase
+        .from("guest_profiles")
+        .select("id, email, phone, first_name, last_name")
+        .eq("id", p.id)
+        .maybeSingle();
 
-      setProfile(null); // show “redirecting” state instead of white
-      return;
+      if (cancelled) return;
+
+      if (error) {
+        console.error("❌ guest_profiles DB check error:", error);
+      }
+
+      if (!data) {
+        // Local cache is stale / deleted in DB
+        try {
+          localStorage.removeItem("guest_profile");
+          localStorage.removeItem("guestInfo");
+        } catch {
+          // ignore
+        }
+
+        const backTo = `/trivia/${triviaId}/join`;
+        router.replace(
+          `/guest/signup?trivia=${triviaId}&redirect=${encodeURIComponent(
+            backTo
+          )}`
+        );
+
+        setProfile(null);
+        return;
+      }
+
+      // Merge latest DB basics into local profile (so email/phone are fresh)
+      setProfile({
+        ...p,
+        email: data.email,
+        phone: data.phone,
+        first_name: data.first_name,
+        last_name: data.last_name,
+      });
     }
 
-    setProfile(p);
+    loadAndValidateProfile();
+
+    return () => {
+      cancelled = true;
+    };
   }, [router, triviaId]);
 
   /* -------------------------------------------------- */
@@ -96,6 +146,7 @@ export default function TriviaJoinPage() {
     let cancelled = false;
 
     async function loadTrivia() {
+      // Step 1: load trivia card (no relationship magic)
       const { data, error } = await supabase
         .from("trivia_cards")
         .select(
@@ -105,22 +156,50 @@ export default function TriviaJoinPage() {
           background_type,
           background_value,
           require_selfie,
-          host:host_id (
-            branding_logo_url
-          )
+          host_id
         `
         )
         .eq("id", triviaId)
-        .single();
+        .maybeSingle();
 
       if (cancelled) return;
 
-      if (error) {
+      if (error || !data) {
         console.error("❌ Load trivia card error:", error);
-        setTriviaError("Trivia not found.");
+        // Fallback so the page STILL WORKS
+        setTrivia({
+          id: triviaId,
+          public_name: "Trivia Game",
+          background_type: "color",
+          background_value: "linear-gradient(135deg,#020617,#0f172a)",
+          require_selfie: true,
+          host: null,
+        });
+        return;
       }
 
-      setTrivia(data);
+      // Step 2: load host logo separately (if host_id exists)
+      let host: any = null;
+      if (data.host_id) {
+        const { data: hostRow, error: hostErr } = await supabase
+          .from("hosts")
+          .select("branding_logo_url")
+          .eq("id", data.host_id)
+          .maybeSingle();
+
+        if (!cancelled) {
+          if (hostErr) {
+            console.error("❌ Load trivia host error:", hostErr);
+          }
+          if (hostRow) {
+            host = hostRow;
+          }
+        }
+      }
+
+      if (!cancelled) {
+        setTrivia({ ...data, host });
+      }
     }
 
     loadTrivia();
@@ -196,7 +275,7 @@ export default function TriviaJoinPage() {
 
   /* -------------------------------------------------- */
   /* 3️⃣ JOIN TRIVIA → INSERT trivia_players             */
-  /*    Stay here & wait for moderation                 */
+  /*    Stay here & wait for moderation                  */
   /* -------------------------------------------------- */
   async function handleJoinTrivia(e: any) {
     e.preventDefault();
@@ -204,7 +283,6 @@ export default function TriviaJoinPage() {
     setErrorMsg("");
 
     if (!profile?.id) {
-      // Safety: if somehow we got here with bad profile, force re-signup
       setJoinError("Missing guest profile. Please sign up again.");
       try {
         localStorage.removeItem("guest_profile");
@@ -226,7 +304,13 @@ export default function TriviaJoinPage() {
       return;
     }
 
-    // 👇 We DON'T re-check email/phone here; signup already enforced host settings
+    const hasEmail = profile?.email?.trim();
+    const hasPhone = profile?.phone?.trim();
+
+    if (!hasEmail && !hasPhone) {
+      setErrorMsg("You must provide either an email or a phone number.");
+      return;
+    }
 
     const requireSelfie = trivia?.require_selfie ?? true;
 
@@ -267,7 +351,10 @@ export default function TriviaJoinPage() {
           .single();
 
         if (newSessionErr || !newSession) {
-          console.error("❌ trivia_sessions create error:", newSessionErr);
+          console.error(
+            "❌ trivia_sessions create error:",
+            newSessionErr
+          );
           setJoinError("Could not join the game. Please try again.");
           return;
         }
@@ -278,7 +365,7 @@ export default function TriviaJoinPage() {
         sessionId = session.id;
       }
 
-      // 🔒 Remember which session + card this guest is in (for later pages)
+      // 🔒 Remember which session + card this guest is in
       try {
         localStorage.setItem("current_trivia_session_id", sessionId);
         localStorage.setItem("current_trivia_card_id", triviaId);
@@ -446,27 +533,8 @@ export default function TriviaJoinPage() {
     );
   }
 
-  // If trivia failed to load badly
-  if (!trivia && triviaError) {
-    return (
-      <div
-        style={{
-          minHeight: "100vh",
-          background: "black",
-          color: "white",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          fontSize: 18,
-        }}
-      >
-        {triviaError}
-      </div>
-    );
-  }
-
-  // If trivia still loading but we *do* have a profile, show something
-  if (!trivia && !triviaError) {
+  // Trivia still loading (but we *do* have a profile)
+  if (!trivia) {
     return (
       <div
         style={{
