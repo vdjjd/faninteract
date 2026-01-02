@@ -204,7 +204,7 @@ export default function GuestSignupPage() {
           if (error) console.error("❌ bb_games load error:", error);
         }
 
-        // 5) Trivia (THIS is the new part you needed)
+        // 5) Trivia
         if (!foundHostId && triviaId) {
           const { data, error } = await supabase
             .from("trivia_cards")
@@ -377,6 +377,16 @@ export default function GuestSignupPage() {
   /* -------------------------------------------------
      RENDER
   ------------------------------------------------- */
+
+  // 🔥 NEW: resolve logo from hostSettings
+  const brandingLogo = (hostSettings?.branding_logo_url as string) || "";
+  const fallbackLogo = (hostSettings?.logo_url as string) || "";
+
+  const logo =
+    (brandingLogo && brandingLogo.trim()) ||
+    (fallbackLogo && fallbackLogo.trim()) ||
+    "/faninteractlogo.png";
+
   const bgImage =
     wall?.background_value?.includes("http")
       ? `url(${wall.background_value})`
@@ -407,8 +417,8 @@ export default function GuestSignupPage() {
       >
         <div className={cn("flex justify-center mb-6")}>
           <Image
-            src="/faninteractlogo.png"
-            alt="FanInteract"
+            src={logo}
+            alt={hostSettings?.venue_name || "FanInteract"}
             width={360}
             height={120}
             className={cn("w-[240px] md:w-[320px]")}
