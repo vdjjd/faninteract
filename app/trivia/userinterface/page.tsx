@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { getSupabaseClient } from "@/lib/supabaseClient";
 
@@ -406,21 +406,7 @@ export default function TriviaUserInterfacePage() {
   }, [locked]);
 
   /* ---------------------------------------------------------
-     Points helper (DB anchored to question_started_at)
-     - Uses shared computeTriviaPoints engine
-  --------------------------------------------------------- */
-  const computePointsNow = useMemo(() => {
-    return () =>
-      computeTriviaPoints({
-        scoringMode,
-        timerSeconds,
-        questionStartedAt: session?.question_started_at ?? null,
-        // nowMs optional; defaults to Date.now() in engine
-      });
-  }, [scoringMode, timerSeconds, session?.question_started_at]);
-
-  /* ---------------------------------------------------------
-     Answer submission
+     Answer submission (⏱ uses computeTriviaPoints directly)
   --------------------------------------------------------- */
   async function handleSelectAnswer(idx: number) {
     if (!currentQuestion) return;
@@ -446,7 +432,21 @@ export default function TriviaUserInterfacePage() {
     const isCorrect = idx === currentQuestion.correct_index;
 
     // ⭐ Only award points for correct answers
-    const points = isCorrect ? computePointsNow() : 0;
+    const points = isCorrect
+      ? computeTriviaPoints({
+          scoringMode,
+          timerSeconds,
+          questionStartedAt: session?.question_started_at ?? null,
+        })
+      : 0;
+
+    console.log("🎯 Trivia scoring debug", {
+      isCorrect,
+      scoringMode,
+      timerSeconds,
+      questionStartedAt: session?.question_started_at,
+      points,
+    });
 
     const { error: insertErr } = await supabase.from("trivia_answers").insert({
       player_id: playerId,
