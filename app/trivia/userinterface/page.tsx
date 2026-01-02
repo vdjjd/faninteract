@@ -1,8 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { getSupabaseClient } from "@/lib/supabaseClient";
+
+// 🔧 adjust this path to wherever you store the engine
+import { TriviaTimerEngine } from "@/lib/trivia/triviaTimerEngine";
 
 const supabase = getSupabaseClient();
 
@@ -56,6 +59,9 @@ export default function TriviaUserInterfacePage() {
   const [locked, setLocked] = useState(false);
   const [showAnswerOverlay, setShowAnswerOverlay] = useState(false);
   const [revealAnswer, setRevealAnswer] = useState(false);
+
+  // 🎯 Timer engine ref
+  const timerEngineRef = useRef<TriviaTimerEngine | null>(null);
 
   /* ---------------------------------------------------------
      Load guest profile
@@ -252,11 +258,18 @@ export default function TriviaUserInterfacePage() {
   const isRunning = session?.status === "running";
 
   /* ---------------------------------------------------------
-     DB-synced timer engine (uses session.question_started_at)
-     - Restart whenever current question OR question_started_at changes
+     DB-synced timer engine using TriviaTimerEngine
+     - Engine just gives us animation ticks; we anchor time to question_started_at
   --------------------------------------------------------- */
   useEffect(() => {
-    if (!isRunning || !currentQuestion) return;
+    // if no running session or no question, stop engine
+    if (!isRunning || !currentQuestion) {
+      if (timerEngineRef.current) {
+        timerEngineRef.current.stop();
+        timerEngineRef.current = null;
+      }
+      return;
+    }
 
     // Reset per-question UI state
     setSelectedIndex(null);
@@ -267,17 +280,22 @@ export default function TriviaUserInterfacePage() {
     setProgress(1);
     setSecondsLeft(timerSeconds);
 
-    const startedAtIso = session?.question_started_at;
-    const startedMs = startedAtIso ? new Date(startedAtIso).getTime() : Date.now();
     const durationMs = (timerSeconds || 30) * 1000;
+    const maxPoints =
+      scoringMode === "1000s" ? 1000 : scoringMode === "10000s" ? 10000 : 100;
 
-    const tick = () => {
-      const elapsed = Date.now() - startedMs;
+    const updateFromDbTime = () => {
+      const startedAtIso = session?.question_started_at;
+      const startedMs = startedAtIso
+        ? new Date(startedAtIso).getTime()
+        : Date.now();
+
+      const now = Date.now();
+      const elapsed = now - startedMs;
       const remaining = Math.max(0, durationMs - elapsed);
-      const p = remaining / durationMs;
+      const frac = remaining / durationMs;
 
-      setProgress(p);
-
+      setProgress(frac);
       const secs = Math.max(0, Math.ceil(remaining / 1000));
       setSecondsLeft(secs);
 
@@ -286,15 +304,45 @@ export default function TriviaUserInterfacePage() {
       }
     };
 
-    // Run immediately then interval
-    tick();
-    const id = window.setInterval(tick, 100);
+    // Run immediately
+    updateFromDbTime();
 
-    return () => window.clearInterval(id);
+    // Stop any previous engine
+    if (timerEngineRef.current) {
+      timerEngineRef.current.stop();
+      timerEngineRef.current = null;
+    }
+
+    const engine = new TriviaTimerEngine(
+      {
+        durationMs,
+        maxPoints, // fed from scoringMode so config is consistent
+      },
+      {
+        onTick: () => {
+          // We ignore engine's own internal clock and
+          // keep everything anchored to question_started_at
+          updateFromDbTime();
+        },
+        onComplete: () => {
+          updateFromDbTime();
+          setLocked(true);
+        },
+      }
+    );
+
+    timerEngineRef.current = engine;
+    engine.start();
+
+    return () => {
+      engine.stop();
+      timerEngineRef.current = null;
+    };
   }, [
     isRunning,
     currentQuestion?.id,
     timerSeconds,
+    scoringMode,
     session?.question_started_at,
   ]);
 
@@ -358,6 +406,7 @@ export default function TriviaUserInterfacePage() {
 
   /* ---------------------------------------------------------
      Points helper (DB anchored to question_started_at)
+     - Uses same maxPoints logic as engine, so config is consistent
   --------------------------------------------------------- */
   const computePointsNow = useMemo(() => {
     return () => {
@@ -365,7 +414,9 @@ export default function TriviaUserInterfacePage() {
         scoringMode === "1000s" ? 1000 : scoringMode === "10000s" ? 10000 : 100;
 
       const startedAtIso = session?.question_started_at;
-      const startedMs = startedAtIso ? new Date(startedAtIso).getTime() : Date.now();
+      const startedMs = startedAtIso
+        ? new Date(startedAtIso).getTime()
+        : Date.now();
       const elapsedSec = (Date.now() - startedMs) / 1000;
 
       const baseSeconds = timerSeconds || 1;
@@ -401,7 +452,9 @@ export default function TriviaUserInterfacePage() {
     if (existing) return;
 
     const isCorrect = idx === currentQuestion.correct_index;
-    const points = computePointsNow();
+
+    // ⭐ Only award points for correct answers
+    const points = isCorrect ? computePointsNow() : 0;
 
     const { error: insertErr } = await supabase.from("trivia_answers").insert({
       player_id: playerId,
