@@ -4,8 +4,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { getSupabaseClient } from "@/lib/supabaseClient";
 
-// 🔧 adjust this path to wherever you store the engine
+// 🔧 engine imports
 import { TriviaTimerEngine } from "@/lib/trivia/triviaTimerEngine";
+import { computeTriviaPoints } from "@/lib/trivia/triviaScoringEngine";
 
 const supabase = getSupabaseClient();
 
@@ -406,25 +407,16 @@ export default function TriviaUserInterfacePage() {
 
   /* ---------------------------------------------------------
      Points helper (DB anchored to question_started_at)
-     - Uses same maxPoints logic as engine, so config is consistent
+     - Uses shared computeTriviaPoints engine
   --------------------------------------------------------- */
   const computePointsNow = useMemo(() => {
-    return () => {
-      const maxPoints =
-        scoringMode === "1000s" ? 1000 : scoringMode === "10000s" ? 10000 : 100;
-
-      const startedAtIso = session?.question_started_at;
-      const startedMs = startedAtIso
-        ? new Date(startedAtIso).getTime()
-        : Date.now();
-      const elapsedSec = (Date.now() - startedMs) / 1000;
-
-      const baseSeconds = timerSeconds || 1;
-      const remainingSec = Math.max(0, baseSeconds - elapsedSec);
-
-      const frac = Math.max(0, Math.min(1, remainingSec / baseSeconds));
-      return Math.round(maxPoints * frac);
-    };
+    return () =>
+      computeTriviaPoints({
+        scoringMode,
+        timerSeconds,
+        questionStartedAt: session?.question_started_at ?? null,
+        // nowMs optional; defaults to Date.now() in engine
+      });
   }, [scoringMode, timerSeconds, session?.question_started_at]);
 
   /* ---------------------------------------------------------
@@ -561,7 +553,8 @@ export default function TriviaUserInterfacePage() {
   } else if (locked && !revealAnswer) {
     footerText = "Time is up. Revealing the correct answer…";
   } else if (revealAnswer) {
-    footerText = "Here’s the correct answer. Get ready for the next question…";
+    footerText =
+      "Here’s the correct answer. Get ready for the next question…";
   } else if (hasAnswered) {
     footerText = "Answer submitted. You can’t change it for this question.";
   } else {

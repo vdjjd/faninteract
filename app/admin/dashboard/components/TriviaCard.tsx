@@ -91,6 +91,10 @@ export default function TriviaCard({
   // ✅ debounce for rapid answer inserts
   const leaderboardDebounceRef = useRef<number | null>(null);
 
+  // ✅ prevent double Play clicks / multiple countdown timers
+  const playLockRef = useRef(false);
+  const playTimeoutRef = useRef<number | null>(null);
+
   /* ------------------------------------------------------------
      ACTIVE TAB
  ------------------------------------------------------------ */
@@ -301,7 +305,7 @@ export default function TriviaCard({
         return;
       }
 
-      // 2) Players in that session (✅ use display_name; avoid guest_profiles entirely)
+      // 2) Players in that session
       const { data: players, error: playersErr } = await supabase
         .from("trivia_players")
         .select("id,status,display_name,photo_url")
@@ -349,7 +353,7 @@ export default function TriviaCard({
         totals.set(a.player_id, (totals.get(a.player_id) || 0) + pts);
       }
 
-      // 4) Build rows (✅ label from player.display_name)
+      // 4) Build rows
       const rows: LeaderRow[] = approved.map((p, index) => ({
         playerId: p.id,
         label: (p.display_name || "").trim() || `Player ${index + 1}`,
@@ -372,10 +376,6 @@ export default function TriviaCard({
 
   /* ------------------------------------------------------------
      LEADERBOARD AUTO-REFRESH
-     ✅ Refresh when:
-       - trivia_sessions advances (question_started_at/current_question changes)
-       - trivia_answers change (insert/update/delete) for this trivia card’s questions
-     Fallback poll stays in place.
  ------------------------------------------------------------ */
   useEffect(() => {
     if (activeTab !== "leaderboard") return;
@@ -389,7 +389,7 @@ export default function TriviaCard({
       }
       leaderboardDebounceRef.current = window.setTimeout(() => {
         loadLeaderboard(cancelledRef);
-      }, 250); // small debounce to avoid spam
+      }, 250);
     };
 
     const primeQuestionIds = async () => {
@@ -406,10 +406,8 @@ export default function TriviaCard({
       questionIdsRef.current = new Set((data || []).map((q: any) => q.id));
     };
 
-    // initial prime + initial load
     primeQuestionIds().then(() => loadLeaderboard(cancelledRef));
 
-    // 1) Realtime: trivia_sessions updates (question advance)
     const sessionChannel = supabase
       .channel(`dashboard-trivia-sessions-${trivia.id}`)
       .on(
@@ -436,14 +434,11 @@ export default function TriviaCard({
           lastQuestionStartedAtRef.current = startedAt;
           lastCurrentQuestionRef.current = currentQ;
 
-          // refresh leaderboard immediately when question advances
           debounceLoad();
         }
       )
       .subscribe();
 
-    // 2) Realtime: trivia_answers changes (scores changing)
-    // Note: we can’t server-filter by "question_id IN (...)" so we filter client-side.
     const answersChannel = supabase
       .channel(`dashboard-trivia-answers-${trivia.id}`)
       .on(
@@ -458,8 +453,6 @@ export default function TriviaCard({
             payload?.new?.question_id ?? payload?.old?.question_id ?? null;
 
           if (!qid) return;
-
-          // Only react if this answer belongs to this trivia card’s questions
           if (!questionIdsRef.current.has(qid)) return;
 
           debounceLoad();
@@ -467,7 +460,6 @@ export default function TriviaCard({
       )
       .subscribe();
 
-    // 3) Fallback poll (covers missed realtime events)
     const pollId = window.setInterval(() => {
       loadLeaderboard(cancelledRef);
     }, 4000);
@@ -547,77 +539,136 @@ export default function TriviaCard({
 
   /* ------------------------------------------------------------
      ▶️ PLAY TRIVIA
+     ✅ FIX: when starting, ALSO set:
+       - trivia_sessions.current_question = 1
+       - trivia_sessions.question_started_at = now()
+     This is why your Active Wall was "not showing questions".
  ------------------------------------------------------------ */
   async function handlePlayTrivia() {
+    if (playLockRef.current) return;
     if (cardCountdownActive || cardStatus === "running") return;
 
-    const { data: session, error: sessionErr } = await supabase
-      .from("trivia_sessions")
-      .select("id,status,created_at")
-      .eq("trivia_card_id", trivia.id)
-      .neq("status", "finished")
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+    playLockRef.current = true;
 
-    if (sessionErr || !session) {
-      alert("No players have joined this trivia yet.");
-      console.error("❌ No active session for Play:", sessionErr);
-      return;
-    }
+    try {
+      // sanity: must have at least 1 question
+      const { count: qCount, error: qCountErr } = await supabase
+        .from("trivia_questions")
+        .select("*", { count: "exact", head: true })
+        .eq("trivia_card_id", trivia.id);
 
-    const { data: players, error: playersErr } = await supabase
-      .from("trivia_players")
-      .select("id,status")
-      .eq("session_id", session.id);
+      if (qCountErr) console.warn("⚠️ trivia_questions count error:", qCountErr);
 
-    if (playersErr) console.error("❌ trivia_players check error:", playersErr);
+      if (!qCount || qCount < 1) {
+        alert("This trivia has no questions yet.");
+        return;
+      }
 
-    const hasApproved =
-      (players || []).some((p) => p.status === "approved") || false;
+      const { data: session, error: sessionErr } = await supabase
+        .from("trivia_sessions")
+        .select("id,status,created_at")
+        .eq("trivia_card_id", trivia.id)
+        .neq("status", "finished")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
 
-    if (!hasApproved) {
-      alert("You must approve at least one player before starting the game.");
-      return;
-    }
+      if (sessionErr || !session) {
+        alert("No players have joined this trivia yet.");
+        console.error("❌ No active session for Play:", sessionErr);
+        return;
+      }
 
-    const nowIso = new Date().toISOString();
+      const { data: players, error: playersErr } = await supabase
+        .from("trivia_players")
+        .select("id,status")
+        .eq("session_id", session.id);
 
-    await supabase
-      .from("trivia_cards")
-      .update({
-        countdown_active: true,
-        countdown_started_at: nowIso,
-        status: "waiting",
-      })
-      .eq("id", trivia.id);
+      if (playersErr) console.error("❌ trivia_players check error:", playersErr);
 
-    setCardCountdownActive(true);
-    setCardStatus("waiting");
+      const hasApproved =
+        (players || []).some((p) => p.status === "approved") || false;
 
-    setTimeout(async () => {
+      if (!hasApproved) {
+        alert("You must approve at least one player before starting the game.");
+        return;
+      }
+
+      // start 10s countdown on card
+      const nowIso = new Date().toISOString();
+
       await supabase
         .from("trivia_cards")
         .update({
-          status: "running",
-          countdown_active: false,
+          countdown_active: true,
+          countdown_started_at: nowIso,
+          status: "waiting",
         })
         .eq("id", trivia.id);
 
-      await supabase
-        .from("trivia_sessions")
-        .update({ status: "running" })
-        .eq("id", session.id);
+      setCardCountdownActive(true);
+      setCardStatus("waiting");
 
-      setCardCountdownActive(false);
-      setCardStatus("running");
-    }, 10_000);
+      // clear any prior pending timer (extra safety)
+      if (playTimeoutRef.current) {
+        window.clearTimeout(playTimeoutRef.current);
+        playTimeoutRef.current = null;
+      }
+
+      playTimeoutRef.current = window.setTimeout(async () => {
+        try {
+          // flip card to running
+          await supabase
+            .from("trivia_cards")
+            .update({
+              status: "running",
+              countdown_active: false,
+            })
+            .eq("id", trivia.id);
+
+          // ✅ critical: set session running + initialize question state
+          const startIso = new Date().toISOString();
+
+          const { error: sessionUpdateErr } = await supabase
+            .from("trivia_sessions")
+            .update({
+              status: "running",
+              current_question: 1,
+              question_started_at: startIso,
+            })
+            .eq("id", session.id);
+
+          if (sessionUpdateErr) {
+            console.error("❌ trivia_sessions start error:", sessionUpdateErr);
+          }
+
+          setCardCountdownActive(false);
+          setCardStatus("running");
+        } finally {
+          playTimeoutRef.current = null;
+          playLockRef.current = false;
+        }
+      }, 10_000);
+    } finally {
+      // if we returned early before starting the countdown timer
+      // ensure the lock is released (the timer callback also releases it)
+      if (!cardCountdownActive && cardStatus !== "waiting") {
+        playLockRef.current = false;
+      }
+    }
   }
 
   /* ------------------------------------------------------------
      ⏹ STOP TRIVIA
  ------------------------------------------------------------ */
   async function handleStopTrivia() {
+    // if a countdown timer is pending, cancel it
+    if (playTimeoutRef.current) {
+      window.clearTimeout(playTimeoutRef.current);
+      playTimeoutRef.current = null;
+    }
+    playLockRef.current = false;
+
     await supabase
       .from("trivia_cards")
       .update({
