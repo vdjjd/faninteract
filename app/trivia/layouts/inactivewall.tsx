@@ -2,6 +2,9 @@
 
 import { QRCodeCanvas } from "qrcode.react";
 import { useEffect, useMemo, useState } from "react";
+import { getSupabaseClient } from "@/lib/supabaseClient";
+
+const supabase = getSupabaseClient();
 
 /* ---------- TYPES ---------- */
 interface TriviaInactiveWallProps {
@@ -94,10 +97,10 @@ export default function TriviaInactiveWall({
   );
 
   const [wallState, setWallState] = useState({
-    countdown: "10 seconds",
-    countdownActive: false,
-    countdownStartedAt: null as string | null,
-    title: "",
+    countdown: trivia?.countdown || "10 seconds",
+    countdownActive: trivia?.countdown_active === true,
+    countdownStartedAt: trivia?.countdown_started_at || null,
+    title: trivia?.title || "",
   });
 
   /* 🌟 Pulse animation */
@@ -111,6 +114,7 @@ export default function TriviaInactiveWall({
     `}</style>
   );
 
+  // Initial props → local state
   useEffect(() => {
     if (!trivia) return;
 
@@ -130,6 +134,49 @@ export default function TriviaInactiveWall({
     setBg(value);
     setBrightness(trivia.background_brightness ?? 100);
   }, [trivia]);
+
+  // 🔁 Live updates from DB (keeps countdown perfectly in sync)
+  useEffect(() => {
+    if (!trivia?.id) return;
+
+    const channel = supabase
+      .channel(`inactive-wall-trivia-${trivia.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "trivia_cards",
+          filter: `id=eq.${trivia.id}`,
+        },
+        (payload: any) => {
+          const next = payload?.new;
+          if (!next) return;
+
+          setWallState((prev) => ({
+            ...prev,
+            countdown: next.countdown || prev.countdown || "10 seconds",
+            countdownActive: next.countdown_active === true,
+            countdownStartedAt: next.countdown_started_at || null,
+            title: next.title ?? prev.title,
+          }));
+
+          const value =
+            next.background_type === "image"
+              ? `url(${next.background_value}) center/cover no-repeat`
+              : next.background_value ||
+                "linear-gradient(to bottom right,#1b2735,#090a0f)";
+
+          setBg(value);
+          setBrightness(next.background_brightness ?? 100);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [trivia?.id]);
 
   const origin =
     typeof window !== "undefined"
