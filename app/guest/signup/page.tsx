@@ -24,12 +24,13 @@ export default function GuestSignupPage() {
   const supabase = getSupabaseClient();
 
   /* -------------------------------------------------
-     🔥 NORMALIZE QR PARAMS (CRITICAL FIX)
+     🔥 NORMALIZE QR PARAMS
   ------------------------------------------------- */
   const redirect = params.get("redirect");
   const wallId = params.get("wall");
   const wheelId = params.get("prizewheel");
   const basketballId = params.get("basketball");
+  const triviaId = params.get("trivia"); // ✅ NEW: trivia source
 
   const rawType = params.get("type");
   let pollId = params.get("poll");
@@ -133,10 +134,26 @@ export default function GuestSignupPage() {
           .single();
         if (data?.host_id) loadHostById(data.host_id);
       }
+
+      // ✅ NEW: trivia QR → load host + background from trivia card
+      if (triviaId) {
+        const { data } = await supabase
+          .from("trivia_cards")
+          .select("background_type, background_value, host_id")
+          .eq("id", triviaId)
+          .single();
+
+        if (data) {
+          setWall({
+            background_value: data.background_value,
+          });
+          if (data.host_id) loadHostById(data.host_id);
+        }
+      }
     }
 
     loadContext();
-  }, [wallId, wheelId, pollId, basketballId, supabase]);
+  }, [wallId, wheelId, pollId, basketballId, triviaId, supabase]);
 
   /* -------------------------------------------------
      AUTO-REDIRECT IF GUEST EXISTS
@@ -158,15 +175,18 @@ export default function GuestSignupPage() {
         return;
       }
 
+      // If coming from a page that gave us a redirect, go there first
       if (redirect) return router.push(redirect);
       if (wallId) return router.push(`/wall/${wallId}/submit`);
       if (wheelId) return router.push(`/prizewheel/${wheelId}/submit`);
       if (pollId) return router.push(`/polls/${pollId}/vote`);
       if (basketballId) return router.push(`/basketball/${basketballId}/submit`);
+      // ✅ Fallback: if we came from trivia QR with no redirect, go to join
+      if (triviaId) return router.push(`/trivia/${triviaId}/join`);
     }
 
     validateGuest();
-  }, [redirect, wallId, wheelId, pollId, basketballId, router, supabase]);
+  }, [redirect, wallId, wheelId, pollId, basketballId, triviaId, router, supabase]);
 
   /* -------------------------------------------------
      SUBMIT
@@ -208,11 +228,15 @@ export default function GuestSignupPage() {
 
       localStorage.setItem("guest_profile", JSON.stringify(profile));
 
+      // ✅ Redirect priority:
+      // 1. explicit redirect (/trivia/[id]/join from the join page)
       if (redirect) router.push(redirect);
       else if (wallId) router.push(`/wall/${wallId}/submit`);
       else if (wheelId) router.push(`/prizewheel/${wheelId}/submit`);
       else if (pollId) router.push(`/polls/${pollId}/vote`);
       else if (basketballId) router.push(`/basketball/${basketballId}/submit`);
+      // 2. fallback: trivia QR with no redirect (just in case)
+      else if (triviaId) router.push(`/trivia/${triviaId}/join`);
       else router.push("/");
     } catch (err) {
       console.error(err);
@@ -270,89 +294,144 @@ export default function GuestSignupPage() {
         <form onSubmit={handleSubmit} className="space-y-3">
 
           {/* REQUIRED FIELDS */}
-          <input required placeholder="First Name *" className={cn('w-full', 'p-3', 'rounded-xl', 'bg-black/40', 'border', 'border-white/20')}
-            value={form.first_name} onChange={e => setForm({ ...form, first_name: e.target.value })} />
+          <input
+            required
+            placeholder="First Name *"
+            className={cn('w-full', 'p-3', 'rounded-xl', 'bg-black/40', 'border', 'border-white/20')}
+            value={form.first_name}
+            onChange={e => setForm({ ...form, first_name: e.target.value })}
+          />
 
           {hostSettings.require_last_name && (
-            <input required placeholder="Last Name *" className={cn('w-full', 'p-3', 'rounded-xl', 'bg-black/40', 'border', 'border-white/20')}
-              value={form.last_name} onChange={e => setForm({ ...form, last_name: e.target.value })} />
+            <input
+              required
+              placeholder="Last Name *"
+              className={cn('w-full', 'p-3', 'rounded-xl', 'bg-black/40', 'border', 'border-white/20')}
+              value={form.last_name}
+              onChange={e => setForm({ ...form, last_name: e.target.value })}
+            />
           )}
 
           {hostSettings.require_email && (
-            <input required type="email" placeholder="Email *" className={cn('w-full', 'p-3', 'rounded-xl', 'bg-black/40', 'border', 'border-white/20')}
-              value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} />
+            <input
+              required
+              type="email"
+              placeholder="Email *"
+              className={cn('w-full', 'p-3', 'rounded-xl', 'bg-black/40', 'border', 'border-white/20')}
+              value={form.email}
+              onChange={e => setForm({ ...form, email: e.target.value })}
+            />
           )}
 
           {hostSettings.require_phone && (
-            <input required type="tel" placeholder="Phone *" className={cn('w-full', 'p-3', 'rounded-xl', 'bg-black/40', 'border', 'border-white/20')}
-              value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} />
+            <input
+              required
+              type="tel"
+              placeholder="Phone *"
+              className={cn('w-full', 'p-3', 'rounded-xl', 'bg-black/40', 'border', 'border-white/20')}
+              value={form.phone}
+              onChange={e => setForm({ ...form, phone: e.target.value })}
+            />
           )}
 
           {/* ADDRESS */}
           {hostSettings.require_street && (
-            <input required placeholder="Street Address *" className={cn('w-full', 'p-3', 'rounded-xl', 'bg-black/40', 'border', 'border-white/20')}
-              value={form.street} onChange={e => setForm({ ...form, street: e.target.value })} />
+            <input
+              required
+              placeholder="Street Address *"
+              className={cn('w-full', 'p-3', 'rounded-xl', 'bg-black/40', 'border', 'border-white/20')}
+              value={form.street}
+              onChange={e => setForm({ ...form, street: e.target.value })}
+            />
           )}
 
           {hostSettings.require_city && (
-            <input required placeholder="City *" className={cn('w-full', 'p-3', 'rounded-xl', 'bg-black/40', 'border', 'border-white/20')}
-              value={form.city} onChange={e => setForm({ ...form, city: e.target.value })} />
+            <input
+              required
+              placeholder="City *"
+              className={cn('w-full', 'p-3', 'rounded-xl', 'bg-black/40', 'border', 'border-white/20')}
+              value={form.city}
+              onChange={e => setForm({ ...form, city: e.target.value })}
+            />
           )}
 
           {hostSettings.require_state && (
-            <select required className={cn('w-full', 'p-3', 'rounded-xl', 'bg-black/40', 'border', 'border-white/20')}
-              value={form.state} onChange={e => setForm({ ...form, state: e.target.value })}>
+            <select
+              required
+              className={cn('w-full', 'p-3', 'rounded-xl', 'bg-black/40', 'border', 'border-white/20')}
+              value={form.state}
+              onChange={e => setForm({ ...form, state: e.target.value })}
+            >
               <option value="">State *</option>
-              {stateOptions.map(s => <option key={s} value={s} className="text-black">{s}</option>)}
+              {stateOptions.map(s => (
+                <option key={s} value={s} className="text-black">
+                  {s}
+                </option>
+              ))}
             </select>
           )}
 
           {hostSettings.require_zip && (
-            <input required placeholder="ZIP Code *" className={cn('w-full', 'p-3', 'rounded-xl', 'bg-black/40', 'border', 'border-white/20')}
-              value={form.zip} onChange={e => setForm({ ...form, zip: e.target.value })} />
+            <input
+              required
+              placeholder="ZIP Code *"
+              className={cn('w-full', 'p-3', 'rounded-xl', 'bg-black/40', 'border', 'border-white/20')}
+              value={form.zip}
+              onChange={e => setForm({ ...form, zip: e.target.value })}
+            />
           )}
 
           {/* DOB → AGE */}
           {hostSettings.require_age && (
-  <div className="relative">
-    <input
-      required
-      type="date"
-      max={new Date().toISOString().split("T")[0]}
-      className={cn(
-        "w-full h-[52px] px-3 rounded-xl",
-        "bg-black/40 border border-white/20",
-        "text-white appearance-none [color-scheme:dark]"
-      )}
-      value={form.date_of_birth}
-      onChange={e =>
-        setForm({ ...form, date_of_birth: e.target.value })
-      }
-    />
+            <div className="relative">
+              <input
+                required
+                type="date"
+                max={new Date().toISOString().split("T")[0]}
+                className={cn(
+                  "w-full h-[52px] px-3 rounded-xl",
+                  "bg-black/40 border border-white/20",
+                  "text-white appearance-none [color-scheme:dark]"
+                )}
+                value={form.date_of_birth}
+                onChange={e =>
+                  setForm({ ...form, date_of_birth: e.target.value })
+                }
+              />
 
-    {!form.date_of_birth && (
-      <span
-        className={cn(
-          "absolute left-3 top-1/2 -translate-y-1/2",
-          "text-gray-400 pointer-events-none select-none"
-        )}
-      >
-        Enter D.O.B *
-      </span>
-    )}
-  </div>
-)}
+              {!form.date_of_birth && (
+                <span
+                  className={cn(
+                    "absolute left-3 top-1/2 -translate-y-1/2",
+                    "text-gray-400 pointer-events-none select-none"
+                  )}
+                >
+                  Enter D.O.B *
+                </span>
+              )}
+            </div>
+          )}
 
           <label className={cn('flex', 'items-center', 'gap-2', 'text-sm', 'text-gray-300', 'mt-2')}>
-            <input type="checkbox" checked={agree} onChange={e => setAgree(e.target.checked)} />
+            <input
+              type="checkbox"
+              checked={agree}
+              onChange={e => setAgree(e.target.checked)}
+            />
             I agree to the{" "}
-            <button type="button" onClick={() => setShowTermsModal(true)} className={cn('underline', 'text-sky-400')}>
+            <button
+              type="button"
+              onClick={() => setShowTermsModal(true)}
+              className={cn('underline', 'text-sky-400')}
+            >
               Terms
             </button>
           </label>
 
-          <button disabled={submitting}
-            className={cn('w-full', 'py-3', 'rounded-xl', 'bg-gradient-to-r', 'from-sky-500', 'to-blue-600', 'font-semibold')}>
+          <button
+            disabled={submitting}
+            className={cn('w-full', 'py-3', 'rounded-xl', 'bg-gradient-to-r', 'from-sky-500', 'to-blue-600', 'font-semibold')}
+          >
             {submitting ? "Submitting..." : "Continue"}
           </button>
         </form>

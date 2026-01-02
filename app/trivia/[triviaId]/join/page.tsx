@@ -72,8 +72,14 @@ export default function TriviaJoinPage() {
       } catch {
         // ignore
       }
-      // Go to guest signup for this trivia
-      router.replace(`/guest/signup?trivia=${triviaId}`);
+
+      // 🔁 Send them to signup for THIS trivia, then back here
+      const backTo = `/trivia/${triviaId}/join`;
+      router.replace(
+        `/guest/signup?trivia=${triviaId}&redirect=${encodeURIComponent(
+          backTo
+        )}`
+      );
       return;
     }
 
@@ -199,7 +205,12 @@ export default function TriviaJoinPage() {
       } catch {
         // ignore
       }
-      router.replace(`/guest/signup?trivia=${triviaId}`);
+      const backTo = `/trivia/${triviaId}/join`;
+      router.replace(
+        `/guest/signup?trivia=${triviaId}&redirect=${encodeURIComponent(
+          backTo
+        )}`
+      );
       return;
     }
 
