@@ -146,7 +146,7 @@ export default function TriviaJoinPage() {
     let cancelled = false;
 
     async function loadTrivia() {
-      // Step 1: load trivia card (no relationship magic)
+      // ✅ Load trivia card + host in one query (like fan_walls)
       const { data, error } = await supabase
         .from("trivia_cards")
         .select(
@@ -156,7 +156,11 @@ export default function TriviaJoinPage() {
           background_type,
           background_value,
           require_selfie,
-          host_id
+          host:host_id (
+            id,
+            branding_logo_url,
+            logo_url
+          )
         `
         )
         .eq("id", triviaId)
@@ -178,28 +182,7 @@ export default function TriviaJoinPage() {
         return;
       }
 
-      // Step 2: load host logo separately (if host_id exists)
-      let host: any = null;
-      if (data.host_id) {
-        const { data: hostRow, error: hostErr } = await supabase
-          .from("hosts")
-          .select("id, venue_name, branding_logo_url, logo_url")
-          .eq("id", data.host_id)
-          .maybeSingle();
-
-        if (!cancelled) {
-          if (hostErr) {
-            console.error("❌ Load trivia host error:", hostErr);
-          }
-          if (hostRow) {
-            host = hostRow;
-          }
-        }
-      }
-
-      if (!cancelled) {
-        setTrivia({ ...data, host });
-      }
+      setTrivia(data);
     }
 
     loadTrivia();
@@ -474,7 +457,7 @@ export default function TriviaJoinPage() {
 
       if (data.status === "approved") {
         console.log("✅ Player approved (polling), redirecting…");
-        router.replace(`/thanks/${triviaId}?type=trivia`);
+        router.replace(`/thanks/{triviaId}?type=trivia`);
       } else if (data.status === "rejected") {
         console.log("🚫 Player rejected (polling)");
         setJoinError("Sorry, the host rejected your entry.");
@@ -556,21 +539,13 @@ export default function TriviaJoinPage() {
     trivia?.background_type === "image" &&
     trivia?.background_value?.startsWith("http")
       ? `url(${trivia.background_value})`
-      : trivia?.background_value || "linear-gradient(135deg,#020617,#0f172a)";
+      : trivia?.background_value || "linear-gradient(135deg,#020617,#0f172a)`;
 
-  // ✅ Host logo logic: branding → logo → FanInteract default
-  const logo = (() => {
-    const host = trivia?.host;
-    if (!host) return "/faninteractlogo.png";
-
-    const branding = host.branding_logo_url?.trim();
-    const primary = host.logo_url?.trim();
-
-    if (branding) return branding;
-    if (primary) return primary;
-
-    return "/faninteractlogo.png";
-  })();
+  // 🔥 Same idea as wall page: host logo → default
+  const logo =
+    trivia.host?.branding_logo_url?.trim() ||
+    trivia.host?.logo_url?.trim() ||
+    "/faninteractlogo.png";
 
   return (
     <div
