@@ -38,11 +38,12 @@ export default function GuestSignupPage() {
   /* -------------------------------------------------
      🔥 NORMALIZE QR PARAMS
   ------------------------------------------------- */
-  const redirect = params.get("redirect");
+  const redirect = params.get("redirect") || "";
   const wallId = params.get("wall");
   const wheelId = params.get("prizewheel");
   const basketballId = params.get("basketball");
-  const triviaId = params.get("trivia");
+  const triviaQueryId = params.get("trivia"); // may be null
+  const hostParam = params.get("host");       // 👈 NEW: host from QR / redirect
 
   const rawType = params.get("type");
   let pollId = params.get("poll");
@@ -52,10 +53,22 @@ export default function GuestSignupPage() {
     pollId = rawType.split("=")[1];
   }
 
+  // Try to infer triviaId from redirect path if the query param is missing
+  // e.g. redirect="/trivia/602344ef-6a73-4c1d-981e-3f034aa5db4a/join"
+  let triviaId = triviaQueryId || null;
+  if (!triviaId && redirect) {
+    const match = redirect.match(
+      /\/trivia\/([0-9a-fA-F-]{8}-[0-9a-fA-F-]{4}-[0-9a-fA-F-]{4}-[0-9a-fA-F-]{4}-[0-9a-fA-F-]{12})\/join/
+    );
+    if (match && match[1]) {
+      triviaId = match[1];
+    }
+  }
+
   /* ------------------------------------------------- */
   const [wall, setWall] = useState<any>(null);
 
-  // The host UUID that MUST be passed into syncGuestProfile → guest_profiles.host_id
+  // Host UUID that must go into guest_profiles.host_id
   const [hostIdFromContext, setHostIdFromContext] = useState<string | null>(null);
   const [hostSettings, setHostSettings] = useState<any | null>(null);
   const [loadingHost, setLoadingHost] = useState(true);
@@ -81,14 +94,13 @@ export default function GuestSignupPage() {
 
   /* ------------------------------------------------- */
   useEffect(() => {
-    // Make sure we *have* a device id early
     if (typeof window !== "undefined") {
       getOrCreateGuestDeviceId();
     }
   }, []);
 
   /* -------------------------------------------------
-     LOAD HOST CONTEXT (INCLUDING TRIVIA)
+     LOAD HOST CONTEXT (including trivia)
   ------------------------------------------------- */
   useEffect(() => {
     let cancelled = false;
@@ -144,8 +156,26 @@ export default function GuestSignupPage() {
       setLoadingHost(true);
 
       try {
+        // 🔑 0) If host is explicitly provided in the URL, trust that first.
+        if (hostParam) {
+          console.log("✅ Using host from URL:", hostParam);
+          await loadHostById(hostParam);
+          // Background is optional; if you really want trivia background here,
+          // you can add a separate query, but skipping trivia_cards avoids the 400.
+          return;
+        }
+
         let foundHostId: string | null = null;
         let bgVal: string | null = null;
+
+        console.log("🔎 Signup context:", {
+          wallId,
+          wheelId,
+          pollId,
+          basketballId,
+          triviaId,
+          redirect,
+        });
 
         // 1) Fan Wall
         if (wallId) {
@@ -158,6 +188,7 @@ export default function GuestSignupPage() {
           if (!cancelled && data) {
             bgVal = data.background_value || null;
             foundHostId = data.host_id ?? null;
+            console.log("✅ fan_walls host:", foundHostId);
           }
           if (error) console.error("❌ fan_walls load error:", error);
         }
@@ -172,6 +203,7 @@ export default function GuestSignupPage() {
 
           if (!cancelled && data?.host_id) {
             foundHostId = data.host_id;
+            console.log("✅ prize_wheels host:", foundHostId);
           }
           if (error) console.error("❌ prize_wheels load error:", error);
         }
@@ -186,6 +218,7 @@ export default function GuestSignupPage() {
 
           if (!cancelled && data?.host_id) {
             foundHostId = data.host_id;
+            console.log("✅ polls host:", foundHostId);
           }
           if (error) console.error("❌ polls load error:", error);
         }
@@ -200,11 +233,13 @@ export default function GuestSignupPage() {
 
           if (!cancelled && data?.host_id) {
             foundHostId = data.host_id;
+            console.log("✅ bb_games host:", foundHostId);
           }
           if (error) console.error("❌ bb_games load error:", error);
         }
 
-        // 5) Trivia
+        // 5) Trivia fallback (this is where your 400 was happening)
+        // We'll leave it as a fallback for older QR codes that *don't* have ?host=...
         if (!foundHostId && triviaId) {
           const { data, error } = await supabase
             .from("trivia_cards")
@@ -216,9 +251,14 @@ export default function GuestSignupPage() {
             bgVal = data.background_value || null;
             if (data.host_id) {
               foundHostId = data.host_id;
+              console.log("✅ trivia_cards host (fallback):", foundHostId);
+            } else {
+              console.log("⚠️ trivia_cards row found but host_id is null");
             }
           }
-          if (error) console.error("❌ trivia_cards load error:", error);
+          if (error) {
+            console.error("❌ trivia_cards load error (fallback):", error);
+          }
         }
 
         if (!cancelled && bgVal) {
@@ -229,6 +269,9 @@ export default function GuestSignupPage() {
           await loadHostById(foundHostId);
         } else if (!cancelled) {
           // No host at all — use a minimal default so UI still renders.
+          console.log(
+            "⚠️ No host found for this signup context, using default hostSettings."
+          );
           setHostSettings({
             id: null,
             require_last_name: false,
@@ -252,7 +295,8 @@ export default function GuestSignupPage() {
     return () => {
       cancelled = true;
     };
-  }, [wallId, wheelId, pollId, basketballId, triviaId, supabase]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wallId, wheelId, pollId, basketballId, triviaId, hostParam, redirect, supabase]);
 
   /* -------------------------------------------------
      AUTO-REDIRECT IF GUEST EXISTS
@@ -286,7 +330,6 @@ export default function GuestSignupPage() {
       if (wheelId) return router.push(`/prizewheel/${wheelId}/submit`);
       if (pollId) return router.push(`/polls/${pollId}/vote`);
       if (basketballId) return router.push(`/basketball/${basketballId}/submit`);
-      // Fallback: trivia QR with no redirect → go to join page
       if (triviaId) return router.push(`/trivia/${triviaId}/join`);
     }
 
@@ -309,7 +352,7 @@ export default function GuestSignupPage() {
         pollId ||
         basketballId ||
         triviaId ||
-        redirect?.match(/([0-9a-fA-F-]{36})/)?.[0];
+        redirect.match(/([0-9a-fA-F-]{36})/)?.[0];
 
       const type =
         wallId ? "wall" :
@@ -329,7 +372,7 @@ export default function GuestSignupPage() {
           : null,
       };
 
-      // 👇 This is the host UUID that goes to guest_profiles.host_id
+      // This is the host UUID that goes to guest_profiles.host_id
       const hostIdForSync = hostIdFromContext || hostSettings?.id || null;
 
       console.log("🔍 hostIdForSync =>", hostIdForSync);
@@ -377,16 +420,6 @@ export default function GuestSignupPage() {
   /* -------------------------------------------------
      RENDER
   ------------------------------------------------- */
-
-  // 🔥 NEW: resolve logo from hostSettings
-  const brandingLogo = (hostSettings?.branding_logo_url as string) || "";
-  const fallbackLogo = (hostSettings?.logo_url as string) || "";
-
-  const logo =
-    (brandingLogo && brandingLogo.trim()) ||
-    (fallbackLogo && fallbackLogo.trim()) ||
-    "/faninteractlogo.png";
-
   const bgImage =
     wall?.background_value?.includes("http")
       ? `url(${wall.background_value})`
@@ -417,8 +450,8 @@ export default function GuestSignupPage() {
       >
         <div className={cn("flex justify-center mb-6")}>
           <Image
-            src={logo}
-            alt={hostSettings?.venue_name || "FanInteract"}
+            src="/faninteractlogo.png"
+            alt="FanInteract"
             width={360}
             height={120}
             className={cn("w-[240px] md:w-[320px]")}
