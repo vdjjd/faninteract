@@ -18,7 +18,7 @@ const stateOptions = [
   "SD","TN","TX","UT","VT","VA","WA","WV","WI","WY"
 ];
 
-// Normalize booleans from DB just in case they ever come back as text/ints
+// Normalize booleans from DB
 function toBool(val: any): boolean {
   if (val === true) return true;
   if (val === false || val == null) return false;
@@ -30,11 +30,10 @@ function toBool(val: any): boolean {
   return false;
 }
 
-const supabase = getSupabaseClient();
-
 export default function GuestSignupPage() {
   const router = useRouter();
   const params = useSearchParams();
+  const supabase = getSupabaseClient();
 
   /* -------------------------------------------------
      🔥 NORMALIZE QR PARAMS
@@ -44,11 +43,11 @@ export default function GuestSignupPage() {
   const wheelId = params.get("prizewheel");
   const basketballId = params.get("basketball");
   const triviaId = params.get("trivia");
+  const hostParam = params.get("host");         // ⭐ host passed from trivia join
 
   const rawType = params.get("type");
   let pollId = params.get("poll");
 
-  // Handles malformed QR: ?type=poll=UUID
   if (!pollId && rawType?.startsWith("poll=")) {
     pollId = rawType.split("=")[1];
   }
@@ -56,7 +55,6 @@ export default function GuestSignupPage() {
   /* ------------------------------------------------- */
   const [wall, setWall] = useState<any>(null);
 
-  // Host context
   const [hostIdFromContext, setHostIdFromContext] = useState<string | null>(null);
   const [hostSettings, setHostSettings] = useState<any | null>(null);
   const [loadingHost, setLoadingHost] = useState(true);
@@ -96,7 +94,7 @@ export default function GuestSignupPage() {
 
       const { data: host, error } = await supabase
         .from("hosts")
-        .select("*")
+        .select("*, master_id")
         .eq("id", hostId)
         .single();
 
@@ -117,8 +115,6 @@ export default function GuestSignupPage() {
         require_zip: toBool(host.require_zip),
         require_age: toBool(host.require_age),
       };
-
-      console.log("✅ Loaded host settings:", normalizedHost);
 
       setHostSettings(normalizedHost);
       setHostIdFromContext(hostId);
@@ -144,8 +140,13 @@ export default function GuestSignupPage() {
       setLoadingHost(true);
 
       try {
-        // Fan Wall
-        if (wallId) {
+        // ⭐ 1) If QR / join explicitly passed host, trust that first
+        if (hostParam && !hostIdFromContext) {
+          await loadHostById(hostParam);
+        }
+
+        // 2) Fan Wall
+        if (wallId && !hostIdFromContext && !hostParam) {
           const { data, error } = await supabase
             .from("fan_walls")
             .select("background_value, host_id")
@@ -161,8 +162,8 @@ export default function GuestSignupPage() {
           if (error) console.error("❌ fan_walls load error:", error);
         }
 
-        // Prize Wheel
-        if (wheelId && !hostIdFromContext) {
+        // 3) Prize Wheel
+        if (wheelId && !hostIdFromContext && !hostParam) {
           const { data, error } = await supabase
             .from("prize_wheels")
             .select("host_id")
@@ -175,8 +176,8 @@ export default function GuestSignupPage() {
           if (error) console.error("❌ prize_wheels load error:", error);
         }
 
-        // Poll
-        if (pollId && !hostIdFromContext) {
+        // 4) Poll
+        if (pollId && !hostIdFromContext && !hostParam) {
           const { data, error } = await supabase
             .from("polls")
             .select("host_id")
@@ -189,8 +190,8 @@ export default function GuestSignupPage() {
           if (error) console.error("❌ polls load error:", error);
         }
 
-        // Basketball
-        if (basketballId && !hostIdFromContext) {
+        // 5) Basketball
+        if (basketballId && !hostIdFromContext && !hostParam) {
           const { data, error } = await supabase
             .from("bb_games")
             .select("host_id")
@@ -203,8 +204,8 @@ export default function GuestSignupPage() {
           if (error) console.error("❌ bb_games load error:", error);
         }
 
-        // Trivia
-        if (triviaId && !hostIdFromContext) {
+        // 6) Trivia (only if we did NOT already get host from hostParam)
+        if (triviaId && !hostIdFromContext && !hostParam) {
           const { data, error } = await supabase
             .from("trivia_cards")
             .select("background_type, background_value, host_id")
@@ -218,28 +219,14 @@ export default function GuestSignupPage() {
 
             if (data.host_id) {
               await loadHostById(data.host_id);
-            } else {
-              console.warn("⚠ trivia_cards row has no host_id set");
             }
           }
           if (error) console.error("❌ trivia_cards load error:", error);
         }
 
-        // Fallback so we at least render something if no host found
-        if (!cancelled && !hostSettings && !hostIdFromContext) {
-          console.warn("⚠ No host found from context; using defaults");
-          setHostSettings({
-            id: null,
-            require_last_name: false,
-            require_email: false,
-            require_phone: false,
-            require_street: false,
-            require_city: false,
-            require_state: false,
-            require_zip: false,
-            require_age: false,
-          });
-        }
+        // ❌ OLD: fallback that overwrote real host with "all false"
+        // if (!cancelled && !hostSettings && !hostIdFromContext) { ... }
+        // ⭐ Removed so we don't stomp the real host config.
       } finally {
         if (!cancelled) setLoadingHost(false);
       }
@@ -251,7 +238,8 @@ export default function GuestSignupPage() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wallId, wheelId, pollId, basketballId, triviaId]);
+  }, [wallId, wheelId, pollId, basketballId, triviaId, hostParam, supabase]);
+  // ^ hostParam in deps so if a new host comes in, we reload
 
   /* -------------------------------------------------
      AUTO-REDIRECT IF GUEST EXISTS
@@ -286,19 +274,17 @@ export default function GuestSignupPage() {
         return;
       }
 
-      // If coming from a page that gave us a redirect, go there first
       if (redirect) return router.push(redirect);
       if (wallId) return router.push(`/wall/${wallId}/submit`);
       if (wheelId) return router.push(`/prizewheel/${wheelId}/submit`);
       if (pollId) return router.push(`/polls/${pollId}/vote`);
       if (basketballId)
         return router.push(`/basketball/${basketballId}/submit`);
-      // Fallback: trivia QR with no redirect → go to join page
       if (triviaId) return router.push(`/trivia/${triviaId}/join`);
     }
 
     validateGuest();
-  }, [redirect, wallId, wheelId, pollId, basketballId, triviaId, router]);
+  }, [redirect, wallId, wheelId, pollId, basketballId, triviaId, router, supabase]);
 
   /* -------------------------------------------------
      SUBMIT
@@ -335,10 +321,9 @@ export default function GuestSignupPage() {
           : null,
       };
 
-      // host UUID that goes to guest_profiles.host_id
-      const hostIdForSync = hostIdFromContext || hostSettings?.id || null;
-
-      console.log("🔗 syncGuestProfile hostId:", hostIdForSync);
+      // ⭐ KEY: this is what goes into guest_profiles.host_id
+      const hostIdForSync = hostIdFromContext || hostSettings?.id || hostParam || null;
+      console.log("🔎 hostIdForSync:", hostIdForSync); // <-- keep while debugging
 
       const { profile } = await syncGuestProfile(
         type,
@@ -351,7 +336,6 @@ export default function GuestSignupPage() {
         localStorage.setItem("guest_profile", JSON.stringify(profile));
       }
 
-      // Redirect priority:
       if (redirect) router.push(redirect);
       else if (wallId) router.push(`/wall/${wallId}/submit`);
       else if (wheelId) router.push(`/prizewheel/${wheelId}/submit`);
@@ -373,8 +357,7 @@ export default function GuestSignupPage() {
   if (loadingHost || !hostSettings) {
     return (
       <main className={cn(
-        "min-h-screen w-full flex items-center justify-center",
-        "bg-black text-white"
+        "min-h-screen w-full flex items-center justify-center bg-black text-white"
       )}>
         Loading…
       </main>
@@ -391,8 +374,8 @@ export default function GuestSignupPage() {
         "linear-gradient(135deg,#0a2540,#1b2b44,#000000)";
 
   const logoSrc =
-    hostSettings?.branding_logo_url?.trim() ||
-    hostSettings?.logo_url?.trim() ||
+    hostSettings.branding_logo_url?.trim() ||
+    hostSettings.logo_url?.trim() ||
     "/faninteractlogo.png";
 
   return (
@@ -625,16 +608,6 @@ export default function GuestSignupPage() {
             {submitting ? "Submitting..." : "Continue"}
           </button>
         </form>
-
-        {/* tiny debug footer so you can see what hostSettings says */}
-        <div className={cn('mt-4', 'text-[10px]', 'text-gray-300', 'opacity-60')}>
-          <div>Host ID: {hostIdFromContext || "none"}</div>
-          <div>
-            require_last_name: {String(hostSettings.require_last_name)} | require_phone:{" "}
-            {String(hostSettings.require_phone)} | require_age:{" "}
-            {String(hostSettings.require_age)}
-          </div>
-        </div>
       </motion.div>
 
       <TermsModal
