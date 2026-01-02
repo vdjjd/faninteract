@@ -178,12 +178,26 @@ export default function TriviaInactiveWall({
     };
   }, [trivia?.id]);
 
+  /* 🔗 BUILD QR URL → straight to signup with host + redirect */
   const origin =
     typeof window !== "undefined"
       ? window.location.origin
       : "https://faninteract.vercel.app";
 
-  const qrValue = `${origin}/trivia/${trivia?.id}/join`;
+  // Where they should land AFTER signup (the join page)
+  const redirectPath = trivia?.id ? `/trivia/${trivia.id}/join` : "";
+  const encodedRedirect = encodeURIComponent(redirectPath);
+
+  // Host UUID for signup. Prefer a direct host_id column, else nested host.id
+  const hostParam =
+    (trivia as any)?.host_id ||
+    (trivia as any)?.host?.id ||
+    "";
+
+  // Final QR value → hits signup directly, passes trivia + host + redirect
+  const qrValue = `${origin}/guest/signup?trivia=${
+    trivia?.id || ""
+  }&host=${hostParam}&redirect=${encodedRedirect}`;
 
   /* ✅ LOGO PRIORITY */
   const displayLogo =
