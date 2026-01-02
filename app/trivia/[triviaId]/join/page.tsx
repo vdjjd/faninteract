@@ -6,9 +6,7 @@ import Cropper from "react-easy-crop";
 import imageCompression from "browser-image-compression";
 import { getSupabaseClient } from "@/lib/supabaseClient";
 
-/* ---------------------------------------------------------
-   Get stored profile (same as wall)
---------------------------------------------------------- */
+/* ---------- Load stored guest profile ---------- */
 function getStoredGuestProfile() {
   if (typeof window === "undefined") return null;
   try {
@@ -21,6 +19,8 @@ function getStoredGuestProfile() {
   }
 }
 
+const supabase = getSupabaseClient();
+
 export default function TriviaJoinPage() {
   const router = useRouter();
   const params = useParams();
@@ -29,16 +29,17 @@ export default function TriviaJoinPage() {
     ? params.triviaId[0]
     : (params.triviaId as string);
 
-  const supabase = getSupabaseClient();
+  const [trivia, setTrivia] = useState<any | null>(null);
+  const [triviaError, setTriviaError] = useState<string | null>(null);
 
-  const [trivia, setTrivia] = useState<any>(null);
-  const [profile, setProfile] = useState<any | null>(undefined); // ⬅️ undefined = loading, null = redirecting / none
+  const [profile, setProfile] = useState<any | null | undefined>(undefined);
+  // undefined = still checking
+  // null       = redirecting / missing
+  // object     = ready
 
-  const [loadingTrivia, setLoadingTrivia] = useState(true);
   const [joining, setJoining] = useState(false);
   const [joinError, setJoinError] = useState("");
 
-  // Track the trivia_players row + waiting state
   const [playerId, setPlayerId] = useState<string | null>(null);
   const [waitingApproval, setWaitingApproval] = useState(false);
 
@@ -52,44 +53,94 @@ export default function TriviaJoinPage() {
   const fileRef = useRef<HTMLInputElement>(null);
 
   /* -------------------------------------------------- */
-  /* LOAD PROFILE OR REDIRECT TO SIGNUP (same pattern)  */
+  /* 1️⃣ LOAD PROFILE OR REDIRECT TO SIGNUP             */
   /* -------------------------------------------------- */
   useEffect(() => {
-    if (!triviaId) return;
-
-    const p = getStoredGuestProfile();
-
-    if (!p || !p.id) {
-      // No local profile → force fresh signup
-      try {
-        localStorage.removeItem("guest_profile");
-        localStorage.removeItem("guestInfo");
-      } catch {
-        // ignore
-      }
-
-      const backTo = `/trivia/${triviaId}/join`;
-      router.replace(
-        `/guest/signup?trivia=${triviaId}&redirect=${encodeURIComponent(
-          backTo
-        )}`
-      );
-
-      setProfile(null); // means "we're navigating away"
+    if (!triviaId) {
+      setProfile(null);
       return;
     }
 
-    setProfile(p);
+    let cancelled = false;
+
+    async function loadAndValidateProfile() {
+      const p = getStoredGuestProfile();
+
+      const hasValidLocal = p && typeof p.id === "string" && p.id.length > 0;
+
+      // No local profile → redirect to signup
+      if (!hasValidLocal) {
+        try {
+          localStorage.removeItem("guest_profile");
+          localStorage.removeItem("guestInfo");
+        } catch {
+          // ignore
+        }
+
+        const backTo = `/trivia/${triviaId}/join`;
+        router.replace(
+          `/guest/signup?trivia=${triviaId}&redirect=${encodeURIComponent(
+            backTo
+          )}`
+        );
+
+        setProfile(null); // show "Redirecting..." instead of white
+        return;
+      }
+
+      // ✅ Check that this guest actually still exists in guest_profiles
+      const { data, error } = await supabase
+        .from("guest_profiles")
+        .select("id")
+        .eq("id", p.id)
+        .maybeSingle();
+
+      if (cancelled) return;
+
+      if (error) {
+        console.error("❌ guest_profiles DB check error:", error);
+      }
+
+      if (!data) {
+        // Local cache is stale / deleted in DB
+        try {
+          localStorage.removeItem("guest_profile");
+          localStorage.removeItem("guestInfo");
+        } catch {
+          // ignore
+        }
+
+        const backTo = `/trivia/${triviaId}/join`;
+        router.replace(
+          `/guest/signup?trivia=${triviaId}&redirect=${encodeURIComponent(
+            backTo
+          )}`
+        );
+
+        setProfile(null);
+        return;
+      }
+
+      // All good → let them stay here
+      setProfile(p);
+    }
+
+    loadAndValidateProfile();
+
+    return () => {
+      cancelled = true;
+    };
   }, [router, triviaId]);
 
   /* -------------------------------------------------- */
-  /* LOAD TRIVIA CONFIG (TITLE / BG / LOGO / SELFIE)    */
+  /* 2️⃣ LOAD TRIVIA CONFIG (TITLE / BG / LOGO / SELFIE) */
   /* -------------------------------------------------- */
   useEffect(() => {
     if (!triviaId) return;
 
+    let cancelled = false;
+
     async function loadTrivia() {
-      setLoadingTrivia(true);
       const { data, error } = await supabase
         .from("trivia_cards")
         .select(
@@ -107,16 +158,22 @@ export default function TriviaJoinPage() {
         .eq("id", triviaId)
         .single();
 
+      if (cancelled) return;
+
       if (error) {
         console.error("❌ Load trivia card error:", error);
+        setTriviaError("Trivia not found.");
       }
 
       setTrivia(data);
-      setLoadingTrivia(false);
     }
 
     loadTrivia();
-  }, [triviaId, supabase]);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [triviaId]);
 
   /* -------------------------------------------------- */
   /* CAMERA + FILE HANDLING                             */
@@ -183,8 +240,8 @@ export default function TriviaJoinPage() {
   }
 
   /* -------------------------------------------------- */
-  /* JOIN TRIVIA → INSERT trivia_players                */
-  /*   Stay here & wait for moderation                  */
+  /* 3️⃣ JOIN TRIVIA → INSERT trivia_players             */
+  /*    Stay here & wait for moderation                  */
   /* -------------------------------------------------- */
   async function handleJoinTrivia(e: any) {
     e.preventDefault();
@@ -192,7 +249,6 @@ export default function TriviaJoinPage() {
     setErrorMsg("");
 
     if (!profile?.id) {
-      // Safety: if somehow we got here with bad profile, force re-signup
       setJoinError("Missing guest profile. Please sign up again.");
       try {
         localStorage.removeItem("guest_profile");
@@ -275,7 +331,7 @@ export default function TriviaJoinPage() {
         sessionId = session.id;
       }
 
-      // 🔒 IMPORTANT: remember which session + card this guest is in
+      // 🔒 Remember which session + card this guest is in
       try {
         localStorage.setItem("current_trivia_session_id", sessionId);
         localStorage.setItem("current_trivia_card_id", triviaId);
@@ -318,7 +374,7 @@ export default function TriviaJoinPage() {
 
         if (updateErr) {
           console.error("❌ trivia_players update error:", updateErr);
-          setJoinError("Could not join the game. Please try again.");
+          setJoinError("Could not update your info. Please try again.");
           return;
         }
 
@@ -338,27 +394,6 @@ export default function TriviaJoinPage() {
 
         if (insertErr) {
           console.error("❌ trivia_players insert error:", insertErr);
-
-          // 🧹 If dev nuked guest_profiles and FK fails, force fresh signup
-          if (
-            (insertErr as any).code === "23503" ||
-            insertErr.message?.includes("guest_profiles")
-          ) {
-            try {
-              localStorage.removeItem("guest_profile");
-              localStorage.removeItem("guestInfo");
-            } catch {
-              // ignore
-            }
-            const backTo = `/trivia/${triviaId}/join`;
-            router.replace(
-              `/guest/signup?trivia=${triviaId}&redirect=${encodeURIComponent(
-                backTo
-              )}`
-            );
-            return;
-          }
-
           setJoinError("Could not join the game. Please try again.");
           return;
         }
@@ -381,8 +416,8 @@ export default function TriviaJoinPage() {
   }
 
   /* -------------------------------------------------- */
-  /* WATCH THIS trivia_player FOR APPROVAL / REJECT      */
-  /*   POLLING ONLY (no realtime)                       */
+  /* 4️⃣ WATCH THIS trivia_player FOR APPROVAL / REJECT  */
+  /*    POLLING ONLY (no realtime)                      */
   /* -------------------------------------------------- */
   useEffect(() => {
     if (!playerId || !triviaId) return;
@@ -413,7 +448,6 @@ export default function TriviaJoinPage() {
       }
     };
 
-    // initial check + interval
     checkStatus();
     const intervalId = setInterval(checkStatus, 2000);
 
@@ -421,17 +455,86 @@ export default function TriviaJoinPage() {
       cancelled = true;
       clearInterval(intervalId);
     };
-  }, [playerId, triviaId, router, supabase]);
+  }, [playerId, triviaId, router]);
 
   /* -------------------------------------------------- */
-  /* RENDER JOIN UI                                     */
+  /* 5️⃣ RENDER JOIN UI                                 */
   /* -------------------------------------------------- */
 
-  // Same pattern as wall page:
-  // - profile === undefined → still checking
-  // - profile === null → redirecting away
-  if (profile === undefined || profile === null || loadingTrivia) {
-    return null;
+  // Still figuring out profile (or redirecting)
+  if (profile === undefined) {
+    return (
+      <div
+        style={{
+          minHeight: "100vh",
+          background: "black",
+          color: "white",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          fontSize: 18,
+        }}
+      >
+        Loading your profile…
+      </div>
+    );
+  }
+
+  // We decided you have no valid profile → redirecting to signup
+  if (profile === null) {
+    return (
+      <div
+        style={{
+          minHeight: "100vh",
+          background: "black",
+          color: "white",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          fontSize: 18,
+        }}
+      >
+        Redirecting to signup…
+      </div>
+    );
+  }
+
+  // If trivia failed to load badly
+  if (!trivia && triviaError) {
+    return (
+      <div
+        style={{
+          minHeight: "100vh",
+          background: "black",
+          color: "white",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          fontSize: 18,
+        }}
+      >
+        {triviaError}
+      </div>
+    );
+  }
+
+  // If trivia still loading but we *do* have a profile, show something
+  if (!trivia && !triviaError) {
+    return (
+      <div
+        style={{
+          minHeight: "100vh",
+          background: "black",
+          color: "white",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          fontSize: 18,
+        }}
+      >
+        Loading trivia…
+      </div>
+    );
   }
 
   const bg =
