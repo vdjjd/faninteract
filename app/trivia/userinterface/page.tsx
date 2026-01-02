@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useMemo } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { getSupabaseClient } from "@/lib/supabaseClient";
 import { computeTriviaPoints } from "@/lib/trivia/triviaScoringEngine";
@@ -29,74 +29,10 @@ interface TriviaSession {
   question_started_at: string | null;
 }
 
-/* ---------- COUNTDOWN COMPONENT (pre-game) ---------- */
-function CountdownDisplay({
-  countdown,
-  countdownActive,
-  countdownStartedAt,
-}: {
-  countdown: string;
-  countdownActive: boolean;
-  countdownStartedAt?: string | null;
-}) {
-  const [now, setNow] = useState<number>(() => Date.now());
-
-  const totalSeconds = useMemo(() => {
-    const value =
-      countdown && countdown !== "none" ? countdown : "10 seconds";
-    const [numStr] = value.split(" ");
-    const num = parseInt(numStr, 10);
-    return isNaN(num) ? 10 : num;
-  }, [countdown]);
-
-  useEffect(() => {
-    if (!countdownActive || !countdownStartedAt) return;
-
-    const id = setInterval(() => {
-      setNow(Date.now());
-    }, 250);
-
-    return () => clearInterval(id);
-  }, [countdownActive, countdownStartedAt]);
-
-  if (!countdownActive || !countdownStartedAt) {
-    const mFull = Math.floor(totalSeconds / 60);
-    const sFull = totalSeconds % 60;
-    return (
-      <div
-        style={{
-          fontSize: "3rem",
-          fontWeight: 900,
-        }}
-      >
-        {mFull}:{sFull.toString().padStart(2, "0")}
-      </div>
-    );
-  }
-
-  const startMs = new Date(countdownStartedAt).getTime();
-  const elapsed = Math.max(0, (now - startMs) / 1000);
-  const remaining = Math.max(0, totalSeconds - elapsed);
-
-  const m = Math.floor(remaining / 60);
-  const s = Math.floor(remaining % 60);
-
-  return (
-    <div
-      style={{
-        fontSize: "3rem",
-        fontWeight: 900,
-      }}
-    >
-      {m}:{s.toString().padStart(2, "0")}
-    </div>
-  );
-}
-
 /* ---------------------------------------------------------
-   TIMER CONFIG (shared with wall)
+   TIMER CONFIG (match Active Wall)
 --------------------------------------------------------- */
-const ANSWER_OVERLAY_MS = 3000; // 3s "THE ANSWER IS" overlay
+const ANSWER_OVERLAY_MS = 3000; // 3s “THE ANSWER IS…” overlay
 
 /* ---------------------------------------------------------
    Component
@@ -120,19 +56,11 @@ export default function TriviaUserInterfacePage() {
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [hasAnswered, setHasAnswered] = useState(false);
 
-  // Timer + phases (must mirror ActiveWall)
+  // Timer + phases (lockstep with ActiveWall)
   const [progress, setProgress] = useState<number>(1); // 1 → 0
   const [locked, setLocked] = useState(false);
   const [showAnswerOverlay, setShowAnswerOverlay] = useState(false);
   const [revealAnswer, setRevealAnswer] = useState(false);
-
-  // Card-level countdown (matches InactiveWall)
-  const [cardStatus, setCardStatus] = useState<string | null>(null);
-  const [cardCountdown, setCardCountdown] = useState<string>("10 seconds");
-  const [cardCountdownActive, setCardCountdownActive] = useState(false);
-  const [cardCountdownStartedAt, setCardCountdownStartedAt] = useState<
-    string | null
-  >(null);
 
   /* ---------------------------------------------------------
      Load guest profile
@@ -158,7 +86,7 @@ export default function TriviaUserInterfacePage() {
       setLoading(true);
       setLoadingMessage("Loading trivia game…");
 
-      // 1️⃣ Load trivia card (include countdown + status)
+      // 1️⃣ Load trivia card (include host_id so we can pull logo)
       const { data: card, error: cardErr } = await supabase
         .from("trivia_cards")
         .select(
@@ -167,11 +95,7 @@ export default function TriviaUserInterfacePage() {
           public_name,
           timer_seconds,
           scoring_mode,
-          host_id,
-          status,
-          countdown,
-          countdown_active,
-          countdown_started_at
+          host_id
         `
         )
         .eq("id", gameId)
@@ -187,12 +111,8 @@ export default function TriviaUserInterfacePage() {
       }
 
       setTrivia(card);
-      setCardStatus(card.status ?? null);
-      setCardCountdown(card.countdown || "10 seconds");
-      setCardCountdownActive(card.countdown_active === true);
-      setCardCountdownStartedAt(card.countdown_started_at || null);
 
-      // 2️⃣ Host logo
+      // 2️⃣ Host logo (branding_logo_url → logo_url → fallback)
       let logo = "/faninteractlogo.png";
       if (card.host_id) {
         const { data: hostRow, error: hostErr } = await supabase
@@ -290,43 +210,6 @@ export default function TriviaUserInterfacePage() {
   }, [gameId, profile?.id, router]);
 
   /* ---------------------------------------------------------
-     Poll trivia_cards for countdown/status
-  --------------------------------------------------------- */
-  useEffect(() => {
-    if (!gameId) return;
-
-    let cancelled = false;
-
-    const pollCard = async () => {
-      const { data, error } = await supabase
-        .from("trivia_cards")
-        .select("status,countdown,countdown_active,countdown_started_at")
-        .eq("id", gameId)
-        .maybeSingle();
-
-      if (cancelled) return;
-
-      if (error || !data) {
-        if (error) console.error("❌ trivia_cards poll error:", error);
-        return;
-      }
-
-      setCardStatus(data.status ?? null);
-      setCardCountdown(data.countdown || "10 seconds");
-      setCardCountdownActive(data.countdown_active === true);
-      setCardCountdownStartedAt(data.countdown_started_at || null);
-    };
-
-    pollCard();
-    const id = window.setInterval(pollCard, 500);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(id);
-    };
-  }, [gameId]);
-
-  /* ---------------------------------------------------------
      Poll trivia_sessions for current_question / status
   --------------------------------------------------------- */
   useEffect(() => {
@@ -351,7 +234,7 @@ export default function TriviaUserInterfacePage() {
     };
 
     doPoll();
-    const id = window.setInterval(doPoll, 500);
+    const id = window.setInterval(doPoll, 1000);
 
     return () => window.clearInterval(id);
   }, [session?.id, gameId]);
@@ -373,14 +256,11 @@ export default function TriviaUserInterfacePage() {
   const currentQuestion = questions[currentQuestionIndex] || null;
   const isRunning = session?.status === "running";
 
-  // Pre-game countdown phase?
-  const isCountdownPhase =
-    !!cardCountdownActive && !!cardCountdownStartedAt && !isRunning;
-
   /* ---------------------------------------------------------
-     TIMER + REVEAL PHASES (SAME AS WALL)
+     TIMER + REVEAL PHASES (SAME SHAPE AS WALL)
   --------------------------------------------------------- */
   useEffect(() => {
+    // no running session or no question: reset
     if (!isRunning || !currentQuestion || !session?.question_started_at) {
       setProgress(1);
       setLocked(false);
@@ -393,7 +273,7 @@ export default function TriviaUserInterfacePage() {
     const overlayMs = ANSWER_OVERLAY_MS;
     const startedMs = new Date(session.question_started_at).getTime();
 
-    // reset per-question state when question changes
+    // Reset per-question UI state
     setSelectedIndex(null);
     setHasAnswered(false);
     setLocked(false);
@@ -435,12 +315,10 @@ export default function TriviaUserInterfacePage() {
       }
     };
 
-    tick();
-    const id = window.setInterval(tick, 100);
+    tick(); // run immediately
+    const id = window.setInterval(tick, 100); // smooth bar
 
-    return () => {
-      window.clearInterval(id);
-    };
+    return () => window.clearInterval(id);
   }, [isRunning, currentQuestion?.id, timerSeconds, session?.question_started_at]);
 
   /* ---------------------------------------------------------
@@ -506,6 +384,7 @@ export default function TriviaUserInterfacePage() {
 
     const isCorrect = idx === currentQuestion.correct_index;
 
+    // ⭐ Only award points for correct answers
     const points = isCorrect
       ? computeTriviaPoints({
           scoringMode,
@@ -610,51 +489,6 @@ export default function TriviaUserInterfacePage() {
         }}
       >
         Waiting for the host to start the game…
-      </div>
-    );
-  }
-
-  // Pre-game countdown screen (matches inactive wall style)
-  if (isCountdownPhase) {
-    return (
-      <div
-        style={{
-          minHeight: "100vh",
-          background:
-            "radial-gradient(circle at top,#1d4ed8 0,#020617 55%,#000 100%)",
-          color: "#fff",
-          padding: 20,
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          justifyContent: "center",
-          textAlign: "center",
-          gap: 16,
-        }}
-      >
-        <div
-          style={{
-            fontSize: "1rem",
-            opacity: 0.8,
-            marginBottom: 8,
-          }}
-        >
-          Game starting in…
-        </div>
-        <CountdownDisplay
-          countdown={cardCountdown}
-          countdownActive={cardCountdownActive}
-          countdownStartedAt={cardCountdownStartedAt}
-        />
-        <div
-          style={{
-            marginTop: 8,
-            fontSize: "0.9rem",
-            opacity: 0.75,
-          }}
-        >
-          Get ready, the first question will appear when this reaches 0.
-        </div>
       </div>
     );
   }
