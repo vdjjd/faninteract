@@ -1045,13 +1045,14 @@ export default function TriviaUserInterfacePage() {
                       </span>
                     )}
 
-                    {/* Rank badge outside the circle edge */}
+                    {/* Rank badge bottom-center */}
                     {row && (
                       <span
                         style={{
                           position: "absolute",
-                          bottom: -4,
-                          right: -4,
+                          bottom: -6,
+                          left: "50%",
+                          transform: "translateX(-50%)",
                           padding: "2px 8px",
                           borderRadius: 999,
                           background: "rgba(15,23,42,0.95)",

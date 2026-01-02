@@ -30,7 +30,7 @@ type LeaderRow = {
   points: number;
 };
 
-type WallView = "question" | "leaderboard";
+type WallView = "question" | "leaderboard" | "podium";
 
 /* ---------------------------------------------------- */
 /* QR + LOGO CONTROL                                    */
@@ -425,12 +425,11 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
   }, [trivia?.id, isRunning]);
 
   /* -------------------------------------------------- */
-  /* FULL LEADERBOARD LOADER (ONLY USED IN VIEW=leaderboard) */
+  /* FULL LEADERBOARD LOADER (used in leaderboard + podium) */
   /* -------------------------------------------------- */
   useEffect(() => {
     if (!trivia?.id) return;
-    if (!isRunning) return;
-    if (view !== "leaderboard") return;
+    if (view !== "leaderboard" && view !== "podium") return;
 
     let cancelled = false;
 
@@ -552,7 +551,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
       cancelled = true;
       window.clearInterval(id);
     };
-  }, [trivia?.id, isRunning, view]);
+  }, [trivia?.id, view]);
 
   /* -------------------------------------------------- */
   /* TIMER — DB-SYNCED VIA setInterval (WALL ONLY)       */
@@ -647,7 +646,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
   }, [locked, view]);
 
   /* -------------------------------------------------- */
-  /* AFTER REVEAL → SHOW LEADERBOARD                     */
+  /* AFTER REVEAL → LEADERBOARD OR PODIUM                */
   /* -------------------------------------------------- */
   useEffect(() => {
     if (view !== "question") return;
@@ -655,17 +654,26 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
     if (!isRunning) return;
     if (currentQuestionNumber == null) return;
 
+    const isFinalQuestion =
+      totalQuestions != null && currentQuestionNumber >= totalQuestions;
+
     if (transitionLockRef.current) return;
     transitionLockRef.current = true;
 
-    // 8 seconds after reveal starts, switch to leaderboard view
-    const toLeaderboard = window.setTimeout(() => {
-      setView("leaderboard");
+    // 8 seconds after reveal starts:
+    // - non-final → leaderboard
+    // - final → podium
+    const toNextView = window.setTimeout(() => {
+      if (isFinalQuestion) {
+        setView("podium");
+      } else {
+        setView("leaderboard");
+      }
       setLeaderLoading(true);
     }, 8000);
 
-    return () => window.clearTimeout(toLeaderboard);
-  }, [revealAnswer, isRunning, currentQuestionNumber, view]);
+    return () => window.clearTimeout(toNextView);
+  }, [revealAnswer, isRunning, currentQuestionNumber, totalQuestions, view]);
 
   /* -------------------------------------------------- */
   /* LEADERBOARD VIEW TIMER (8s) THEN ADVANCE QUESTION   */
@@ -678,7 +686,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
     const timeoutId = window.setTimeout(async () => {
       try {
         if (totalQuestions != null && currentQuestionNumber >= totalQuestions) {
-          // last question: stay on leaderboard (podium later)
+          // last question: do not advance; podium handled separately
           return;
         }
 
@@ -776,6 +784,14 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
       : "https://faninteract.vercel.app";
 
   const qrValue = `${origin}/trivia/${trivia?.id}/join`;
+
+  const isFinalQuestion =
+    totalQuestions != null && currentQuestionNumber != null
+      ? currentQuestionNumber >= totalQuestions
+      : false;
+
+  // podium data (top 3 from leaderRows)
+  const podiumTop3 = leaderRows.slice(0, 3);
 
   return (
     <>
@@ -916,20 +932,119 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                 : null}
             </div>
 
-            {/* CURRENT RANKINGS LABEL */}
-            <div
-              style={{
-                position: "absolute",
-                bottom: "13vh",
-                left: "50%",
-                transform: "translateX(-50%)",
-                fontSize: "clamp(1.6rem,2vw,2.2rem)",
-                fontWeight: 800,
-                opacity: 0.85,
-              }}
-            >
-              Current Rankings
-            </div>
+            {/* CURRENT RANKINGS LABEL & BUBBLES
+                👉 HIDDEN on FINAL QUESTION */}
+            {!isFinalQuestion && (
+              <>
+                <div
+                  style={{
+                    position: "absolute",
+                    bottom: "13vh",
+                    left: "50%",
+                    transform: "translateX(-50%)",
+                    fontSize: "clamp(1.6rem,2vw,2.2rem)",
+                    fontWeight: 800,
+                    opacity: 0.85,
+                  }}
+                >
+                  Current Rankings
+                </div>
+
+                {/* TOP 3 LEADERS (only in question view, non-final) */}
+                <div
+                  style={{
+                    position: "absolute",
+                    bottom: RANKINGS_CTRL.bottom,
+                    left: RANKINGS_CTRL.centerLeft,
+                    transform: `translateX(calc(-50% + ${RANKINGS_CTRL.offsetX}))`,
+                    display: "flex",
+                    gap: RANKINGS_CTRL.groupGap,
+                    zIndex: 20,
+                    pointerEvents: "none",
+                  }}
+                >
+                  {[1, 2, 3].map((place) => {
+                    const row = topRanks.find((r) => r.place === place);
+                    const hasSelfie = !!row?.selfieUrl;
+
+                    return (
+                      <div
+                        key={place}
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns: `${RANKINGS_CTRL.avatarSize}px auto`,
+                          gridTemplateRows: "auto auto",
+                          columnGap: RANKINGS_CTRL.nameGap,
+                          alignItems: "center",
+                          fontWeight: 900,
+                          opacity: 0.92,
+                        }}
+                      >
+                        <div
+                          style={{
+                            gridColumn: "1 / 2",
+                            gridRow: "1 / 2",
+                            width: RANKINGS_CTRL.avatarSize,
+                            height: RANKINGS_CTRL.avatarSize,
+                            borderRadius: "50%",
+                            overflow: "hidden",
+                            background: "rgba(255,255,255,0.12)",
+                            border: hasSelfie
+                              ? "2px solid rgba(255,255,255,0.45)"
+                              : "2px dashed rgba(255,255,255,0.45)",
+                            boxShadow: hasSelfie
+                              ? "0 0 16px rgba(0,0,0,0.45)"
+                              : "none",
+                          }}
+                        >
+                          {hasSelfie ? (
+                            <img
+                              src={row!.selfieUrl as string}
+                              alt={row!.name}
+                              style={{
+                                width: "100%",
+                                height: "100%",
+                                objectFit: "cover",
+                                display: "block",
+                              }}
+                            />
+                          ) : null}
+                        </div>
+
+                        <div
+                          style={{
+                            gridColumn: "2 / 3",
+                            gridRow: "1 / 2",
+                            fontSize: "clamp(1.05rem,1.3vw,1.5rem)",
+                            whiteSpace: "nowrap",
+                            maxWidth: RANKINGS_CTRL.nameMaxWidth,
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            color: "rgba(255,255,255,0.92)",
+                            textShadow: "0 2px 10px rgba(0,0,0,0.45)",
+                          }}
+                        >
+                          {row?.name || "—"}
+                        </div>
+
+                        <div
+                          style={{
+                            gridColumn: "1 / 2",
+                            gridRow: "2 / 3",
+                            justifySelf: "center",
+                            marginTop: RANKINGS_CTRL.placeTopMargin,
+                            fontSize: "clamp(1rem,1.2vw,1.25rem)",
+                            opacity: 0.9,
+                          }}
+                        >
+                          {place === 1 ? "1st" : place === 2 ? "2nd" : "3rd"}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            )}
 
             {/* TINTED OVERLAY + "THE ANSWER IS" */}
             {showAnswerOverlay && (
@@ -982,6 +1097,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
 
         {/* =======================
             LEADERBOARD VIEW
+            (used between questions, NOT for final podium)
         ======================= */}
         {view === "leaderboard" && (
           <div
@@ -1162,7 +1278,86 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
           </div>
         )}
 
-        {/* ✅ QR CODE — BOTTOM LEFT (keep on both views) */}
+        {/* =======================
+            PODIUM VIEW (FINAL QUESTION ONLY)
+        ======================= */}
+        {view === "podium" && (
+          <div
+            style={{
+              width: "100vw",
+              height: "100vh",
+              color: "#fff",
+              position: "relative",
+              overflow: "hidden",
+              display: "flex",
+              justifyContent: "center",
+              alignItems: "center",
+            }}
+          >
+            {/* Title */}
+            <div
+              style={{
+                position: "absolute",
+                top: "8vh",
+                left: "50%",
+                transform: "translateX(-50%)",
+                fontSize: "clamp(2.8rem,4.2vw,5rem)",
+                fontWeight: 900,
+                letterSpacing: "0.08em",
+                textTransform: "uppercase",
+                textShadow: "0 10px 40px rgba(0,0,0,0.65)",
+              }}
+            >
+              Final Standings
+            </div>
+
+            {/* Podium */}
+            {podiumTop3.length === 0 ? (
+              <div
+                style={{
+                  fontSize: "1.6rem",
+                  opacity: 0.8,
+                }}
+              >
+                No scores recorded.
+              </div>
+            ) : (
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "flex-end",
+                  gap: "4vw",
+                  marginTop: "6vh",
+                }}
+              >
+                {/* 2nd place (left) */}
+                <PodiumStep
+                  place={2}
+                  row={podiumTop3[1]}
+                  heightVh={22}
+                  highlightColor="rgba(148,163,184,0.9)"
+                />
+                {/* 1st place (center, tallest) */}
+                <PodiumStep
+                  place={1}
+                  row={podiumTop3[0]}
+                  heightVh={28}
+                  highlightColor="rgba(250,204,21,0.95)"
+                  isCenter
+                />
+                {/* 3rd place (right) */}
+                <PodiumStep
+                  place={3}
+                  row={podiumTop3[2]}
+                  heightVh={18}
+                  highlightColor="rgba(244,114,182,0.9)"
+                />
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ✅ QR CODE — BOTTOM LEFT (keep on all views) */}
         <div
           style={{
             position: "absolute",
@@ -1201,102 +1396,6 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
             }}
           />
         </div>
-
-        {/* TOP 3 LEADERS (show only in question view) */}
-        {view === "question" && (
-          <div
-            style={{
-              position: "absolute",
-              bottom: RANKINGS_CTRL.bottom,
-              left: RANKINGS_CTRL.centerLeft,
-              transform: `translateX(calc(-50% + ${RANKINGS_CTRL.offsetX}))`,
-              display: "flex",
-              gap: RANKINGS_CTRL.groupGap,
-              zIndex: 20,
-              pointerEvents: "none",
-            }}
-          >
-            {[1, 2, 3].map((place) => {
-              const row = topRanks.find((r) => r.place === place);
-              const hasSelfie = !!row?.selfieUrl;
-
-              return (
-                <div
-                  key={place}
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: `${RANKINGS_CTRL.avatarSize}px auto`,
-                    gridTemplateRows: "auto auto",
-                    columnGap: RANKINGS_CTRL.nameGap,
-                    alignItems: "center",
-                    fontWeight: 900,
-                    opacity: 0.92,
-                  }}
-                >
-                  <div
-                    style={{
-                      gridColumn: "1 / 2",
-                      gridRow: "1 / 2",
-                      width: RANKINGS_CTRL.avatarSize,
-                      height: RANKINGS_CTRL.avatarSize,
-                      borderRadius: "50%",
-                      overflow: "hidden",
-                      background: "rgba(255,255,255,0.12)",
-                      border: hasSelfie
-                        ? "2px solid rgba(255,255,255,0.45)"
-                        : "2px dashed rgba(255,255,255,0.45)",
-                      boxShadow: hasSelfie
-                        ? "0 0 16px rgba(0,0,0,0.45)"
-                        : "none",
-                    }}
-                  >
-                    {hasSelfie ? (
-                      <img
-                        src={row!.selfieUrl as string}
-                        alt={row!.name}
-                        style={{
-                          width: "100%",
-                          height: "100%",
-                          objectFit: "cover",
-                          display: "block",
-                        }}
-                      />
-                    ) : null}
-                  </div>
-
-                  <div
-                    style={{
-                      gridColumn: "2 / 3",
-                      gridRow: "1 / 2",
-                      fontSize: "clamp(1.05rem,1.3vw,1.5rem)",
-                      whiteSpace: "nowrap",
-                      maxWidth: RANKINGS_CTRL.nameMaxWidth,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      color: "rgba(255,255,255,0.92)",
-                      textShadow: "0 2px 10px rgba(0,0,0,0.45)",
-                    }}
-                  >
-                    {row?.name || "—"}
-                  </div>
-
-                  <div
-                    style={{
-                      gridColumn: "1 / 2",
-                      gridRow: "2 / 3",
-                      justifySelf: "center",
-                      marginTop: RANKINGS_CTRL.placeTopMargin,
-                      fontSize: "clamp(1rem,1.2vw,1.25rem)",
-                      opacity: 0.9,
-                    }}
-                  >
-                    {place === 1 ? "1st" : place === 2 ? "2nd" : "3rd"}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
 
         {/* LOGO */}
         <div
@@ -1339,5 +1438,143 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
         }
       `}</style>
     </>
+  );
+}
+
+/* =========================
+   PODIUM STEP SUBCOMPONENT
+========================= */
+
+function PodiumStep({
+  place,
+  row,
+  heightVh,
+  highlightColor,
+  isCenter,
+}: {
+  place: 1 | 2 | 3;
+  row?: LeaderRow;
+  heightVh: number;
+  highlightColor: string;
+  isCenter?: boolean;
+}) {
+  const label = place === 1 ? "1st" : place === 2 ? "2nd" : "3rd";
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        transform: isCenter ? "translateY(-2vh)" : "none",
+      }}
+    >
+      {/* Avatar */}
+      <div
+        style={{
+          width: isCenter ? 140 : 110,
+          height: isCenter ? 140 : 110,
+          borderRadius: "50%",
+          overflow: "hidden",
+          background: "rgba(15,23,42,0.9)",
+          border: row?.selfieUrl
+            ? `3px solid ${highlightColor}`
+            : "2px dashed rgba(148,163,184,0.8)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          boxShadow: row
+            ? `0 0 30px ${highlightColor}`
+            : "0 0 16px rgba(15,23,42,0.9)",
+          position: "relative",
+          marginBottom: "1.4vh",
+        }}
+      >
+        {row?.selfieUrl ? (
+          <img
+            src={row.selfieUrl}
+            alt={row.name}
+            style={{
+              width: "100%",
+              height: "100%",
+              objectFit: "cover",
+              display: "block",
+            }}
+          />
+        ) : (
+          <span
+            style={{
+              fontSize: isCenter ? "3rem" : "2.3rem",
+              fontWeight: 900,
+              opacity: 0.9,
+            }}
+          >
+            {row?.name?.[0]?.toUpperCase() || "?"}
+          </span>
+        )}
+
+        {/* Rank pill */}
+        <span
+          style={{
+            position: "absolute",
+            bottom: -10,
+            left: "50%",
+            transform: "translateX(-50%)",
+            padding: "4px 10px",
+            borderRadius: 999,
+            background: "rgba(15,23,42,0.98)",
+            border: "1px solid rgba(226,232,240,0.9)",
+            fontSize: "0.75rem",
+            fontWeight: 800,
+            letterSpacing: "0.08em",
+            textTransform: "uppercase",
+          }}
+        >
+          {label}
+        </span>
+      </div>
+
+      {/* Podium block */}
+      <div
+        style={{
+          width: isCenter ? 190 : 160,
+          height: `${heightVh}vh`,
+          borderRadius: 18,
+          background:
+            "linear-gradient(to top, rgba(15,23,42,0.95), rgba(30,64,175,0.9))",
+          border: `2px solid ${highlightColor}`,
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "flex-end",
+          paddingBottom: "2vh",
+          boxShadow: "0 18px 40px rgba(0,0,0,0.75)",
+        }}
+      >
+        <div
+          style={{
+            fontSize: "clamp(1rem,1.4vw,1.6rem)",
+            fontWeight: 800,
+            textAlign: "center",
+            padding: "0 8px",
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            maxWidth: "100%",
+          }}
+        >
+          {row?.name || "—"}
+        </div>
+        <div
+          style={{
+            marginTop: "0.4vh",
+            fontSize: "clamp(0.9rem,1.2vw,1.4rem)",
+            opacity: 0.85,
+          }}
+        >
+          {row ? `${row.points} pts` : ""}
+        </div>
+      </div>
+    </div>
   );
 }
