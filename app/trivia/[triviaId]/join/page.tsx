@@ -6,7 +6,9 @@ import Cropper from "react-easy-crop";
 import imageCompression from "browser-image-compression";
 import { getSupabaseClient } from "@/lib/supabaseClient";
 
-/* Load stored guest profile (same pattern as Prize Wheel) */
+/* ---------------------------------------------------------
+   Get stored profile (same as wall)
+--------------------------------------------------------- */
 function getStoredGuestProfile() {
   if (typeof window === "undefined") return null;
   try {
@@ -19,8 +21,6 @@ function getStoredGuestProfile() {
   }
 }
 
-const supabase = getSupabaseClient();
-
 export default function TriviaJoinPage() {
   const router = useRouter();
   const params = useParams();
@@ -29,8 +29,10 @@ export default function TriviaJoinPage() {
     ? params.triviaId[0]
     : (params.triviaId as string);
 
+  const supabase = getSupabaseClient();
+
   const [trivia, setTrivia] = useState<any>(null);
-  const [profile, setProfile] = useState<any>(null);
+  const [profile, setProfile] = useState<any | null>(undefined); // ⬅️ undefined = loading, null = redirecting / none
 
   const [loadingTrivia, setLoadingTrivia] = useState(true);
   const [joining, setJoining] = useState(false);
@@ -39,9 +41,6 @@ export default function TriviaJoinPage() {
   // Track the trivia_players row + waiting state
   const [playerId, setPlayerId] = useState<string | null>(null);
   const [waitingApproval, setWaitingApproval] = useState(false);
-
-  // Track whether we’ve checked localStorage + DB profile yet
-  const [profileChecked, setProfileChecked] = useState(false);
 
   /* Image / crop state (selfie) */
   const [imageSrc, setImageSrc] = useState<string | null>(null);
@@ -53,77 +52,34 @@ export default function TriviaJoinPage() {
   const fileRef = useRef<HTMLInputElement>(null);
 
   /* -------------------------------------------------- */
-  /* LOAD PROFILE OR REDIRECT TO SIGNUP (DB-validated)  */
+  /* LOAD PROFILE OR REDIRECT TO SIGNUP (same pattern)  */
   /* -------------------------------------------------- */
   useEffect(() => {
     if (!triviaId) return;
 
-    let cancelled = false;
+    const p = getStoredGuestProfile();
 
-    async function loadAndValidateProfile() {
-      const p = getStoredGuestProfile();
-
-      const hasValidLocal = p && typeof p.id === "string" && p.id.length > 0;
-
-      if (!hasValidLocal) {
-        // No local profile → straight to signup
-        try {
-          localStorage.removeItem("guest_profile");
-          localStorage.removeItem("guestInfo");
-        } catch {
-          // ignore
-        }
-
-        const backTo = `/trivia/${triviaId}/join`;
-        router.replace(
-          `/guest/signup?trivia=${triviaId}&redirect=${encodeURIComponent(
-            backTo
-          )}`
-        );
-        return;
+    if (!p || !p.id) {
+      // No local profile → force fresh signup
+      try {
+        localStorage.removeItem("guest_profile");
+        localStorage.removeItem("guestInfo");
+      } catch {
+        // ignore
       }
 
-      // ✅ NEW: verify that this profile actually exists in guest_profiles
-      const { data, error } = await supabase
-        .from("guest_profiles")
-        .select("id")
-        .eq("id", p.id)
-        .maybeSingle();
+      const backTo = `/trivia/${triviaId}/join`;
+      router.replace(
+        `/guest/signup?trivia=${triviaId}&redirect=${encodeURIComponent(
+          backTo
+        )}`
+      );
 
-      if (cancelled) return;
-
-      if (error) {
-        console.error("❌ guest_profiles DB check error:", error);
-      }
-
-      if (!data) {
-        // Local profile is stale / deleted from DB → clear and send to signup
-        try {
-          localStorage.removeItem("guest_profile");
-          localStorage.removeItem("guestInfo");
-        } catch {
-          // ignore
-        }
-
-        const backTo = `/trivia/${triviaId}/join`;
-        router.replace(
-          `/guest/signup?trivia=${triviaId}&redirect=${encodeURIComponent(
-            backTo
-          )}`
-        );
-        return;
-      }
-
-      // All good: local + DB are in sync
-      setProfile(p);
-      setProfileChecked(true);
+      setProfile(null); // means "we're navigating away"
+      return;
     }
 
-    loadAndValidateProfile();
-
-    return () => {
-      cancelled = true;
-    };
+    setProfile(p);
   }, [router, triviaId]);
 
   /* -------------------------------------------------- */
@@ -160,7 +116,7 @@ export default function TriviaJoinPage() {
     }
 
     loadTrivia();
-  }, [triviaId]);
+  }, [triviaId, supabase]);
 
   /* -------------------------------------------------- */
   /* CAMERA + FILE HANDLING                             */
@@ -382,6 +338,27 @@ export default function TriviaJoinPage() {
 
         if (insertErr) {
           console.error("❌ trivia_players insert error:", insertErr);
+
+          // 🧹 If dev nuked guest_profiles and FK fails, force fresh signup
+          if (
+            (insertErr as any).code === "23503" ||
+            insertErr.message?.includes("guest_profiles")
+          ) {
+            try {
+              localStorage.removeItem("guest_profile");
+              localStorage.removeItem("guestInfo");
+            } catch {
+              // ignore
+            }
+            const backTo = `/trivia/${triviaId}/join`;
+            router.replace(
+              `/guest/signup?trivia=${triviaId}&redirect=${encodeURIComponent(
+                backTo
+              )}`
+            );
+            return;
+          }
+
           setJoinError("Could not join the game. Please try again.");
           return;
         }
@@ -444,15 +421,16 @@ export default function TriviaJoinPage() {
       cancelled = true;
       clearInterval(intervalId);
     };
-  }, [playerId, triviaId, router]);
+  }, [playerId, triviaId, router, supabase]);
 
   /* -------------------------------------------------- */
   /* RENDER JOIN UI                                     */
   /* -------------------------------------------------- */
 
-  // While we haven’t checked profile yet, or trivia is loading, don’t render the page.
-  // If there is no valid profile or DB row, we’ll redirect above.
-  if (!profileChecked || loadingTrivia) {
+  // Same pattern as wall page:
+  // - profile === undefined → still checking
+  // - profile === null → redirecting away
+  if (profile === undefined || profile === null || loadingTrivia) {
     return null;
   }
 

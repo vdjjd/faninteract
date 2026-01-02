@@ -30,7 +30,7 @@ export default function GuestSignupPage() {
   const wallId = params.get("wall");
   const wheelId = params.get("prizewheel");
   const basketballId = params.get("basketball");
-  const triviaId = params.get("trivia"); // ✅ NEW: trivia source
+  const triviaId = params.get("trivia"); // ✅ trivia source
 
   const rawType = params.get("type");
   let pollId = params.get("poll");
@@ -135,7 +135,7 @@ export default function GuestSignupPage() {
         if (data?.host_id) loadHostById(data.host_id);
       }
 
-      // ✅ NEW: trivia QR → load host + background from trivia card
+      // ✅ trivia QR → load host + background from trivia card
       if (triviaId) {
         const { data } = await supabase
           .from("trivia_cards")
@@ -181,7 +181,7 @@ export default function GuestSignupPage() {
       if (wheelId) return router.push(`/prizewheel/${wheelId}/submit`);
       if (pollId) return router.push(`/polls/${pollId}/vote`);
       if (basketballId) return router.push(`/basketball/${basketballId}/submit`);
-      // ✅ Fallback: if we came from trivia QR with no redirect, go to join
+      // ✅ Fallback: trivia QR with no redirect → join page
       if (triviaId) return router.push(`/trivia/${triviaId}/join`);
     }
 
@@ -199,7 +199,11 @@ export default function GuestSignupPage() {
 
     try {
       const targetId =
-        wallId || wheelId || pollId || basketballId ||
+        wallId ||
+        wheelId ||
+        pollId ||
+        basketballId ||
+        triviaId || // ✅ make trivia the next priority
         redirect?.match(/([0-9a-fA-F-]{36})/)?.[0];
 
       const type =
@@ -207,6 +211,7 @@ export default function GuestSignupPage() {
         wheelId ? "prizewheel" :
         pollId ? "poll" :
         basketballId ? "basketball" :
+        triviaId ? "trivia" : // ✅ tell syncGuestProfile this came from trivia
         "";
 
       const payload = {
@@ -235,7 +240,7 @@ export default function GuestSignupPage() {
       else if (wheelId) router.push(`/prizewheel/${wheelId}/submit`);
       else if (pollId) router.push(`/polls/${pollId}/vote`);
       else if (basketballId) router.push(`/basketball/${basketballId}/submit`);
-      // 2. fallback: trivia QR with no redirect (just in case)
+      // 2. fallback: trivia QR with no redirect (inactive wall QR directly → signup)
       else if (triviaId) router.push(`/trivia/${triviaId}/join`);
       else router.push("/");
     } catch (err) {
@@ -249,7 +254,15 @@ export default function GuestSignupPage() {
   /* ------------------------------------------------- */
   if (!hostSettings) {
     return (
-      <main className={cn('text-white', 'flex', 'items-center', 'justify-center', 'h-screen')}>
+      <main
+        className={cn(
+          "text-white",
+          "flex",
+          "items-center",
+          "justify-center",
+          "h-screen"
+        )}
+      >
         Loading…
       </main>
     );
@@ -259,9 +272,19 @@ export default function GuestSignupPage() {
      RENDER
   ------------------------------------------------- */
   return (
-    <main className={cn('relative', 'flex', 'items-center', 'justify-center', 'min-h-screen', 'w-full', 'text-white')}>
+    <main
+      className={cn(
+        "relative",
+        "flex",
+        "items-center",
+        "justify-center",
+        "min-h-screen",
+        "w-full",
+        "text-white"
+      )}
+    >
       <div
-        className={cn('absolute', 'inset-0', 'bg-cover', 'bg-center')}
+        className={cn("absolute", "inset-0", "bg-cover", "bg-center")}
         style={{
           backgroundImage: wall?.background_value?.includes("http")
             ? `url(${wall.background_value})`
@@ -269,35 +292,67 @@ export default function GuestSignupPage() {
               "linear-gradient(135deg,#0a2540,#1b2b44,#000000)",
         }}
       />
-      <div className={cn('absolute', 'inset-0', 'bg-black/60', 'backdrop-blur-md')} />
+      <div
+        className={cn(
+          "absolute",
+          "inset-0",
+          "bg-black/60",
+          "backdrop-blur-md"
+        )}
+      />
 
       <motion.div
         initial={{ opacity: 0, y: 30, scale: 0.97 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
         transition={{ duration: 0.5 }}
-        className={cn('relative', 'z-10', 'w-[95%]', 'max-w-md', 'rounded-2xl', 'p-8', 'border', 'border-white/10', 'bg-white/10', 'backdrop-blur-lg')}
+        className={cn(
+          "relative",
+          "z-10",
+          "w-[95%]",
+          "max-w-md",
+          "rounded-2xl",
+          "p-8",
+          "border",
+          "border-white/10",
+          "bg-white/10",
+          "backdrop-blur-lg"
+        )}
       >
-        <div className={cn('flex', 'justify-center', 'mb-6')}>
+        <div className={cn("flex", "justify-center", "mb-6")}>
           <Image
             src="/faninteractlogo.png"
             alt="FanInteract"
             width={360}
             height={120}
-            className={cn('w-[240px]', 'md:w-[320px]')}
+            className={cn("w-[240px]", "md:w-[320px]")}
           />
         </div>
 
-        <motion.h2 className={cn('text-center', 'text-2xl', 'font-semibold', 'text-sky-300', 'mb-6')}>
+        <motion.h2
+          className={cn(
+            "text-center",
+            "text-2xl",
+            "font-semibold",
+            "text-sky-300",
+            "mb-6"
+          )}
+        >
           Join the Fan Zone
         </motion.h2>
 
         <form onSubmit={handleSubmit} className="space-y-3">
-
           {/* REQUIRED FIELDS */}
           <input
             required
             placeholder="First Name *"
-            className={cn('w-full', 'p-3', 'rounded-xl', 'bg-black/40', 'border', 'border-white/20')}
+            className={cn(
+              "w-full",
+              "p-3",
+              "rounded-xl",
+              "bg-black/40",
+              "border",
+              "border-white/20"
+            )}
             value={form.first_name}
             onChange={e => setForm({ ...form, first_name: e.target.value })}
           />
@@ -306,7 +361,14 @@ export default function GuestSignupPage() {
             <input
               required
               placeholder="Last Name *"
-              className={cn('w-full', 'p-3', 'rounded-xl', 'bg-black/40', 'border', 'border-white/20')}
+              className={cn(
+                "w-full",
+                "p-3",
+                "rounded-xl",
+                "bg-black/40",
+                "border",
+                "border-white/20"
+              )}
               value={form.last_name}
               onChange={e => setForm({ ...form, last_name: e.target.value })}
             />
@@ -317,7 +379,14 @@ export default function GuestSignupPage() {
               required
               type="email"
               placeholder="Email *"
-              className={cn('w-full', 'p-3', 'rounded-xl', 'bg-black/40', 'border', 'border-white/20')}
+              className={cn(
+                "w-full",
+                "p-3",
+                "rounded-xl",
+                "bg-black/40",
+                "border",
+                "border-white/20"
+              )}
               value={form.email}
               onChange={e => setForm({ ...form, email: e.target.value })}
             />
@@ -328,7 +397,14 @@ export default function GuestSignupPage() {
               required
               type="tel"
               placeholder="Phone *"
-              className={cn('w-full', 'p-3', 'rounded-xl', 'bg-black/40', 'border', 'border-white/20')}
+              className={cn(
+                "w-full",
+                "p-3",
+                "rounded-xl",
+                "bg-black/40",
+                "border",
+                "border-white/20"
+              )}
               value={form.phone}
               onChange={e => setForm({ ...form, phone: e.target.value })}
             />
@@ -339,7 +415,14 @@ export default function GuestSignupPage() {
             <input
               required
               placeholder="Street Address *"
-              className={cn('w-full', 'p-3', 'rounded-xl', 'bg-black/40', 'border', 'border-white/20')}
+              className={cn(
+                "w-full",
+                "p-3",
+                "rounded-xl",
+                "bg-black/40",
+                "border",
+                "border-white/20"
+              )}
               value={form.street}
               onChange={e => setForm({ ...form, street: e.target.value })}
             />
@@ -349,7 +432,14 @@ export default function GuestSignupPage() {
             <input
               required
               placeholder="City *"
-              className={cn('w-full', 'p-3', 'rounded-xl', 'bg-black/40', 'border', 'border-white/20')}
+              className={cn(
+                "w-full",
+                "p-3",
+                "rounded-xl",
+                "bg-black/40",
+                "border",
+                "border-white/20"
+              )}
               value={form.city}
               onChange={e => setForm({ ...form, city: e.target.value })}
             />
@@ -358,7 +448,14 @@ export default function GuestSignupPage() {
           {hostSettings.require_state && (
             <select
               required
-              className={cn('w-full', 'p-3', 'rounded-xl', 'bg-black/40', 'border', 'border-white/20')}
+              className={cn(
+                "w-full",
+                "p-3",
+                "rounded-xl",
+                "bg-black/40",
+                "border",
+                "border-white/20"
+              )}
               value={form.state}
               onChange={e => setForm({ ...form, state: e.target.value })}
             >
@@ -375,7 +472,14 @@ export default function GuestSignupPage() {
             <input
               required
               placeholder="ZIP Code *"
-              className={cn('w-full', 'p-3', 'rounded-xl', 'bg-black/40', 'border', 'border-white/20')}
+              className={cn(
+                "w-full",
+                "p-3",
+                "rounded-xl",
+                "bg-black/40",
+                "border",
+                "border-white/20"
+              )}
               value={form.zip}
               onChange={e => setForm({ ...form, zip: e.target.value })}
             />
@@ -412,7 +516,16 @@ export default function GuestSignupPage() {
             </div>
           )}
 
-          <label className={cn('flex', 'items-center', 'gap-2', 'text-sm', 'text-gray-300', 'mt-2')}>
+          <label
+            className={cn(
+              "flex",
+              "items-center",
+              "gap-2",
+              "text-sm",
+              "text-gray-300",
+              "mt-2"
+            )}
+          >
             <input
               type="checkbox"
               checked={agree}
@@ -422,7 +535,7 @@ export default function GuestSignupPage() {
             <button
               type="button"
               onClick={() => setShowTermsModal(true)}
-              className={cn('underline', 'text-sky-400')}
+              className={cn("underline", "text-sky-400")}
             >
               Terms
             </button>
@@ -430,7 +543,15 @@ export default function GuestSignupPage() {
 
           <button
             disabled={submitting}
-            className={cn('w-full', 'py-3', 'rounded-xl', 'bg-gradient-to-r', 'from-sky-500', 'to-blue-600', 'font-semibold')}
+            className={cn(
+              "w-full",
+              "py-3",
+              "rounded-xl",
+              "bg-gradient-to-r",
+              "from-sky-500",
+              "to-blue-600",
+              "font-semibold"
+            )}
           >
             {submitting ? "Submitting..." : "Continue"}
           </button>
