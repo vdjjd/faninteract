@@ -844,31 +844,33 @@ export default function TriviaUserInterfacePage() {
           </div>
         </div>
 
-        {/* TIMER BAR (NO NUMBERS, EVER) */}
-        <div
-          style={{
-            marginBottom: 16,
-            width: "100%",
-            borderRadius: 999,
-            background: "rgba(15,23,42,0.85)",
-            border: "1px solid rgba(34,197,94,0.5)",
-            overflow: "hidden",
-            position: "relative",
-            height: 26,
-          }}
-        >
+        {/* TIMER BAR (NO NUMBERS, EVER) — ONLY ON QUESTION VIEW */}
+        {view === "question" && (
           <div
             style={{
-              height: "100%",
-              width: `${pctWidth}%`,
-              background:
-                locked || revealAnswer || view === "leaderboard"
-                  ? "linear-gradient(90deg,#ef4444,#dc2626)"
-                  : "linear-gradient(90deg,#22c55e,#16a34a,#15803d)",
-              transition: "width 0.1s linear, background 0.2s ease",
+              marginBottom: 16,
+              width: "100%",
+              borderRadius: 999,
+              background: "rgba(15,23,42,0.85)",
+              border: "1px solid rgba(34,197,94,0.5)",
+              overflow: "hidden",
+              position: "relative",
+              height: 26,
             }}
-          />
-        </div>
+          >
+            <div
+              style={{
+                height: "100%",
+                width: `${pctWidth}%`,
+                background:
+                  locked || revealAnswer
+                    ? "linear-gradient(90deg,#ef4444,#dc2626)"
+                    : "linear-gradient(90deg,#22c55e,#16a34a,#15803d)",
+                transition: "width 0.1s linear, background 0.2s ease",
+              }}
+            />
+          </div>
+        )}
 
         {/* ANSWER BUTTONS / LEADERBOARD CARDS */}
         <div
