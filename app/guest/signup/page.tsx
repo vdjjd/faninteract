@@ -30,10 +30,11 @@ function toBool(val: any): boolean {
   return false;
 }
 
+const supabase = getSupabaseClient();
+
 export default function GuestSignupPage() {
   const router = useRouter();
   const params = useSearchParams();
-  const supabase = getSupabaseClient();
 
   /* -------------------------------------------------
      🔥 NORMALIZE QR PARAMS
@@ -55,7 +56,7 @@ export default function GuestSignupPage() {
   /* ------------------------------------------------- */
   const [wall, setWall] = useState<any>(null);
 
-  // 👇 THIS is the host UUID that MUST go into guest_profiles.host_id
+  // Host context
   const [hostIdFromContext, setHostIdFromContext] = useState<string | null>(null);
   const [hostSettings, setHostSettings] = useState<any | null>(null);
   const [loadingHost, setLoadingHost] = useState(true);
@@ -95,7 +96,7 @@ export default function GuestSignupPage() {
 
       const { data: host, error } = await supabase
         .from("hosts")
-        .select("*, master_id")
+        .select("*")
         .eq("id", hostId)
         .single();
 
@@ -116,6 +117,8 @@ export default function GuestSignupPage() {
         require_zip: toBool(host.require_zip),
         require_age: toBool(host.require_age),
       };
+
+      console.log("✅ Loaded host settings:", normalizedHost);
 
       setHostSettings(normalizedHost);
       setHostIdFromContext(hostId);
@@ -215,13 +218,16 @@ export default function GuestSignupPage() {
 
             if (data.host_id) {
               await loadHostById(data.host_id);
+            } else {
+              console.warn("⚠ trivia_cards row has no host_id set");
             }
           }
           if (error) console.error("❌ trivia_cards load error:", error);
         }
 
-        // Fallback so we at least render something if host is totally missing
+        // Fallback so we at least render something if no host found
         if (!cancelled && !hostSettings && !hostIdFromContext) {
+          console.warn("⚠ No host found from context; using defaults");
           setHostSettings({
             id: null,
             require_last_name: false,
@@ -244,9 +250,8 @@ export default function GuestSignupPage() {
     return () => {
       cancelled = true;
     };
-    // hostIdFromContext intentionally NOT in deps to avoid infinite loop
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wallId, wheelId, pollId, basketballId, triviaId, supabase]);
+  }, [wallId, wheelId, pollId, basketballId, triviaId]);
 
   /* -------------------------------------------------
      AUTO-REDIRECT IF GUEST EXISTS
@@ -293,7 +298,7 @@ export default function GuestSignupPage() {
     }
 
     validateGuest();
-  }, [redirect, wallId, wheelId, pollId, basketballId, triviaId, router, supabase]);
+  }, [redirect, wallId, wheelId, pollId, basketballId, triviaId, router]);
 
   /* -------------------------------------------------
      SUBMIT
@@ -330,8 +335,10 @@ export default function GuestSignupPage() {
           : null,
       };
 
-      // 👇 KEY: this is the host UUID that goes to guest_profiles.host_id
+      // host UUID that goes to guest_profiles.host_id
       const hostIdForSync = hostIdFromContext || hostSettings?.id || null;
+
+      console.log("🔗 syncGuestProfile hostId:", hostIdForSync);
 
       const { profile } = await syncGuestProfile(
         type,
@@ -365,7 +372,10 @@ export default function GuestSignupPage() {
   ------------------------------------------------- */
   if (loadingHost || !hostSettings) {
     return (
-      <main className={cn('min-h-screen', 'w-full', 'flex', 'items-center', 'justify-center', 'bg-black', 'text-white')}>
+      <main className={cn(
+        "min-h-screen w-full flex items-center justify-center",
+        "bg-black text-white"
+      )}>
         Loading…
       </main>
     );
@@ -380,6 +390,11 @@ export default function GuestSignupPage() {
       : wall?.background_value ||
         "linear-gradient(135deg,#0a2540,#1b2b44,#000000)";
 
+  const logoSrc =
+    hostSettings?.branding_logo_url?.trim() ||
+    hostSettings?.logo_url?.trim() ||
+    "/faninteractlogo.png";
+
   return (
     <main
       className={cn(
@@ -391,7 +406,7 @@ export default function GuestSignupPage() {
         className={cn("absolute inset-0 bg-cover bg-center")}
         style={{ backgroundImage: bgImage }}
       />
-      <div className={cn('absolute', 'inset-0', 'bg-black/60', 'backdrop-blur-md')} />
+      <div className={cn("absolute inset-0 bg-black/60 backdrop-blur-md")} />
 
       <motion.div
         initial={{ opacity: 0, y: 30, scale: 0.97 }}
@@ -402,13 +417,13 @@ export default function GuestSignupPage() {
           "border border-white/10 bg-white/10 backdrop-blur-lg"
         )}
       >
-        <div className={cn('flex', 'justify-center', 'mb-6')}>
+        <div className={cn("flex justify-center mb-6")}>
           <Image
-            src="/faninteractlogo.png"
-            alt="FanInteract"
+            src={logoSrc}
+            alt="Host Logo"
             width={360}
             height={120}
-            className={cn('w-[240px]', 'md:w-[320px]')}
+            className={cn("w-[240px] md:w-[320px]")}
           />
         </div>
 
@@ -610,6 +625,16 @@ export default function GuestSignupPage() {
             {submitting ? "Submitting..." : "Continue"}
           </button>
         </form>
+
+        {/* tiny debug footer so you can see what hostSettings says */}
+        <div className={cn('mt-4', 'text-[10px]', 'text-gray-300', 'opacity-60')}>
+          <div>Host ID: {hostIdFromContext || "none"}</div>
+          <div>
+            require_last_name: {String(hostSettings.require_last_name)} | require_phone:{" "}
+            {String(hostSettings.require_phone)} | require_age:{" "}
+            {String(hostSettings.require_age)}
+          </div>
+        </div>
       </motion.div>
 
       <TermsModal
