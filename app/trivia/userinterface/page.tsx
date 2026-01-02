@@ -107,6 +107,11 @@ export default function TriviaUserInterfacePage() {
   const [leaderRows, setLeaderRows] = useState<LeaderRow[]>([]);
   const [leaderLoading, setLeaderLoading] = useState(false);
 
+  // DB-anchored start time (mirror wall)
+  const [questionStartedAt, setQuestionStartedAt] = useState<string | null>(
+    null
+  );
+
   // 🎯 Timer engine ref
   const timerEngineRef = useRef<TriviaTimerEngine | null>(null);
 
@@ -202,6 +207,7 @@ export default function TriviaUserInterfacePage() {
       }
 
       setSession(sessionRow as TriviaSession);
+      setQuestionStartedAt(sessionRow.question_started_at ?? null);
 
       // 4️⃣ Ensure we have this player row for the session
       setLoadingMessage("Finding your player seat…");
@@ -258,7 +264,7 @@ export default function TriviaUserInterfacePage() {
   }, [gameId, profile?.id, router]);
 
   /* ---------------------------------------------------------
-     Poll trivia_sessions for current_question / status
+     Poll trivia_sessions for current_question / status / start time
   --------------------------------------------------------- */
   useEffect(() => {
     if (!gameId || !session?.id) return;
@@ -279,6 +285,8 @@ export default function TriviaUserInterfacePage() {
         ...(prev || (data as any)),
         ...(data as any),
       }));
+
+      setQuestionStartedAt(data.question_started_at ?? null);
     };
 
     doPoll();
@@ -316,11 +324,13 @@ export default function TriviaUserInterfacePage() {
 
   /* ---------------------------------------------------------
      DB-synced timer engine using TriviaTimerEngine
-     - Engine just gives us animation ticks; we anchor time to question_started_at
+     - EXACT SAME STYLE AS WALL:
+       • uses questionStartedAt (one source of truth)
+       • only runs on view === 'question'
   --------------------------------------------------------- */
   useEffect(() => {
-    // if no running session or no question, stop engine
-    if (!isRunning || !currentQuestion) {
+    // stop engine when not running / no question / not on question view
+    if (!isRunning || !currentQuestion || view !== "question") {
       if (timerEngineRef.current) {
         timerEngineRef.current.stop();
         timerEngineRef.current = null;
@@ -342,7 +352,7 @@ export default function TriviaUserInterfacePage() {
       scoringMode === "1000s" ? 1000 : scoringMode === "10000s" ? 10000 : 100;
 
     const updateFromDbTime = () => {
-      const startedAtIso = session?.question_started_at;
+      const startedAtIso = questionStartedAt;
       const startedMs = startedAtIso
         ? new Date(startedAtIso).getTime()
         : Date.now();
@@ -378,7 +388,7 @@ export default function TriviaUserInterfacePage() {
       {
         onTick: () => {
           // We ignore engine's own internal clock and
-          // keep everything anchored to question_started_at
+          // keep everything anchored to questionStartedAt
           updateFromDbTime();
         },
         onComplete: () => {
@@ -400,7 +410,8 @@ export default function TriviaUserInterfacePage() {
     currentQuestion?.id,
     timerSeconds,
     scoringMode,
-    session?.question_started_at,
+    questionStartedAt,
+    view,
   ]);
 
   /* ---------------------------------------------------------
@@ -616,7 +627,7 @@ export default function TriviaUserInterfacePage() {
       ? computeTriviaPoints({
           scoringMode,
           timerSeconds,
-          questionStartedAt: session?.question_started_at ?? null,
+          questionStartedAt: questionStartedAt ?? null,
         })
       : 0;
 
@@ -624,7 +635,7 @@ export default function TriviaUserInterfacePage() {
       isCorrect,
       scoringMode,
       timerSeconds,
-      questionStartedAt: session?.question_started_at,
+      questionStartedAt,
       points,
     });
 
