@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useMemo } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { getSupabaseClient } from "@/lib/supabaseClient";
 
@@ -24,76 +24,19 @@ function getStoredGuestProfile() {
   }
 }
 
+function parseCountdownSeconds(value?: string | null): number {
+  if (!value) return 10;
+  const [numStr] = value.split(" ");
+  const n = parseInt(numStr, 10);
+  return Number.isNaN(n) ? 10 : n;
+}
+
 interface TriviaSession {
   id: string;
   status: string;
   current_round: number;
   current_question: number;
   question_started_at: string | null;
-}
-
-/* ---------- COUNTDOWN COMPONENT (shared-ish with InactiveWall) ---------- */
-function CountdownDisplay({
-  countdown,
-  countdownActive,
-  countdownStartedAt,
-}: {
-  countdown: string;
-  countdownActive: boolean;
-  countdownStartedAt?: string | null;
-}) {
-  const [now, setNow] = useState<number>(() => Date.now());
-
-  const totalSeconds = useMemo(() => {
-    const value =
-      countdown && countdown !== "none" ? countdown : "10 seconds";
-    const [numStr] = value.split(" ");
-    const num = parseInt(numStr, 10);
-    return isNaN(num) ? 10 : num;
-  }, [countdown]);
-
-  useEffect(() => {
-    if (!countdownActive || !countdownStartedAt) return;
-
-    const id = setInterval(() => {
-      setNow(Date.now());
-    }, 250);
-
-    return () => clearInterval(id);
-  }, [countdownActive, countdownStartedAt]);
-
-  if (!countdownActive || !countdownStartedAt) {
-    const mFull = Math.floor(totalSeconds / 60);
-    const sFull = totalSeconds % 60;
-    return (
-      <div
-        style={{
-          fontSize: "3rem",
-          fontWeight: 900,
-        }}
-      >
-        {mFull}:{sFull.toString().padStart(2, "0")}
-      </div>
-    );
-  }
-
-  const startMs = new Date(countdownStartedAt).getTime();
-  const elapsed = Math.max(0, (now - startMs) / 1000);
-  const remaining = Math.max(0, totalSeconds - elapsed);
-
-  const m = Math.floor(remaining / 60);
-  const s = Math.floor(remaining % 60);
-
-  return (
-    <div
-      style={{
-        fontSize: "3rem",
-        fontWeight: 900,
-      }}
-    >
-      {m}:{s.toString().padStart(2, "0")}
-    </div>
-  );
 }
 
 /* ---------------------------------------------------------
@@ -128,13 +71,14 @@ export default function TriviaUserInterfacePage() {
   // 🎯 Timer engine ref
   const timerEngineRef = useRef<TriviaTimerEngine | null>(null);
 
-  // 📺 Card-level countdown (matches walls)
+  // 🕒 Card-level countdown (same source of truth as walls)
   const [cardStatus, setCardStatus] = useState<string | null>(null);
   const [cardCountdown, setCardCountdown] = useState<string>("10 seconds");
   const [cardCountdownActive, setCardCountdownActive] = useState(false);
   const [cardCountdownStartedAt, setCardCountdownStartedAt] = useState<
     string | null
   >(null);
+  const [countdownNow, setCountdownNow] = useState<number>(() => Date.now());
 
   /* ---------------------------------------------------------
      Load guest profile
@@ -150,7 +94,6 @@ export default function TriviaUserInterfacePage() {
 
   /* ---------------------------------------------------------
      Initial load: trivia card, host logo, session, player row, questions
-     (same logic as your original, plus countdown fields)
   --------------------------------------------------------- */
   useEffect(() => {
     if (!gameId || !profile?.id) return;
@@ -190,6 +133,8 @@ export default function TriviaUserInterfacePage() {
       }
 
       setTrivia(card);
+
+      // Card-level timing state
       setCardStatus(card.status ?? null);
       setCardCountdown(card.countdown || "10 seconds");
       setCardCountdownActive(card.countdown_active === true);
@@ -294,7 +239,7 @@ export default function TriviaUserInterfacePage() {
 
   /* ---------------------------------------------------------
      Poll trivia_cards for live countdown/status
-     (keeps countdown in sync with wall; does NOT touch session/questions)
+     (keeps player UI in lock-step with walls)
   --------------------------------------------------------- */
   useEffect(() => {
     if (!gameId) return;
@@ -304,9 +249,7 @@ export default function TriviaUserInterfacePage() {
     const pollCard = async () => {
       const { data, error } = await supabase
         .from("trivia_cards")
-        .select(
-          "status,countdown,countdown_active,countdown_started_at"
-        )
+        .select("status,countdown,countdown_active,countdown_started_at")
         .eq("id", gameId)
         .maybeSingle();
 
@@ -334,7 +277,6 @@ export default function TriviaUserInterfacePage() {
 
   /* ---------------------------------------------------------
      Poll trivia_sessions for current_question / status
-     (identical idea to your original: keyed on session.id)
   --------------------------------------------------------- */
   useEffect(() => {
     if (!gameId || !session?.id) return;
@@ -380,14 +322,37 @@ export default function TriviaUserInterfacePage() {
   const currentQuestion = questions[currentQuestionIndex] || null;
   const isRunning = session?.status === "running";
 
-  // Are we in the host countdown phase (card-level, like InactiveWall)?
+  const hasSession = !!session;
+  const hasQuestions = questions.length > 0;
+  const hasCurrentQuestion = !!currentQuestion;
+
+  // Are we in the host countdown phase? (matches walls)
   const isCountdownPhase =
     !!cardCountdownActive &&
     !!cardCountdownStartedAt &&
-    !isRunning;
+    !isRunning &&
+    hasSession;
+
+  /* ---------------------------------------------------------
+     Countdown tick (card-level countdown)
+  --------------------------------------------------------- */
+  useEffect(() => {
+    if (!isCountdownPhase) return;
+
+    setCountdownNow(Date.now());
+
+    const id = window.setInterval(() => {
+      setCountdownNow(Date.now());
+    }, 250);
+
+    return () => {
+      window.clearInterval(id);
+    };
+  }, [isCountdownPhase, cardCountdownStartedAt]);
 
   /* ---------------------------------------------------------
      DB-synced timer engine using TriviaTimerEngine
+     - Engine just gives us animation ticks; we anchor time to question_started_at
   --------------------------------------------------------- */
   useEffect(() => {
     // if no running session or no question, stop engine
@@ -444,10 +409,12 @@ export default function TriviaUserInterfacePage() {
     const engine = new TriviaTimerEngine(
       {
         durationMs,
-        maxPoints,
+        maxPoints, // fed from scoringMode so config is consistent
       },
       {
         onTick: () => {
+          // We ignore engine's own internal clock and
+          // keep everything anchored to question_started_at
           updateFromDbTime();
         },
         onComplete: () => {
@@ -531,7 +498,7 @@ export default function TriviaUserInterfacePage() {
   }, [locked]);
 
   /* ---------------------------------------------------------
-     Answer submission
+     Answer submission (⏱ uses computeTriviaPoints directly)
   --------------------------------------------------------- */
   async function handleSelectAnswer(idx: number) {
     if (!currentQuestion) return;
@@ -556,6 +523,7 @@ export default function TriviaUserInterfacePage() {
 
     const isCorrect = idx === currentQuestion.correct_index;
 
+    // ⭐ Only award points for correct answers
     const points = isCorrect
       ? computeTriviaPoints({
           scoringMode,
@@ -645,13 +613,20 @@ export default function TriviaUserInterfacePage() {
     );
   }
 
-  // 👉 SHOW COUNTDOWN FIRST if the card is in countdown phase,
-  // regardless of whether session is ready yet.
-  if (
-    isCountdownPhase &&
-    cardCountdownStartedAt &&
-    cardCountdownActive
-  ) {
+  // 🔔 PRE-GAME COUNTDOWN (runs BEFORE "waiting for host" check)
+  if (isCountdownPhase) {
+    const totalSeconds = parseCountdownSeconds(cardCountdown);
+    let remaining = totalSeconds;
+
+    if (cardCountdownStartedAt) {
+      const startMs = new Date(cardCountdownStartedAt).getTime();
+      const elapsed = Math.max(0, (countdownNow - startMs) / 1000);
+      remaining = Math.max(0, totalSeconds - elapsed);
+    }
+
+    const m = Math.floor(remaining / 60);
+    const s = Math.floor(remaining % 60);
+
     return (
       <div
         style={{
@@ -677,11 +652,14 @@ export default function TriviaUserInterfacePage() {
         >
           Game starting in…
         </div>
-        <CountdownDisplay
-          countdown={cardCountdown}
-          countdownActive={cardCountdownActive}
-          countdownStartedAt={cardCountdownStartedAt}
-        />
+        <div
+          style={{
+            fontSize: "3rem",
+            fontWeight: 900,
+          }}
+        >
+          {m}:{s.toString().padStart(2, "0")}
+        </div>
         <div
           style={{
             marginTop: 8,
@@ -695,9 +673,8 @@ export default function TriviaUserInterfacePage() {
     );
   }
 
-  // 👉 Only call it "waiting for host" if we truly have no session
-  // or no questions at all. We NO LONGER gate on currentQuestion here.
-  if (!session || !questions.length) {
+  // 🟡 No session / no questions / no current question yet (and not in countdown)
+  if (!hasSession || !hasQuestions || !hasCurrentQuestion) {
     return (
       <div
         style={{
@@ -736,10 +713,6 @@ export default function TriviaUserInterfacePage() {
   } else {
     footerText = "Tap an answer to lock in your choice.";
   }
-
-  const options: string[] = Array.isArray(currentQuestion?.options)
-    ? currentQuestion!.options
-    : [];
 
   return (
     <>
@@ -834,8 +807,7 @@ export default function TriviaUserInterfacePage() {
               wordWrap: "break-word",
             }}
           >
-            {currentQuestion?.question_text ||
-              "Waiting for the host to start the game…"}
+            {currentQuestion.question_text}
           </div>
         </div>
 
@@ -891,13 +863,13 @@ export default function TriviaUserInterfacePage() {
             paddingRight: 2,
           }}
         >
-          {options.map((opt: string, idx: number) => {
+          {currentQuestion.options.map((opt: string, idx: number) => {
             const chosen = selectedIndex === idx;
             const isCorrect =
-              typeof currentQuestion?.correct_index === "number" &&
-              idx === currentQuestion!.correct_index;
+              typeof currentQuestion.correct_index === "number" &&
+              idx === currentQuestion.correct_index;
 
-            const disabled = hasAnswered || locked || !currentQuestion;
+            const disabled = hasAnswered || locked;
 
             let bg = "rgba(15,23,42,0.85)";
             let border = "1px solid rgba(148,163,184,0.4)";
