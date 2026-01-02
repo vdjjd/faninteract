@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { cn } from '@/lib/utils';
 
 interface TriviaCreationModalProps {
@@ -27,7 +27,7 @@ export default function TriviaCreationModal({
   const [sameTopicForAllRounds, setSameTopicForAllRounds] = useState(true);
   const [roundTopics, setRoundTopics] = useState<string[]>(['']);
 
-  // ✅ New: generating state so we can block re-clicks and show overlay
+  // ✅ generating state so we can block re-clicks and show overlay
   const [isGenerating, setIsGenerating] = useState(false);
 
   const handleRoundCountChange = (value: number) => {
@@ -37,7 +37,7 @@ export default function TriviaCreationModal({
     }
   };
 
-  /* ✅ REQUIRED FIELD VALIDATION */
+  // ✅ REQUIRED FIELD VALIDATION
   const isValid =
     publicName.trim().length > 0 &&
     privateName.trim().length > 0 &&
@@ -61,14 +61,20 @@ export default function TriviaCreationModal({
         hostId,
       });
 
-      // usually the parent will close the modal after success,
-      // but if it doesn't, we can optionally reset isGenerating:
+      // parent usually closes on success; if not, you can uncomment:
       // setIsGenerating(false);
     } catch (err) {
       console.error('❌ Error generating trivia:', err);
       setIsGenerating(false);
     }
   };
+
+  // ✅ IMPORTANT: reset "AI is thinking…" state whenever modal is opened fresh
+  useEffect(() => {
+    if (isOpen) {
+      setIsGenerating(false);
+    }
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -272,11 +278,30 @@ export default function TriviaCreationModal({
               'backdrop-blur-sm'
             )}
           >
-            <div className={cn('h-10', 'w-10', 'rounded-full', 'border-4', 'border-blue-500', 'border-t-transparent', 'animate-spin', 'mb-3')} />
+            <div
+              className={cn(
+                'h-10',
+                'w-10',
+                'rounded-full',
+                'border-4',
+                'border-blue-500',
+                'border-t-transparent',
+                'animate-spin',
+                'mb-3'
+              )}
+            />
             <p className={cn('text-white', 'font-semibold')}>
               AI is generating your trivia…
             </p>
-            <p className={cn('text-white/80', 'text-xs', 'mt-1', 'px-4', 'text-center')}>
+            <p
+              className={cn(
+                'text-white/80',
+                'text-xs',
+                'mt-1',
+                'px-4',
+                'text-center'
+              )}
+            >
               This may take a few seconds. Please don&apos;t click Generate again
               or close this window.
             </p>
