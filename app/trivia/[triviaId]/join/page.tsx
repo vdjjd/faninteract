@@ -183,7 +183,7 @@ export default function TriviaJoinPage() {
       if (data.host_id) {
         const { data: hostRow, error: hostErr } = await supabase
           .from("hosts")
-          .select("branding_logo_url")
+          .select("id, venue_name, branding_logo_url, logo_url")
           .eq("id", data.host_id)
           .maybeSingle();
 
@@ -559,9 +559,9 @@ export default function TriviaJoinPage() {
       : trivia?.background_value || "linear-gradient(135deg,#020617,#0f172a)";
 
   const logo =
-    trivia?.host?.branding_logo_url?.trim()
-      ? trivia.host.branding_logo_url
-      : "/faninteractlogo.png";
+    trivia?.host?.branding_logo_url?.trim() ||
+    trivia?.host?.logo_url?.trim() ||
+    "/faninteractlogo.png";
 
   return (
     <div
