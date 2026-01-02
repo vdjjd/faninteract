@@ -78,11 +78,18 @@ export default function TriviaJoinPage() {
         }
 
         const backTo = `/trivia/${triviaId}/join`;
-        router.replace(
-          `/guest/signup?trivia=${triviaId}&redirect=${encodeURIComponent(
-            backTo
-          )}`
-        );
+
+        // 👇 Try to include host_id from the loaded trivia row (if present)
+        const hostId = trivia?.host_id;
+        const signupUrl = hostId
+          ? `/guest/signup?trivia=${triviaId}&host=${hostId}&redirect=${encodeURIComponent(
+              backTo
+            )}`
+          : `/guest/signup?trivia=${triviaId}&redirect=${encodeURIComponent(
+              backTo
+            )}`;
+
+        router.replace(signupUrl);
 
         setProfile(null); // show "Redirecting..." instead of white
         return;
@@ -111,11 +118,17 @@ export default function TriviaJoinPage() {
         }
 
         const backTo = `/trivia/${triviaId}/join`;
-        router.replace(
-          `/guest/signup?trivia=${triviaId}&redirect=${encodeURIComponent(
-            backTo
-          )}`
-        );
+
+        const hostId = trivia?.host_id;
+        const signupUrl = hostId
+          ? `/guest/signup?trivia=${triviaId}&host=${hostId}&redirect=${encodeURIComponent(
+              backTo
+            )}`
+          : `/guest/signup?trivia=${triviaId}&redirect=${encodeURIComponent(
+              backTo
+            )}`;
+
+        router.replace(signupUrl);
 
         setProfile(null);
         return;
@@ -130,7 +143,7 @@ export default function TriviaJoinPage() {
     return () => {
       cancelled = true;
     };
-  }, [router, triviaId]);
+  }, [router, triviaId, trivia]); // 👈 include `trivia` so we can read trivia.host_id safely
 
   /* -------------------------------------------------- */
   /* 2️⃣ LOAD TRIVIA CONFIG (TITLE / BG / LOGO / SELFIE) */
@@ -150,6 +163,7 @@ export default function TriviaJoinPage() {
           background_type,
           background_value,
           require_selfie,
+          host_id,                  -- 👈 ADD host_id so we can pass it to signup
           host:host_id (
             branding_logo_url
           )
@@ -241,7 +255,7 @@ export default function TriviaJoinPage() {
 
   /* -------------------------------------------------- */
   /* 3️⃣ JOIN TRIVIA → INSERT trivia_players             */
-  /*    Stay here & wait for moderation                  */
+  /*    Stay here & wait for moderation                 */
   /* -------------------------------------------------- */
   async function handleJoinTrivia(e: any) {
     e.preventDefault();
@@ -257,11 +271,17 @@ export default function TriviaJoinPage() {
         // ignore
       }
       const backTo = `/trivia/${triviaId}/join`;
-      router.replace(
-        `/guest/signup?trivia=${triviaId}&redirect=${encodeURIComponent(
-          backTo
-        )}`
-      );
+
+      const hostId = trivia?.host_id;
+      const signupUrl = hostId
+        ? `/guest/signup?trivia=${triviaId}&host=${hostId}&redirect=${encodeURIComponent(
+            backTo
+          )}`
+        : `/guest/signup?trivia=${triviaId}&redirect=${encodeURIComponent(
+            backTo
+          )}`;
+
+      router.replace(signupUrl);
       return;
     }
 
