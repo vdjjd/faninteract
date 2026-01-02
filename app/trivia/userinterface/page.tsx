@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { getSupabaseClient } from "@/lib/supabaseClient";
 import { computeTriviaPoints } from "@/lib/trivia/triviaScoringEngine";
@@ -29,6 +29,75 @@ interface TriviaSession {
   question_started_at: string | null;
 }
 
+/* ---------- COUNTDOWN COMPONENT (pre-game) ---------- */
+function CountdownDisplay({
+  countdown,
+  countdownActive,
+  countdownStartedAt,
+}: {
+  countdown: string;
+  countdownActive: boolean;
+  countdownStartedAt?: string | null;
+}) {
+  const [now, setNow] = useState<number>(() => Date.now());
+
+  const totalSeconds = useMemo(() => {
+    const value =
+      countdown && countdown !== "none" ? countdown : "10 seconds";
+    const [numStr] = value.split(" ");
+    const num = parseInt(numStr, 10);
+    return isNaN(num) ? 10 : num;
+  }, [countdown]);
+
+  useEffect(() => {
+    if (!countdownActive || !countdownStartedAt) return;
+
+    const id = setInterval(() => {
+      setNow(Date.now());
+    }, 250);
+
+    return () => clearInterval(id);
+  }, [countdownActive, countdownStartedAt]);
+
+  if (!countdownActive || !countdownStartedAt) {
+    const mFull = Math.floor(totalSeconds / 60);
+    const sFull = totalSeconds % 60;
+    return (
+      <div
+        style={{
+          fontSize: "3rem",
+          fontWeight: 900,
+        }}
+      >
+        {mFull}:{sFull.toString().padStart(2, "0")}
+      </div>
+    );
+  }
+
+  const startMs = new Date(countdownStartedAt).getTime();
+  const elapsed = Math.max(0, (now - startMs) / 1000);
+  const remaining = Math.max(0, totalSeconds - elapsed);
+
+  const m = Math.floor(remaining / 60);
+  const s = Math.floor(remaining % 60);
+
+  return (
+    <div
+      style={{
+        fontSize: "3rem",
+        fontWeight: 900,
+      }}
+    >
+      {m}:{s.toString().padStart(2, "0")}
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------
+   TIMER CONFIG (shared with wall)
+--------------------------------------------------------- */
+const ANSWER_OVERLAY_MS = 3000; // 3s "THE ANSWER IS" overlay
+
 /* ---------------------------------------------------------
    Component
 --------------------------------------------------------- */
@@ -51,11 +120,19 @@ export default function TriviaUserInterfacePage() {
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [hasAnswered, setHasAnswered] = useState(false);
 
-  // Timer + phases
+  // Timer + phases (must mirror ActiveWall)
   const [progress, setProgress] = useState<number>(1); // 1 → 0
   const [locked, setLocked] = useState(false);
   const [showAnswerOverlay, setShowAnswerOverlay] = useState(false);
   const [revealAnswer, setRevealAnswer] = useState(false);
+
+  // Card-level countdown (matches InactiveWall)
+  const [cardStatus, setCardStatus] = useState<string | null>(null);
+  const [cardCountdown, setCardCountdown] = useState<string>("10 seconds");
+  const [cardCountdownActive, setCardCountdownActive] = useState(false);
+  const [cardCountdownStartedAt, setCardCountdownStartedAt] = useState<
+    string | null
+  >(null);
 
   /* ---------------------------------------------------------
      Load guest profile
@@ -70,7 +147,7 @@ export default function TriviaUserInterfacePage() {
   }, [router, gameId]);
 
   /* ---------------------------------------------------------
-     Initial load
+     Initial load: trivia card, host logo, session, player row, questions
   --------------------------------------------------------- */
   useEffect(() => {
     if (!gameId || !profile?.id) return;
@@ -81,7 +158,7 @@ export default function TriviaUserInterfacePage() {
       setLoading(true);
       setLoadingMessage("Loading trivia game…");
 
-      // 1️⃣ Load trivia card
+      // 1️⃣ Load trivia card (include countdown + status)
       const { data: card, error: cardErr } = await supabase
         .from("trivia_cards")
         .select(
@@ -90,7 +167,11 @@ export default function TriviaUserInterfacePage() {
           public_name,
           timer_seconds,
           scoring_mode,
-          host_id
+          host_id,
+          status,
+          countdown,
+          countdown_active,
+          countdown_started_at
         `
         )
         .eq("id", gameId)
@@ -106,6 +187,10 @@ export default function TriviaUserInterfacePage() {
       }
 
       setTrivia(card);
+      setCardStatus(card.status ?? null);
+      setCardCountdown(card.countdown || "10 seconds");
+      setCardCountdownActive(card.countdown_active === true);
+      setCardCountdownStartedAt(card.countdown_started_at || null);
 
       // 2️⃣ Host logo
       let logo = "/faninteractlogo.png";
@@ -125,7 +210,7 @@ export default function TriviaUserInterfacePage() {
       }
       if (!cancelled) setHostLogoUrl(logo);
 
-      // 3️⃣ Latest session
+      // 3️⃣ Latest session for this card (waiting or running)
       setLoadingMessage("Connecting to game session…");
 
       const { data: sessionRow, error: sessionErr } = await supabase
@@ -150,7 +235,7 @@ export default function TriviaUserInterfacePage() {
 
       setSession(sessionRow as TriviaSession);
 
-      // 4️⃣ Player row
+      // 4️⃣ Ensure we have this player row for the session
       setLoadingMessage("Finding your player seat…");
 
       const { data: playerRow, error: playerErr } = await supabase
@@ -171,7 +256,7 @@ export default function TriviaUserInterfacePage() {
 
       setPlayerId(playerRow.id);
 
-      // 5️⃣ Questions
+      // 5️⃣ Load active questions for the card (ordered)
       setLoadingMessage("Loading questions…");
 
       const { data: qs, error: qErr } = await supabase
@@ -205,7 +290,44 @@ export default function TriviaUserInterfacePage() {
   }, [gameId, profile?.id, router]);
 
   /* ---------------------------------------------------------
-     Poll trivia_sessions for question/status
+     Poll trivia_cards for countdown/status
+  --------------------------------------------------------- */
+  useEffect(() => {
+    if (!gameId) return;
+
+    let cancelled = false;
+
+    const pollCard = async () => {
+      const { data, error } = await supabase
+        .from("trivia_cards")
+        .select("status,countdown,countdown_active,countdown_started_at")
+        .eq("id", gameId)
+        .maybeSingle();
+
+      if (cancelled) return;
+
+      if (error || !data) {
+        if (error) console.error("❌ trivia_cards poll error:", error);
+        return;
+      }
+
+      setCardStatus(data.status ?? null);
+      setCardCountdown(data.countdown || "10 seconds");
+      setCardCountdownActive(data.countdown_active === true);
+      setCardCountdownStartedAt(data.countdown_started_at || null);
+    };
+
+    pollCard();
+    const id = window.setInterval(pollCard, 500);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [gameId]);
+
+  /* ---------------------------------------------------------
+     Poll trivia_sessions for current_question / status
   --------------------------------------------------------- */
   useEffect(() => {
     if (!gameId || !session?.id) return;
@@ -229,13 +351,13 @@ export default function TriviaUserInterfacePage() {
     };
 
     doPoll();
-    const id = window.setInterval(doPoll, 1000);
+    const id = window.setInterval(doPoll, 500);
 
     return () => window.clearInterval(id);
   }, [session?.id, gameId]);
 
   /* ---------------------------------------------------------
-     Derived current question
+     Derived current question (1-based index)
   --------------------------------------------------------- */
   const timerSeconds: number = trivia?.timer_seconds ?? 30;
   const scoringMode: string = trivia?.scoring_mode ?? "100s";
@@ -251,50 +373,74 @@ export default function TriviaUserInterfacePage() {
   const currentQuestion = questions[currentQuestionIndex] || null;
   const isRunning = session?.status === "running";
 
+  // Pre-game countdown phase?
+  const isCountdownPhase =
+    !!cardCountdownActive && !!cardCountdownStartedAt && !isRunning;
+
   /* ---------------------------------------------------------
-     TIMER: one source of time (question_started_at)
+     TIMER + REVEAL PHASES (SAME AS WALL)
   --------------------------------------------------------- */
   useEffect(() => {
-    if (!isRunning || !currentQuestion) {
+    if (!isRunning || !currentQuestion || !session?.question_started_at) {
       setProgress(1);
       setLocked(false);
+      setShowAnswerOverlay(false);
+      setRevealAnswer(false);
       return;
     }
 
     const durationMs = (timerSeconds || 30) * 1000;
-    const startedAtIso = session?.question_started_at;
-    const startedMs = startedAtIso
-      ? new Date(startedAtIso).getTime()
-      : Date.now();
+    const overlayMs = ANSWER_OVERLAY_MS;
+    const startedMs = new Date(session.question_started_at).getTime();
 
-    // Reset per-question UI
+    // reset per-question state when question changes
     setSelectedIndex(null);
     setHasAnswered(false);
     setLocked(false);
     setShowAnswerOverlay(false);
     setRevealAnswer(false);
-    setProgress(1);
 
     const tick = () => {
       const now = Date.now();
       const elapsed = now - startedMs;
-      const remaining = Math.max(0, durationMs - elapsed);
-      const frac = remaining / durationMs;
 
-      setProgress(frac);
+      if (elapsed < 0) {
+        setProgress(1);
+        setLocked(false);
+        setShowAnswerOverlay(false);
+        setRevealAnswer(false);
+        return;
+      }
 
-      if (remaining <= 0) {
+      if (elapsed < durationMs) {
+        // ANSWER PHASE
+        const remaining = durationMs - elapsed;
+        const frac = remaining / durationMs;
+        setProgress(frac);
+        setLocked(false);
+        setShowAnswerOverlay(false);
+        setRevealAnswer(false);
+      } else if (elapsed < durationMs + overlayMs) {
+        // "THE ANSWER IS…" OVERLAY
+        setProgress(0);
         setLocked(true);
+        setShowAnswerOverlay(true);
+        setRevealAnswer(false);
+      } else {
+        // CORRECT ANSWER SHOWN
+        setProgress(0);
+        setLocked(true);
+        setShowAnswerOverlay(false);
+        setRevealAnswer(true);
       }
     };
 
     tick();
-    const id = window.setInterval(tick, 100); // 10 fps
+    const id = window.setInterval(tick, 100);
 
     return () => {
       window.clearInterval(id);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isRunning, currentQuestion?.id, timerSeconds, session?.question_started_at]);
 
   /* ---------------------------------------------------------
@@ -335,27 +481,6 @@ export default function TriviaUserInterfacePage() {
   }, [playerId, currentQuestion?.id]);
 
   /* ---------------------------------------------------------
-     Answer reveal flow
-  --------------------------------------------------------- */
-  useEffect(() => {
-    if (!locked) {
-      setShowAnswerOverlay(false);
-      setRevealAnswer(false);
-      return;
-    }
-
-    setShowAnswerOverlay(true);
-    setRevealAnswer(false);
-
-    const overlayId = window.setTimeout(() => {
-      setShowAnswerOverlay(false);
-      setRevealAnswer(true);
-    }, 3000);
-
-    return () => window.clearTimeout(overlayId);
-  }, [locked]);
-
-  /* ---------------------------------------------------------
      Answer submission
   --------------------------------------------------------- */
   async function handleSelectAnswer(idx: number) {
@@ -366,6 +491,7 @@ export default function TriviaUserInterfacePage() {
     setSelectedIndex(idx);
     setHasAnswered(true);
 
+    // Prevent duplicate answers
     const { data: existing, error: existingErr } = await supabase
       .from("trivia_answers")
       .select("id")
@@ -387,6 +513,14 @@ export default function TriviaUserInterfacePage() {
           questionStartedAt: session?.question_started_at ?? null,
         })
       : 0;
+
+    console.log("🎯 Trivia scoring debug", {
+      isCorrect,
+      scoringMode,
+      timerSeconds,
+      questionStartedAt: session?.question_started_at,
+      points,
+    });
 
     const { error: insertErr } = await supabase.from("trivia_answers").insert({
       player_id: playerId,
@@ -476,6 +610,51 @@ export default function TriviaUserInterfacePage() {
         }}
       >
         Waiting for the host to start the game…
+      </div>
+    );
+  }
+
+  // Pre-game countdown screen (matches inactive wall style)
+  if (isCountdownPhase) {
+    return (
+      <div
+        style={{
+          minHeight: "100vh",
+          background:
+            "radial-gradient(circle at top,#1d4ed8 0,#020617 55%,#000 100%)",
+          color: "#fff",
+          padding: 20,
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          textAlign: "center",
+          gap: 16,
+        }}
+      >
+        <div
+          style={{
+            fontSize: "1rem",
+            opacity: 0.8,
+            marginBottom: 8,
+          }}
+        >
+          Game starting in…
+        </div>
+        <CountdownDisplay
+          countdown={cardCountdown}
+          countdownActive={cardCountdownActive}
+          countdownStartedAt={cardCountdownStartedAt}
+        />
+        <div
+          style={{
+            marginTop: 8,
+            fontSize: "0.9rem",
+            opacity: 0.75,
+          }}
+        >
+          Get ready, the first question will appear when this reaches 0.
+        </div>
       </div>
     );
   }
@@ -593,7 +772,7 @@ export default function TriviaUserInterfacePage() {
           </div>
         </div>
 
-        {/* TIMER BAR — NO NUMBERS */}
+        {/* TIMER BAR (NO NUMBERS) */}
         <div
           style={{
             marginBottom: 16,
@@ -614,7 +793,7 @@ export default function TriviaUserInterfacePage() {
                 locked || revealAnswer
                   ? "linear-gradient(90deg,#ef4444,#dc2626)"
                   : "linear-gradient(90deg,#22c55e,#16a34a,#15803d)",
-              transition: "width 0.12s linear, background 0.2s ease",
+              transition: "width 0.1s linear, background 0.2s ease",
             }}
           />
         </div>
@@ -731,7 +910,7 @@ export default function TriviaUserInterfacePage() {
           })}
         </div>
 
-        {/* AD SLOT */}
+        {/* AD SLOT PLACEHOLDER */}
         <div
           style={{
             marginBottom: 10,
@@ -807,6 +986,7 @@ export default function TriviaUserInterfacePage() {
         )}
       </div>
 
+      {/* 🔵 PULSE KEYFRAME FOR CORRECT ANSWER */}
       <style jsx global>{`
         @keyframes fiCorrectPulse {
           0% {
