@@ -47,7 +47,7 @@ export default function TriviaCard({
 
   /* ------------------------------------------------------------
      TRIVIA SETTINGS STATE
-  ------------------------------------------------------------ */
+ ------------------------------------------------------------ */
   const [timerSeconds, setTimerSeconds] = useState<number>(
     trivia?.timer_seconds ?? 30
   );
@@ -62,7 +62,7 @@ export default function TriviaCard({
 
   /* ------------------------------------------------------------
      CARD STATUS (LIVE POLLING FROM trivia_cards)
-  ------------------------------------------------------------ */
+ ------------------------------------------------------------ */
   const [cardStatus, setCardStatus] = useState<string>(trivia.status);
   const [cardCountdownActive, setCardCountdownActive] = useState<boolean>(
     !!trivia.countdown_active
@@ -70,13 +70,13 @@ export default function TriviaCard({
 
   /* ------------------------------------------------------------
      PARTICIPANTS / PENDING COUNTS
-  ------------------------------------------------------------ */
+ ------------------------------------------------------------ */
   const [participantsCount, setParticipantsCount] = useState(0);
   const [pendingCount, setPendingCount] = useState(0);
 
   /* ------------------------------------------------------------
      LEADERBOARD STATE
-  ------------------------------------------------------------ */
+ ------------------------------------------------------------ */
   const [leaderboard, setLeaderboard] = useState<LeaderRow[]>([]);
   const [leaderboardLoading, setLeaderboardLoading] = useState(false);
   const lastLeaderboardRef = useRef<LeaderRow[]>([]);
@@ -85,16 +85,22 @@ export default function TriviaCard({
   const lastQuestionStartedAtRef = useRef<string | null>(null);
   const lastCurrentQuestionRef = useRef<number | null>(null);
 
+  // ✅ trivia question ids (used to filter trivia_answers realtime events)
+  const questionIdsRef = useRef<Set<string>>(new Set());
+
+  // ✅ debounce for rapid answer inserts
+  const leaderboardDebounceRef = useRef<number | null>(null);
+
   /* ------------------------------------------------------------
      ACTIVE TAB
-  ------------------------------------------------------------ */
+ ------------------------------------------------------------ */
   const [activeTab, setActiveTab] = useState<
     "menu" | "questions" | "leaderboard" | "settings"
   >("menu");
 
   /* ------------------------------------------------------------
      Keep state in sync if parent reloads trivia
-  ------------------------------------------------------------ */
+ ------------------------------------------------------------ */
   useEffect(() => {
     setTimerSeconds(trivia?.timer_seconds ?? 30);
     setPlayMode(trivia?.play_mode || "auto");
@@ -114,7 +120,7 @@ export default function TriviaCard({
 
   /* ------------------------------------------------------------
      Poll trivia_cards.status + countdown_active every 2s
-  ------------------------------------------------------------ */
+ ------------------------------------------------------------ */
   useEffect(() => {
     let isMounted = true;
 
@@ -191,7 +197,7 @@ export default function TriviaCard({
 
   /* ------------------------------------------------------------
      FETCH QUESTIONS (ON TAB OPEN)
-  ------------------------------------------------------------ */
+ ------------------------------------------------------------ */
   async function loadQuestions() {
     setLoadingQuestions(true);
 
@@ -266,7 +272,7 @@ export default function TriviaCard({
 
   /* ------------------------------------------------------------
      LEADERBOARD LOADER (shared by realtime + fallback poll)
-  ------------------------------------------------------------ */
+ ------------------------------------------------------------ */
   async function loadLeaderboard(cancelledRef?: { current: boolean }) {
     if (!trivia?.id) return;
 
@@ -388,21 +394,46 @@ export default function TriviaCard({
   }
 
   /* ------------------------------------------------------------
-     LEADERBOARD AUTO-REFRESH AFTER EACH QUESTION
-     - Realtime: trivia_sessions UPDATE (question_started_at/current_question)
-     - Fallback: poll every 4s while tab open
-  ------------------------------------------------------------ */
+     LEADERBOARD AUTO-REFRESH
+     ✅ Refresh when:
+       - trivia_sessions advances (question_started_at/current_question changes)
+       - trivia_answers change (insert/update/delete) for this trivia card’s questions
+     Fallback poll stays in place.
+ ------------------------------------------------------------ */
   useEffect(() => {
     if (activeTab !== "leaderboard") return;
     if (!trivia?.id) return;
 
     const cancelledRef = { current: false };
 
-    // initial load
-    loadLeaderboard(cancelledRef);
+    const debounceLoad = () => {
+      if (leaderboardDebounceRef.current) {
+        window.clearTimeout(leaderboardDebounceRef.current);
+      }
+      leaderboardDebounceRef.current = window.setTimeout(() => {
+        loadLeaderboard(cancelledRef);
+      }, 250); // small debounce to avoid spam
+    };
 
-    // 1) Realtime subscription to trivia_sessions changes for this card
-    const channel = supabase
+    const primeQuestionIds = async () => {
+      const { data, error } = await supabase
+        .from("trivia_questions")
+        .select("id")
+        .eq("trivia_card_id", trivia.id);
+
+      if (error) {
+        console.warn("⚠️ primeQuestionIds error:", error);
+        questionIdsRef.current = new Set();
+        return;
+      }
+      questionIdsRef.current = new Set((data || []).map((q: any) => q.id));
+    };
+
+    // initial prime + initial load
+    primeQuestionIds().then(() => loadLeaderboard(cancelledRef));
+
+    // 1) Realtime: trivia_sessions updates (question advance)
+    const sessionChannel = supabase
       .channel(`dashboard-trivia-sessions-${trivia.id}`)
       .on(
         "postgres_changes",
@@ -428,21 +459,55 @@ export default function TriviaCard({
           lastQuestionStartedAtRef.current = startedAt;
           lastCurrentQuestionRef.current = currentQ;
 
-          // ✅ refresh leaderboard immediately when question advances
-          loadLeaderboard(cancelledRef);
+          // refresh leaderboard immediately when question advances
+          debounceLoad();
         }
       )
       .subscribe();
 
-    // 2) Fallback poll (covers missed realtime events)
+    // 2) Realtime: trivia_answers changes (scores changing)
+    // Note: we can’t server-filter by "question_id IN (...)" so we filter client-side.
+    const answersChannel = supabase
+      .channel(`dashboard-trivia-answers-${trivia.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "trivia_answers",
+        },
+        (payload: any) => {
+          const qid =
+            payload?.new?.question_id ??
+            payload?.old?.question_id ??
+            null;
+
+          if (!qid) return;
+
+          // Only react if this answer belongs to this trivia card’s questions
+          if (!questionIdsRef.current.has(qid)) return;
+
+          debounceLoad();
+        }
+      )
+      .subscribe();
+
+    // 3) Fallback poll (covers missed realtime events)
     const pollId = window.setInterval(() => {
       loadLeaderboard(cancelledRef);
     }, 4000);
 
     return () => {
       cancelledRef.current = true;
+
+      if (leaderboardDebounceRef.current) {
+        window.clearTimeout(leaderboardDebounceRef.current);
+        leaderboardDebounceRef.current = null;
+      }
+
       window.clearInterval(pollId);
-      supabase.removeChannel(channel);
+      supabase.removeChannel(sessionChannel);
+      supabase.removeChannel(answersChannel);
     };
   }, [activeTab, trivia?.id]);
 
