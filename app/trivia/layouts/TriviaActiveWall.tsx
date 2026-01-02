@@ -86,6 +86,8 @@ const fallbackLogo = "/faninteractlogo.png";
 /* TIMER CONFIG (DEFAULT/FALLBACK)                      */
 /* ---------------------------------------------------- */
 const QUESTION_DURATION_MS = 30000;
+// how often to update the bar on WALL (ms)
+const WALL_TIMER_STEP_MS = 50;
 
 /* ---------------------------------------------------- */
 /* HELPERS                                              */
@@ -195,9 +197,6 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
 
   // prevent duplicate transitions
   const transitionLockRef = useRef(false);
-
-  // RAF id for smooth timer bar
-  const rafIdRef = useRef<number | null>(null);
 
   const timerSeconds: number = trivia?.timer_seconds ?? 30;
 
@@ -556,16 +555,11 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
   }, [trivia?.id, isRunning, view]);
 
   /* -------------------------------------------------- */
-  /* TIMER — DB-SYNCED VIA requestAnimationFrame         */
+  /* TIMER — DB-SYNCED VIA setInterval (WALL ONLY)       */
   /* -------------------------------------------------- */
   useEffect(() => {
-    // stop previous RAF if any
-    if (rafIdRef.current != null) {
-      cancelAnimationFrame(rafIdRef.current);
-      rafIdRef.current = null;
-    }
+    let intervalId: number | null = null;
 
-    // if not in a running question state, reset and bail
     if (
       !isRunning ||
       currentQuestionNumber == null ||
@@ -576,7 +570,9 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
       setLocked(false);
       setShowAnswerOverlay(false);
       setRevealAnswer(false);
-      return;
+      return () => {
+        if (intervalId != null) window.clearInterval(intervalId);
+      };
     }
 
     // per-question reset
@@ -593,7 +589,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
 
     const startMs = new Date(questionStartedAt).getTime();
 
-    const tick = () => {
+    const update = () => {
       const now = Date.now();
       const elapsed = now - startMs;
       const remaining = Math.max(0, durationMs - elapsed);
@@ -603,18 +599,20 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
 
       if (remaining <= 0) {
         setLocked(true);
-        return;
+        if (intervalId != null) {
+          window.clearInterval(intervalId);
+          intervalId = null;
+        }
       }
-
-      rafIdRef.current = requestAnimationFrame(tick);
     };
 
-    rafIdRef.current = requestAnimationFrame(tick);
+    // run once immediately
+    update();
+    intervalId = window.setInterval(update, WALL_TIMER_STEP_MS);
 
     return () => {
-      if (rafIdRef.current != null) {
-        cancelAnimationFrame(rafIdRef.current);
-        rafIdRef.current = null;
+      if (intervalId != null) {
+        window.clearInterval(intervalId);
       }
     };
   }, [
@@ -848,7 +846,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                     revealAnswer || locked
                       ? "linear-gradient(to right,#ef4444,#dc2626)"
                       : "linear-gradient(to right,#4ade80,#22c55e)",
-                  transition: "width 0.1s linear, background 0.2s ease",
+                  transition: "width 0.05s linear, background 0.2s ease",
                 }}
               />
             </div>
