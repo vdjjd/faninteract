@@ -54,8 +54,8 @@ export default function TriviaUserInterfacePage() {
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [hasAnswered, setHasAnswered] = useState(false);
 
-  // Timer + phases (lockstep with ActiveWall style)
-  const [progress, setProgress] = useState<number>(1); // 1 → 0
+  // Timer + phases
+  const [progress, setProgress] = useState<number>(1); // 1 → 0 (kept for future, but bar uses secondsLeft)
   const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
   const [locked, setLocked] = useState(false);
   const [showAnswerOverlay, setShowAnswerOverlay] = useState(false);
@@ -386,7 +386,6 @@ export default function TriviaUserInterfacePage() {
 
   /* ---------------------------------------------------------
      Answer reveal flow (overlay → reveal)
-     (match ActiveWall pacing: overlay ~5s, then reveal)
   --------------------------------------------------------- */
   useEffect(() => {
     if (!locked) {
@@ -541,12 +540,12 @@ export default function TriviaUserInterfacePage() {
     );
   }
 
+  // ✅ Drive bar directly from secondsLeft (which we KNOW is updating)
   const baseSeconds = timerSeconds || 1;
   const safeTimeLeft =
     secondsLeft === null ? baseSeconds : Math.max(0, secondsLeft);
-  const minutes = Math.floor(safeTimeLeft / 60);
-  const seconds = safeTimeLeft % 60;
-  const pctWidth = Math.max(0, Math.min(100, progress * 100));
+  const timeFraction = Math.min(1, Math.max(0, safeTimeLeft / baseSeconds));
+  const pctWidth = timeFraction * 100;
 
   let footerText = "";
   if (!isRunning) {
@@ -659,7 +658,7 @@ export default function TriviaUserInterfacePage() {
           </div>
         </div>
 
-        {/* TIMER BAR */}
+        {/* TIMER BAR (bar only, no numbers) */}
         <div
           style={{
             marginBottom: 16,
@@ -672,20 +671,6 @@ export default function TriviaUserInterfacePage() {
             height: 26,
           }}
         >
-          <div
-            style={{
-              position: "absolute",
-              inset: 0,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              fontSize: "0.85rem",
-              fontWeight: 700,
-              zIndex: 2,
-            }}
-          >
-            {minutes}:{seconds.toString().padStart(2, "0")}
-          </div>
           <div
             style={{
               height: "100%",

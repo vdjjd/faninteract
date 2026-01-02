@@ -178,7 +178,9 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
     null
   );
 
+  // progress is still tracked, but the bar will use secondsLeft for width
   const [progress, setProgress] = useState(1);
+  const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
   const [locked, setLocked] = useState(false);
 
   const [showAnswerOverlay, setShowAnswerOverlay] = useState(false);
@@ -392,7 +394,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
         })
         .sort((a: any, b: any) => b.points - a.points);
 
-      // NEW: if everybody is still on 0, don't show any "leaders" yet
+      // if everybody is still on 0, don't show any "leaders" yet
       const maxPoints = rows.length ? Math.max(...rows.map((r) => r.points)) : 0;
       if (maxPoints <= 0) {
         if (!cancelled && topRanksRef.current.length) {
@@ -535,7 +537,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
         .sort((a: any, b: any) => b.points - a.points)
         .map((r: any, idx: number) => ({ ...r, rank: idx + 1 }));
 
-      // NEW: hide leaderboard if literally everyone is still on 0
+      // hide leaderboard if literally everyone is still on 0
       const hasPoints = built.some((r) => r.points > 0);
       const finalRows = hasPoints ? built : [];
 
@@ -557,7 +559,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
   }, [trivia?.id, isRunning, view]);
 
   /* -------------------------------------------------- */
-  /* TIMER ENGINE — DB-SYNCED (MATCHES USER UI)          */
+  /* TIMER ENGINE — DB-SYNCED (MATCHES USER UI STYLE)    */
   /* -------------------------------------------------- */
   useEffect(() => {
     // stop engine when not running / no question / on leaderboard view
@@ -572,6 +574,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
     // Reset timer-related UI state per question
     setLocked(false);
     setProgress(1);
+    setSecondsLeft(timerSeconds);
     setShowAnswerOverlay(false);
     setRevealAnswer(false);
     transitionLockRef.current = false;
@@ -590,9 +593,13 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
       const now = Date.now();
       const elapsed = now - startedMs;
       const remaining = Math.max(0, durationMs - elapsed);
-      const frac = remaining / durationMs;
+      const frac = Math.max(0, Math.min(1, remaining / durationMs));
 
       setProgress(frac);
+
+      // secondsLeft, same as UI-style
+      const secs = Math.max(0, Math.ceil(remaining / 1000));
+      setSecondsLeft(secs);
 
       if (remaining <= 0) {
         setLocked(true);
@@ -637,6 +644,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
     trivia?.timer_seconds,
     questionStartedAt,
     view,
+    timerSeconds,
   ]);
 
   /* -------------------------------------------------- */
@@ -794,6 +802,13 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
 
   const qrValue = `${origin}/trivia/${trivia?.id}/join`;
 
+  // ✅ Single source of truth for the bar width: secondsLeft + timerSeconds
+  const baseSeconds = timerSeconds || 1;
+  const safeTimeLeft =
+    secondsLeft === null ? baseSeconds : Math.max(0, secondsLeft);
+  const timeFraction = Math.min(1, Math.max(0, safeTimeLeft / baseSeconds));
+  const pctWidth = timeFraction * 100;
+
   return (
     <>
       <div
@@ -844,7 +859,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                 : "Waiting for game to start"}
             </div>
 
-            {/* TIMER BAR */}
+            {/* TIMER BAR (DRIVEN BY secondsLeft / timerSeconds) */}
             <div
               style={{
                 width: "100%",
@@ -857,7 +872,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
             >
               <div
                 style={{
-                  width: `${progress * 100}%`,
+                  width: `${pctWidth}%`,
                   height: "100%",
                   background:
                     revealAnswer || locked
