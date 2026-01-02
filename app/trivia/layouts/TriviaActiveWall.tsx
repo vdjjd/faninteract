@@ -87,7 +87,7 @@ const fallbackLogo = "/faninteractlogo.png";
 /* ---------------------------------------------------- */
 const QUESTION_DURATION_MS = 30000;
 // how often to update the bar on WALL (ms)
-const WALL_TIMER_STEP_MS = 50;
+const WALL_TIMER_STEP_MS = 30;
 
 /* ---------------------------------------------------- */
 /* HELPERS                                              */
