@@ -386,6 +386,7 @@ export default function TriviaUserInterfacePage() {
 
   /* ---------------------------------------------------------
      Answer reveal flow (overlay → reveal)
+     (match ActiveWall pacing: overlay ~5s, then reveal)
   --------------------------------------------------------- */
   useEffect(() => {
     if (!locked) {
@@ -400,7 +401,7 @@ export default function TriviaUserInterfacePage() {
     const overlayId = window.setTimeout(() => {
       setShowAnswerOverlay(false);
       setRevealAnswer(true);
-    }, 3000);
+    }, 5000); // 5s overlay to match wall
 
     return () => window.clearTimeout(overlayId);
   }, [locked]);
