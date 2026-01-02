@@ -138,7 +138,7 @@ export default function TriviaJoinPage() {
   }, [router, triviaId]);
 
   /* -------------------------------------------------- */
-  /* 2) LOAD TRIVIA CONFIG (TITLE / BG / LOGO / SELFIE) */
+  /* 2) LOAD TRIVIA CONFIG (TITLE / HOST LOGO / SELFIE) */
   /* -------------------------------------------------- */
   useEffect(() => {
     if (!triviaId) return;
@@ -146,12 +146,10 @@ export default function TriviaJoinPage() {
     let cancelled = false;
 
     async function loadTrivia() {
-      // Step 1: load trivia card with host_id
+      // ✅ MATCHES YOUR SCHEMA: no background_type/background_value here
       const { data, error } = await supabase
         .from("trivia_cards")
-        .select(
-          "id, public_name, background_type, background_value, require_selfie, host_id"
-        )
+        .select("id, public_name, require_selfie, host_id")
         .eq("id", triviaId)
         .maybeSingle();
 
@@ -159,19 +157,17 @@ export default function TriviaJoinPage() {
 
       if (error || !data) {
         console.error("Load trivia card error:", error);
-        // Fallback so the page still works
+        // Fallback so the page STILL WORKS
         setTrivia({
           id: triviaId,
           public_name: "Trivia Game",
-          background_type: "color",
-          background_value: "linear-gradient(135deg,#020617,#0f172a)",
           require_selfie: true,
           host: null,
         });
         return;
       }
 
-      // Step 2: load host row explicitly if host_id exists
+      // Load host row explicitly from `hosts` using host_id (FK)
       let host: any = null;
       if (data.host_id) {
         const { data: hostRow, error: hostErr } = await supabase
@@ -182,9 +178,7 @@ export default function TriviaJoinPage() {
 
         if (hostErr) {
           console.error("Load trivia host error:", hostErr);
-        }
-
-        if (hostRow) {
+        } else if (hostRow) {
           host = hostRow;
         }
       }
@@ -541,13 +535,8 @@ export default function TriviaJoinPage() {
     );
   }
 
-  const bg =
-    trivia.background_type === "image" &&
-    typeof trivia.background_value === "string" &&
-    trivia.background_value.startsWith("http")
-      ? `url(${trivia.background_value})`
-      : trivia.background_value ||
-        "linear-gradient(135deg,#020617,#0f172a)";
+  // We don't have background fields on trivia_cards, so just use a default
+  const bg = "linear-gradient(135deg,#020617,#0f172a)";
 
   // Host logo: branding_logo_url -> logo_url -> FanInteract default
   const logo =
@@ -558,12 +547,6 @@ export default function TriviaJoinPage() {
       typeof trivia.host.logo_url === "string" &&
       trivia.host.logo_url.trim()) ||
     "/faninteractlogo.png";
-
-  const debugHost = JSON.stringify(
-    { host: trivia.host, computedLogo: logo },
-    null,
-    2
-  );
 
   return (
     <div
@@ -795,22 +778,6 @@ export default function TriviaJoinPage() {
         >
           Your selfie may be shown on the big screen after host approval.
         </p>
-
-        {/* Debug box - safe to remove once you're happy */}
-        <pre
-          style={{
-            marginTop: 16,
-            fontSize: 10,
-            textAlign: "left",
-            maxHeight: 120,
-            overflow: "auto",
-            background: "rgba(0,0,0,0.6)",
-            padding: 8,
-            borderRadius: 8,
-          }}
-        >
-          {debugHost}
-        </pre>
       </form>
     </div>
   );
