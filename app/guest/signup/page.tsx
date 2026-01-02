@@ -18,7 +18,7 @@ const stateOptions = [
   "SD","TN","TX","UT","VT","VA","WA","WV","WI","WY"
 ];
 
-// Normalize booleans from DB
+// Normalize booleans from DB just in case
 function toBool(val: any): boolean {
   if (val === true) return true;
   if (val === false || val == null) return false;
@@ -43,11 +43,11 @@ export default function GuestSignupPage() {
   const wheelId = params.get("prizewheel");
   const basketballId = params.get("basketball");
   const triviaId = params.get("trivia");
-  const hostParam = params.get("host");         // ⭐ host passed from trivia join
 
   const rawType = params.get("type");
   let pollId = params.get("poll");
 
+  // Handles malformed QR: ?type=poll=UUID
   if (!pollId && rawType?.startsWith("poll=")) {
     pollId = rawType.split("=")[1];
   }
@@ -55,6 +55,7 @@ export default function GuestSignupPage() {
   /* ------------------------------------------------- */
   const [wall, setWall] = useState<any>(null);
 
+  // The host UUID that MUST be passed into syncGuestProfile → guest_profiles.host_id
   const [hostIdFromContext, setHostIdFromContext] = useState<string | null>(null);
   const [hostSettings, setHostSettings] = useState<any | null>(null);
   const [loadingHost, setLoadingHost] = useState(true);
@@ -80,11 +81,14 @@ export default function GuestSignupPage() {
 
   /* ------------------------------------------------- */
   useEffect(() => {
-    getOrCreateGuestDeviceId();
+    // Make sure we *have* a device id early
+    if (typeof window !== "undefined") {
+      getOrCreateGuestDeviceId();
+    }
   }, []);
 
   /* -------------------------------------------------
-     LOAD HOST CONTEXT
+     LOAD HOST CONTEXT (INCLUDING TRIVIA)
   ------------------------------------------------- */
   useEffect(() => {
     let cancelled = false;
@@ -140,13 +144,11 @@ export default function GuestSignupPage() {
       setLoadingHost(true);
 
       try {
-        // ⭐ 1) If QR / join explicitly passed host, trust that first
-        if (hostParam && !hostIdFromContext) {
-          await loadHostById(hostParam);
-        }
+        let foundHostId: string | null = null;
+        let bgVal: string | null = null;
 
-        // 2) Fan Wall
-        if (wallId && !hostIdFromContext && !hostParam) {
+        // 1) Fan Wall
+        if (wallId) {
           const { data, error } = await supabase
             .from("fan_walls")
             .select("background_value, host_id")
@@ -154,16 +156,14 @@ export default function GuestSignupPage() {
             .single();
 
           if (!cancelled && data) {
-            setWall(data);
-            if (data.host_id) {
-              await loadHostById(data.host_id);
-            }
+            bgVal = data.background_value || null;
+            foundHostId = data.host_id ?? null;
           }
           if (error) console.error("❌ fan_walls load error:", error);
         }
 
-        // 3) Prize Wheel
-        if (wheelId && !hostIdFromContext && !hostParam) {
+        // 2) Prize Wheel
+        if (!foundHostId && wheelId) {
           const { data, error } = await supabase
             .from("prize_wheels")
             .select("host_id")
@@ -171,13 +171,13 @@ export default function GuestSignupPage() {
             .single();
 
           if (!cancelled && data?.host_id) {
-            await loadHostById(data.host_id);
+            foundHostId = data.host_id;
           }
           if (error) console.error("❌ prize_wheels load error:", error);
         }
 
-        // 4) Poll
-        if (pollId && !hostIdFromContext && !hostParam) {
+        // 3) Poll
+        if (!foundHostId && pollId) {
           const { data, error } = await supabase
             .from("polls")
             .select("host_id")
@@ -185,13 +185,13 @@ export default function GuestSignupPage() {
             .single();
 
           if (!cancelled && data?.host_id) {
-            await loadHostById(data.host_id);
+            foundHostId = data.host_id;
           }
           if (error) console.error("❌ polls load error:", error);
         }
 
-        // 5) Basketball
-        if (basketballId && !hostIdFromContext && !hostParam) {
+        // 4) Basketball
+        if (!foundHostId && basketballId) {
           const { data, error } = await supabase
             .from("bb_games")
             .select("host_id")
@@ -199,13 +199,13 @@ export default function GuestSignupPage() {
             .single();
 
           if (!cancelled && data?.host_id) {
-            await loadHostById(data.host_id);
+            foundHostId = data.host_id;
           }
           if (error) console.error("❌ bb_games load error:", error);
         }
 
-        // 6) Trivia (only if we did NOT already get host from hostParam)
-        if (triviaId && !hostIdFromContext && !hostParam) {
+        // 5) Trivia (THIS is the new part you needed)
+        if (!foundHostId && triviaId) {
           const { data, error } = await supabase
             .from("trivia_cards")
             .select("background_type, background_value, host_id")
@@ -213,20 +213,35 @@ export default function GuestSignupPage() {
             .single();
 
           if (!cancelled && data) {
-            setWall({
-              background_value: data.background_value,
-            });
-
+            bgVal = data.background_value || null;
             if (data.host_id) {
-              await loadHostById(data.host_id);
+              foundHostId = data.host_id;
             }
           }
           if (error) console.error("❌ trivia_cards load error:", error);
         }
 
-        // ❌ OLD: fallback that overwrote real host with "all false"
-        // if (!cancelled && !hostSettings && !hostIdFromContext) { ... }
-        // ⭐ Removed so we don't stomp the real host config.
+        if (!cancelled && bgVal) {
+          setWall({ background_value: bgVal });
+        }
+
+        if (foundHostId) {
+          await loadHostById(foundHostId);
+        } else if (!cancelled) {
+          // No host at all — use a minimal default so UI still renders.
+          setHostSettings({
+            id: null,
+            require_last_name: false,
+            require_email: false,
+            require_phone: false,
+            require_street: false,
+            require_city: false,
+            require_state: false,
+            require_zip: false,
+            require_age: false,
+          });
+          setHostIdFromContext(null);
+        }
       } finally {
         if (!cancelled) setLoadingHost(false);
       }
@@ -237,24 +252,17 @@ export default function GuestSignupPage() {
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wallId, wheelId, pollId, basketballId, triviaId, hostParam, supabase]);
-  // ^ hostParam in deps so if a new host comes in, we reload
+  }, [wallId, wheelId, pollId, basketballId, triviaId, supabase]);
 
   /* -------------------------------------------------
      AUTO-REDIRECT IF GUEST EXISTS
   ------------------------------------------------- */
   useEffect(() => {
     async function validateGuest() {
-      const deviceId =
-        typeof window !== "undefined"
-          ? localStorage.getItem("guest_device_id")
-          : null;
-      const cached =
-        typeof window !== "undefined"
-          ? localStorage.getItem("guest_profile")
-          : null;
+      if (typeof window === "undefined") return;
 
+      const deviceId = localStorage.getItem("guest_device_id");
+      const cached = localStorage.getItem("guest_profile");
       if (!deviceId || !cached) return;
 
       const { data, error } = await supabase
@@ -268,18 +276,17 @@ export default function GuestSignupPage() {
       }
 
       if (!data) {
-        if (typeof window !== "undefined") {
-          localStorage.removeItem("guest_profile");
-        }
+        localStorage.removeItem("guest_profile");
         return;
       }
 
+      // If coming from a page that gave us a redirect, go there first
       if (redirect) return router.push(redirect);
       if (wallId) return router.push(`/wall/${wallId}/submit`);
       if (wheelId) return router.push(`/prizewheel/${wheelId}/submit`);
       if (pollId) return router.push(`/polls/${pollId}/vote`);
-      if (basketballId)
-        return router.push(`/basketball/${basketballId}/submit`);
+      if (basketballId) return router.push(`/basketball/${basketballId}/submit`);
+      // Fallback: trivia QR with no redirect → go to join page
       if (triviaId) return router.push(`/trivia/${triviaId}/join`);
     }
 
@@ -301,6 +308,7 @@ export default function GuestSignupPage() {
         wheelId ||
         pollId ||
         basketballId ||
+        triviaId ||
         redirect?.match(/([0-9a-fA-F-]{36})/)?.[0];
 
       const type =
@@ -321,21 +329,23 @@ export default function GuestSignupPage() {
           : null,
       };
 
-      // ⭐ KEY: this is what goes into guest_profiles.host_id
-      const hostIdForSync = hostIdFromContext || hostSettings?.id || hostParam || null;
-      console.log("🔎 hostIdForSync:", hostIdForSync); // <-- keep while debugging
+      // 👇 This is the host UUID that goes to guest_profiles.host_id
+      const hostIdForSync = hostIdFromContext || hostSettings?.id || null;
+
+      console.log("🔍 hostIdForSync =>", hostIdForSync);
 
       const { profile } = await syncGuestProfile(
         type,
-        targetId,
+        targetId as string,
         payload,
-        hostIdForSync
+        hostIdForSync as string
       );
 
       if (typeof window !== "undefined") {
         localStorage.setItem("guest_profile", JSON.stringify(profile));
       }
 
+      // Redirect priority:
       if (redirect) router.push(redirect);
       else if (wallId) router.push(`/wall/${wallId}/submit`);
       else if (wheelId) router.push(`/prizewheel/${wheelId}/submit`);
@@ -373,11 +383,6 @@ export default function GuestSignupPage() {
       : wall?.background_value ||
         "linear-gradient(135deg,#0a2540,#1b2b44,#000000)";
 
-  const logoSrc =
-    hostSettings.branding_logo_url?.trim() ||
-    hostSettings.logo_url?.trim() ||
-    "/faninteractlogo.png";
-
   return (
     <main
       className={cn(
@@ -402,8 +407,8 @@ export default function GuestSignupPage() {
       >
         <div className={cn("flex justify-center mb-6")}>
           <Image
-            src={logoSrc}
-            alt="Host Logo"
+            src="/faninteractlogo.png"
+            alt="FanInteract"
             width={360}
             height={120}
             className={cn("w-[240px] md:w-[320px]")}
