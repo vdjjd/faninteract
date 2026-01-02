@@ -1202,45 +1202,47 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
           </div>
         )}
 
-        {/* ✅ QR CODE — BOTTOM LEFT (keep on both views; remove if you don't want it on podium) */}
-        <div
-          style={{
-            position: "absolute",
-            bottom: QR_CTRL.bottom,
-            left: QR_CTRL.left,
-            width: QR_CTRL.size,
-            height: QR_CTRL.size,
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            zIndex: 20,
-            pointerEvents: "none",
-          }}
-        >
-          <p
+        {/* ✅ QR CODE — hide during podium */}
+        {view !== "podium" && (
+          <div
             style={{
-              color: "#fff",
-              fontWeight: 700,
-              marginBottom: "0.6vh",
-              fontSize: "clamp(1rem,1.4vw,1.4rem)",
+              position: "absolute",
+              bottom: QR_CTRL.bottom,
+              left: QR_CTRL.left,
+              width: QR_CTRL.size,
+              height: QR_CTRL.size,
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              zIndex: 20,
+              pointerEvents: "none",
             }}
           >
-            Scan to Join
-          </p>
+            <p
+              style={{
+                color: "#fff",
+                fontWeight: 700,
+                marginBottom: "0.6vh",
+                fontSize: "clamp(1rem,1.4vw,1.4rem)",
+              }}
+            >
+              Scan to Join
+            </p>
 
-          <QRCodeCanvas
-            value={qrValue}
-            size={QR_CTRL.size * 2}
-            level="H"
-            bgColor="#ffffff"
-            fgColor="#000000"
-            style={{
-              width: "100%",
-              height: "100%",
-              borderRadius: 20,
-            }}
-          />
-        </div>
+            <QRCodeCanvas
+              value={qrValue}
+              size={QR_CTRL.size * 2}
+              level="H"
+              bgColor="#ffffff"
+              fgColor="#000000"
+              style={{
+                width: "100%",
+                height: "100%",
+                borderRadius: 20,
+              }}
+            />
+          </div>
+        )}
 
         {/* TOP 3 LEADERS (show only in question view, NOT on final question) */}
         {view === "question" && !isFinalQuestion && (
@@ -1338,30 +1340,32 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
           </div>
         )}
 
-        {/* LOGO */}
-        <div
-          style={{
-            position: "absolute",
-            top: LOGO_CTRL.top,
-            right: LOGO_CTRL.right,
-            width: LOGO_CTRL.width,
-            height: LOGO_CTRL.height,
-            zIndex: 20,
-            opacity: LOGO_CTRL.opacity,
-            pointerEvents: "none",
-          }}
-        >
-          <img
-            src={logoSrc}
-            alt="Host Logo"
+        {/* LOGO – hide during podium */}
+        {view !== "podium" && (
+          <div
             style={{
-              width: "100%",
-              height: "100%",
-              objectFit: "contain",
-              filter: "drop-shadow(0 0 12px rgba(0,0,0,0.65))",
+              position: "absolute",
+              top: LOGO_CTRL.top,
+              right: LOGO_CTRL.right,
+              width: LOGO_CTRL.width,
+              height: LOGO_CTRL.height,
+              zIndex: 20,
+              opacity: LOGO_CTRL.opacity,
+              pointerEvents: "none",
             }}
-          />
-        </div>
+          >
+            <img
+              src={logoSrc}
+              alt="Host Logo"
+              style={{
+                width: "100%",
+                height: "100%",
+                objectFit: "contain",
+                filter: "drop-shadow(0 0 12px rgba(0,0,0,0.65))",
+              }}
+            />
+          </div>
+        )}
       </div>
 
       <style jsx global>{`
