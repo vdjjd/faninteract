@@ -30,9 +30,9 @@ interface TriviaSession {
 }
 
 /* ---------------------------------------------------------
-   TIMER CONFIG (match Active Wall)
+   TIMER CONFIG – MATCH ACTIVE WALL
 --------------------------------------------------------- */
-const ANSWER_OVERLAY_MS = 3000; // 3s “THE ANSWER IS…” overlay
+const ANSWER_OVERLAY_MS = 5000; // 5s “THE ANSWER IS…” overlay
 
 /* ---------------------------------------------------------
    Component
@@ -61,6 +61,9 @@ export default function TriviaUserInterfacePage() {
   const [locked, setLocked] = useState(false);
   const [showAnswerOverlay, setShowAnswerOverlay] = useState(false);
   const [revealAnswer, setRevealAnswer] = useState(false);
+
+  // just for debugging if you want later
+  const intervalRef = useRef<number | null>(null);
 
   /* ---------------------------------------------------------
      Load guest profile
@@ -257,11 +260,17 @@ export default function TriviaUserInterfacePage() {
   const isRunning = session?.status === "running";
 
   /* ---------------------------------------------------------
-     TIMER + REVEAL PHASES (SAME SHAPE AS WALL)
+     TIMER – match Wall logic:
+     - progress = remaining / duration
+     - locked when remaining <= 0
   --------------------------------------------------------- */
   useEffect(() => {
-    // no running session or no question: reset
-    if (!isRunning || !currentQuestion || !session?.question_started_at) {
+    // stop timer when no running session or no question
+    if (!isRunning || !currentQuestion) {
+      if (intervalRef.current !== null) {
+        window.clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
       setProgress(1);
       setLocked(false);
       setShowAnswerOverlay(false);
@@ -269,57 +278,72 @@ export default function TriviaUserInterfacePage() {
       return;
     }
 
-    const durationMs = (timerSeconds || 30) * 1000;
-    const overlayMs = ANSWER_OVERLAY_MS;
-    const startedMs = new Date(session.question_started_at).getTime();
-
-    // Reset per-question UI state
+    // reset per-question UI
     setSelectedIndex(null);
     setHasAnswered(false);
     setLocked(false);
     setShowAnswerOverlay(false);
     setRevealAnswer(false);
 
+    const durationMs = (timerSeconds || 30) * 1000;
+    const startedMs = session?.question_started_at
+      ? new Date(session.question_started_at).getTime()
+      : Date.now();
+
     const tick = () => {
       const now = Date.now();
-      const elapsed = now - startedMs;
+      const elapsed = Math.max(0, now - startedMs);
+      const remaining = Math.max(0, durationMs - elapsed);
+      const frac = remaining / durationMs;
 
-      if (elapsed < 0) {
-        setProgress(1);
-        setLocked(false);
-        setShowAnswerOverlay(false);
-        setRevealAnswer(false);
-        return;
-      }
+      setProgress(frac);
 
-      if (elapsed < durationMs) {
-        // ANSWER PHASE
-        const remaining = durationMs - elapsed;
-        const frac = remaining / durationMs;
-        setProgress(frac);
-        setLocked(false);
-        setShowAnswerOverlay(false);
-        setRevealAnswer(false);
-      } else if (elapsed < durationMs + overlayMs) {
-        // "THE ANSWER IS…" OVERLAY
-        setProgress(0);
+      if (remaining <= 0) {
         setLocked(true);
-        setShowAnswerOverlay(true);
-        setRevealAnswer(false);
-      } else {
-        // CORRECT ANSWER SHOWN
-        setProgress(0);
-        setLocked(true);
-        setShowAnswerOverlay(false);
-        setRevealAnswer(true);
       }
     };
 
-    tick(); // run immediately
-    const id = window.setInterval(tick, 100); // smooth bar
+    // run immediately
+    tick();
 
-    return () => window.clearInterval(id);
+    if (intervalRef.current !== null) {
+      window.clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+
+    const id = window.setInterval(tick, 100);
+    intervalRef.current = id as unknown as number;
+
+    return () => {
+      if (intervalRef.current !== null) {
+        window.clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+    };
   }, [isRunning, currentQuestion?.id, timerSeconds, session?.question_started_at]);
+
+  /* ---------------------------------------------------------
+     ANSWER REVEAL FLOW – match Wall:
+     - when locked flips true:
+       show overlay for 5s, then revealAnswer = true
+  --------------------------------------------------------- */
+  useEffect(() => {
+    if (!locked) {
+      setShowAnswerOverlay(false);
+      setRevealAnswer(false);
+      return;
+    }
+
+    setShowAnswerOverlay(true);
+    setRevealAnswer(false);
+
+    const overlayId = window.setTimeout(() => {
+      setShowAnswerOverlay(false);
+      setRevealAnswer(true);
+    }, ANSWER_OVERLAY_MS);
+
+    return () => window.clearTimeout(overlayId);
+  }, [locked]);
 
   /* ---------------------------------------------------------
      If user refreshes mid-question, reflect existing answer
@@ -359,7 +383,7 @@ export default function TriviaUserInterfacePage() {
   }, [playerId, currentQuestion?.id]);
 
   /* ---------------------------------------------------------
-     Answer submission
+     Answer submission (points use same question_started_at)
   --------------------------------------------------------- */
   async function handleSelectAnswer(idx: number) {
     if (!currentQuestion) return;
@@ -384,7 +408,6 @@ export default function TriviaUserInterfacePage() {
 
     const isCorrect = idx === currentQuestion.correct_index;
 
-    // ⭐ Only award points for correct answers
     const points = isCorrect
       ? computeTriviaPoints({
           scoringMode,
