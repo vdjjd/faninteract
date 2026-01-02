@@ -3,6 +3,7 @@
 import { useEffect, useState, useRef } from "react";
 import { QRCodeCanvas } from "qrcode.react";
 import { getSupabaseClient } from "@/lib/supabaseClient";
+import { TriviaTimerEngine } from "@/lib/trivia/triviaTimerEngine";
 
 const supabase = getSupabaseClient();
 
@@ -83,10 +84,13 @@ const LEADER_UI = {
 const fallbackLogo = "/faninteractlogo.png";
 
 /* ---------------------------------------------------- */
-/* TIMER CONFIG                                         */
+/* TIMER CONFIG (DEFAULT/FALLBACK)                      */
 /* ---------------------------------------------------- */
 const QUESTION_DURATION_MS = 30000;
-const ANSWER_OVERLAY_MS = 3000; // 3s "THE ANSWER IS" overlay
+
+/* 🕒 LEADERBOARD DURATION (AFTER EACH ANSWER REVEAL)   */
+/* ---------------------------------------------------- */
+const LEADERBOARD_DURATION_MS = 8000 // 10 seconds visible
 
 /* ---------------------------------------------------- */
 /* HELPERS                                              */
@@ -196,6 +200,9 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
 
   // prevent duplicate transitions
   const transitionLockRef = useRef(false);
+
+  // Timer engine ref (same style as user UI)
+  const timerEngineRef = useRef<TriviaTimerEngine | null>(null);
 
   const timerSeconds: number = trivia?.timer_seconds ?? 30;
 
@@ -389,7 +396,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
         })
         .sort((a: any, b: any) => b.points - a.points);
 
-      // hide if everyone still 0
+      // if everybody is still on 0, don't show any "leaders" yet
       const maxPoints = rows.length ? Math.max(...rows.map((r) => r.points)) : 0;
       if (maxPoints <= 0) {
         if (!cancelled && topRanksRef.current.length) {
@@ -532,6 +539,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
         .sort((a: any, b: any) => b.points - a.points)
         .map((r: any, idx: number) => ({ ...r, rank: idx + 1 }));
 
+      // hide leaderboard if everyone is still on 0
       const hasPoints = built.some((r) => r.points > 0);
       const finalRows = hasPoints ? built : [];
 
@@ -553,88 +561,113 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
   }, [trivia?.id, isRunning, view]);
 
   /* -------------------------------------------------- */
-  /* TIMER + REVEAL PHASES (ONE SOURCE OF TRUTH)        */
+  /* TIMER ENGINE — DB-SYNCED (MATCHES USER UI)          */
   /* -------------------------------------------------- */
   useEffect(() => {
-    if (
-      !isRunning ||
-      view !== "question" ||
-      currentQuestionNumber == null ||
-      !questionStartedAt
-    ) {
-      setProgress(1);
-      setLocked(false);
-      setShowAnswerOverlay(false);
-      setRevealAnswer(false);
+    // stop engine when not running / no question / on leaderboard view
+    if (!isRunning || currentQuestionNumber == null || view !== "question") {
+      if (timerEngineRef.current) {
+        timerEngineRef.current.stop();
+        timerEngineRef.current = null;
+      }
       return;
     }
 
-    const durationMs =
-      typeof trivia?.timer_seconds === "number" && trivia.timer_seconds > 0
-        ? trivia.timer_seconds * 1000
-        : QUESTION_DURATION_MS;
-
-    const overlayMs = ANSWER_OVERLAY_MS;
-    const startedMs = new Date(questionStartedAt).getTime();
-
-    // reset per-question state
+    // Reset timer-related UI state per question
     setLocked(false);
     setProgress(1);
     setShowAnswerOverlay(false);
     setRevealAnswer(false);
     transitionLockRef.current = false;
 
-    const tick = () => {
+    const durationMs =
+      typeof trivia?.timer_seconds === "number" && trivia.timer_seconds > 0
+        ? trivia.timer_seconds * 1000
+        : QUESTION_DURATION_MS;
+
+    const updateFromDbTime = () => {
+      const startedAtIso = questionStartedAt;
+      const startedMs = startedAtIso
+        ? new Date(startedAtIso).getTime()
+        : Date.now();
+
       const now = Date.now();
       const elapsed = now - startedMs;
+      const remaining = Math.max(0, durationMs - elapsed);
+      const frac = remaining / durationMs;
 
-      if (elapsed < 0) {
-        setProgress(1);
-        setLocked(false);
-        setShowAnswerOverlay(false);
-        setRevealAnswer(false);
-        return;
-      }
+      setProgress(frac);
 
-      if (elapsed < durationMs) {
-        // ANSWER PHASE
-        const remaining = durationMs - elapsed;
-        const frac = remaining / durationMs;
-        setProgress(frac);
-        setLocked(false);
-        setShowAnswerOverlay(false);
-        setRevealAnswer(false);
-      } else if (elapsed < durationMs + overlayMs) {
-        // "THE ANSWER IS…" OVERLAY PHASE
-        setProgress(0);
+      if (remaining <= 0) {
         setLocked(true);
-        setShowAnswerOverlay(true);
-        setRevealAnswer(false);
-      } else {
-        // CORRECT ANSWER REVEALED
-        setProgress(0);
-        setLocked(true);
-        setShowAnswerOverlay(false);
-        setRevealAnswer(true);
       }
     };
 
-    tick();
-    const id = window.setInterval(tick, 100); // ~10fps for smooth bar
+    // run once immediately
+    updateFromDbTime();
+
+    // stop any previous engine
+    if (timerEngineRef.current) {
+      timerEngineRef.current.stop();
+      timerEngineRef.current = null;
+    }
+
+    const engine = new TriviaTimerEngine(
+      {
+        durationMs,
+        maxPoints: 100, // wall doesn't care about points, just needs ticks
+      },
+      {
+        onTick: () => {
+          updateFromDbTime();
+        },
+        onComplete: () => {
+          updateFromDbTime();
+          setLocked(true);
+        },
+      }
+    );
+
+    timerEngineRef.current = engine;
+    engine.start();
 
     return () => {
-      window.clearInterval(id);
+      engine.stop();
+      timerEngineRef.current = null;
     };
   }, [
     isRunning,
-    view,
     currentQuestionNumber,
-    questionStartedAt,
     trivia?.timer_seconds,
+    questionStartedAt,
+    view,
   ]);
 
   /* -------------------------------------------------- */
-  /* AFTER 8s REVEAL → SHOW LEADERBOARD (NO NAVIGATION)   */
+  /* ANSWER REVEAL FLOW                                  */
+  /* -------------------------------------------------- */
+  useEffect(() => {
+    if (view !== "question") return;
+
+    if (!locked) {
+      setShowAnswerOverlay(false);
+      setRevealAnswer(false);
+      return;
+    }
+
+    setShowAnswerOverlay(true);
+    setRevealAnswer(false);
+
+    const timeoutId = window.setTimeout(() => {
+      setShowAnswerOverlay(false);
+      setRevealAnswer(true);
+    }, 5000);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [locked, view]);
+
+  /* -------------------------------------------------- */
+  /* AFTER REVEAL → SHOW LEADERBOARD (NO NAVIGATION)     */
   /* -------------------------------------------------- */
   useEffect(() => {
     if (view !== "question") return;
@@ -653,6 +686,41 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
 
     return () => window.clearTimeout(toLeaderboard);
   }, [revealAnswer, isRunning, currentQuestionNumber, view]);
+
+  /* -------------------------------------------------- */
+  /* LEADERBOARD VIEW TIMER (NOW 10s) THEN ADVANCE Q     */
+  /* -------------------------------------------------- */
+  useEffect(() => {
+    if (view !== "leaderboard") return;
+    if (!isRunning) return;
+    if (currentQuestionNumber == null) return;
+
+    const timeoutId = window.setTimeout(async () => {
+      try {
+        if (totalQuestions != null && currentQuestionNumber >= totalQuestions) {
+          // last question: stay on leaderboard (podium later)
+          return;
+        }
+
+        // Advance only after leaderboard finishes
+        await supabase
+          .from("trivia_sessions")
+          .update({
+            current_question: currentQuestionNumber + 1,
+            question_started_at: new Date().toISOString(),
+          })
+          .eq("trivia_card_id", trivia.id)
+          .eq("status", "running");
+
+        setView("question");
+      } catch (err) {
+        console.error("❌ leaderboard advance error:", err);
+        setView("question");
+      }
+    }, LEADERBOARD_DURATION_MS);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [view, isRunning, currentQuestionNumber, totalQuestions, trivia?.id]);
 
   /* -------------------------------------------------- */
   /* AUTO-SCALE QUESTION TEXT TO ~2 LINES               */
@@ -793,7 +861,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
             >
               <div
                 style={{
-                  width: `${Math.max(0, Math.min(100, progress * 100))}%`,
+                  width: `${progress * 100}%`,
                   height: "100%",
                   background:
                     revealAnswer || locked
@@ -934,7 +1002,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
         )}
 
         {/* =======================
-            LEADERBOARD VIEW
+            LEADERBOARD VIEW (no navigation)
         ======================= */}
         {view === "leaderboard" && (
           <div
@@ -1115,7 +1183,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
           </div>
         )}
 
-        {/* ✅ QR CODE — BOTTOM LEFT (both views) */}
+        {/* ✅ QR CODE — BOTTOM LEFT (keep on both views) */}
         <div
           style={{
             position: "absolute",
@@ -1155,7 +1223,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
           />
         </div>
 
-        {/* TOP 3 LEADERS (question view) */}
+        {/* TOP 3 LEADERS (show only in question view) */}
         {view === "question" && (
           <div
             style={{
