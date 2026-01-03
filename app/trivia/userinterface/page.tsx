@@ -52,9 +52,9 @@ type HostRow = {
 type SlideAd = {
   id: string;
   url: string;
-  type: "image" | "video" | string;
+  type: "image" | "video" | string; // allow weird db values safely
   active: boolean | null;
-  order_index: number | null;
+  order_index: number;
   global_order_index: number | null;
   duration_seconds: number | null;
   host_profile_id: string | null;
@@ -147,12 +147,12 @@ export default function TriviaUserInterfacePage() {
   const [ads, setAds] = useState<SlideAd[]>([]);
   const [adsLoading, setAdsLoading] = useState(false);
 
-  // per-game trivia switch
+  // per-game trivia switch (poll this)
   const [adsEnabled, setAdsEnabled] = useState<boolean>(false);
 
-  // ✅ LOCKED ad (prevents “jumping” mid-question)
-  const [lockedAd, setLockedAd] = useState<SlideAd | null>(null);
-  const lastQuestionNumRef = useRef<number | null>(null);
+  // lock ad to question number (prevents mid-question jumping)
+  const [adLockedQuestion, setAdLockedQuestion] = useState<number>(1);
+  const [lockedAdIndex, setLockedAdIndex] = useState<number>(0);
 
   /* ---------------------------------------------------------
      Server clock sync
@@ -294,6 +294,10 @@ export default function TriviaUserInterfacePage() {
       setSession(sessionRow as TriviaSession);
       setQuestionStartedAt(sessionRow.question_started_at ?? null);
 
+      // seed ad lock to current question immediately
+      const initialQ = Number((sessionRow as any)?.current_question ?? 1);
+      setAdLockedQuestion(initialQ);
+
       // 4) ensure player row
       setLoadingMessage("Finding your player seat…");
 
@@ -315,7 +319,7 @@ export default function TriviaUserInterfacePage() {
 
       setPlayerId(playerRow.id);
 
-      // 5) load questions
+      // 5) questions
       setLoadingMessage("Loading questions…");
 
       const { data: qs, error: qErr } = await supabase
@@ -379,7 +383,9 @@ export default function TriviaUserInterfacePage() {
 
   /* ---------------------------------------------------------
      Load Slide Ads when allowed (GLOBAL + TRIVIA)
-     ✅ Stable ordering to match Ad Manager
+     IMPORTANT: order MUST match Ad Manager:
+       global_order_index asc, then order_index asc
+     IMPORTANT: include ALL types (image/video)
   --------------------------------------------------------- */
   useEffect(() => {
     if (!hostRow?.id) return;
@@ -390,7 +396,6 @@ export default function TriviaUserInterfacePage() {
       try {
         setAdsLoading(true);
 
-        // gates
         if (!hostRow.injector_enabled || !adsEnabled) {
           if (!cancelled) setAds([]);
           return;
@@ -409,14 +414,12 @@ export default function TriviaUserInterfacePage() {
         if (masterId) {
           query = query
             .or(`master_id.eq.${masterId},host_profile_id.eq.${hostId}`)
-            .order("global_order_index", { ascending: true, nullsFirst: true })
-            .order("order_index", { ascending: true, nullsFirst: true })
-            .order("id", { ascending: true });
+            .order("global_order_index", { ascending: true, nullsFirst: false })
+            .order("order_index", { ascending: true });
         } else {
           query = query
             .eq("host_profile_id", hostId)
-            .order("order_index", { ascending: true, nullsFirst: true })
-            .order("id", { ascending: true });
+            .order("order_index", { ascending: true });
         }
 
         const { data, error } = await query;
@@ -431,30 +434,6 @@ export default function TriviaUserInterfacePage() {
           (a) => typeof a?.url === "string" && a.url.trim().length > 0
         );
 
-        // extra-stable sort (same rules as query)
-        cleaned.sort((a, b) => {
-          const aGNull = a.global_order_index == null;
-          const bGNull = b.global_order_index == null;
-          if (aGNull !== bGNull) return aGNull ? -1 : 1;
-          if (!aGNull && !bGNull) {
-            const diff =
-              (a.global_order_index as number) -
-              (b.global_order_index as number);
-            if (diff !== 0) return diff;
-          }
-
-          const aONull = a.order_index == null;
-          const bONull = b.order_index == null;
-          if (aONull !== bONull) return aONull ? -1 : 1;
-          if (!aONull && !bONull) {
-            const diff =
-              (a.order_index as number) - (b.order_index as number);
-            if (diff !== 0) return diff;
-          }
-
-          return String(a.id).localeCompare(String(b.id));
-        });
-
         if (!cancelled) setAds(cleaned);
       } finally {
         if (!cancelled) setAdsLoading(false);
@@ -465,12 +444,7 @@ export default function TriviaUserInterfacePage() {
     return () => {
       cancelled = true;
     };
-  }, [
-    hostRow?.id,
-    hostRow?.master_id,
-    hostRow?.injector_enabled,
-    adsEnabled,
-  ]);
+  }, [hostRow?.id, hostRow?.master_id, hostRow?.injector_enabled, adsEnabled]);
 
   /* ---------------------------------------------------------
      Poll trivia_sessions for current_question / status / wall_phase
@@ -497,7 +471,14 @@ export default function TriviaUserInterfacePage() {
         ...(data as any),
       }));
 
-      setQuestionStartedAt(data.question_started_at ?? null);
+      setQuestionStartedAt((data as any).question_started_at ?? null);
+
+      // ✅ lock ad ONLY when question number changes
+      const q = Number((data as any)?.current_question ?? 1);
+      setAdLockedQuestion((prevQ) => {
+        if (q !== prevQ) return q;
+        return prevQ;
+      });
     };
 
     doPoll();
@@ -515,7 +496,7 @@ export default function TriviaUserInterfacePage() {
     session?.current_question && questions.length > 0
       ? Math.min(
           questions.length - 1,
-          Math.max(0, session.current_question - 1)
+          Math.max(0, (session.current_question || 1) - 1)
         )
       : 0;
 
@@ -530,44 +511,32 @@ export default function TriviaUserInterfacePage() {
     | "podium";
 
   /* ---------------------------------------------------------
-     ✅ LOCK ad per question number (prevents jumping)
-     - Sets once per question
-     - If ads first load mid-question, it will lock once (and then never change)
+     Detect video
   --------------------------------------------------------- */
-  useEffect(() => {
-    if (!adsEnabled) {
-      setLockedAd(null);
-      lastQuestionNumRef.current = null;
-      return;
-    }
-
-    const qNum = session?.current_question ?? 1;
-
-    // If question changed: pick the deterministic ad for that question
-    if (lastQuestionNumRef.current !== qNum) {
-      lastQuestionNumRef.current = qNum;
-
-      if (ads.length > 0) {
-        const idx = ((qNum - 1) % ads.length + ads.length) % ads.length;
-        setLockedAd(ads[idx] || null);
-      } else {
-        setLockedAd(null);
-      }
-      return;
-    }
-
-    // If question DIDN'T change, do not change the ad.
-    // BUT if we currently have no locked ad AND ads just arrived, lock it once.
-    if (!lockedAd && ads.length > 0) {
-      const idx = ((qNum - 1) % ads.length + ads.length) % ads.length;
-      setLockedAd(ads[idx] || null);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [adsEnabled, session?.current_question, ads.length]);
+  const lockedAd: SlideAd | null = useMemo(() => {
+    if (!adsEnabled) return null;
+    if (!ads || ads.length === 0) return null;
+    return ads[lockedAdIndex] || null;
+  }, [adsEnabled, ads, lockedAdIndex]);
 
   const isVideo =
     typeof lockedAd?.type === "string" &&
     lockedAd.type.toLowerCase().includes("video");
+
+  /* ---------------------------------------------------------
+     Advance ad index ONLY when question changes
+     and preserve exact array order from ad manager
+  --------------------------------------------------------- */
+  useEffect(() => {
+    if (!adsEnabled) return;
+    if (!ads || ads.length === 0) return;
+
+    // ad for question N is ads[(N-1) % ads.length]
+    const nextIdx =
+      ((adLockedQuestion - 1) % ads.length + ads.length) % ads.length;
+
+    setLockedAdIndex(nextIdx);
+  }, [adsEnabled, ads, adLockedQuestion]);
 
   /* ---------------------------------------------------------
      Follow wall phase
@@ -601,7 +570,7 @@ export default function TriviaUserInterfacePage() {
     setLocked(wallPhase !== "question");
     setProgress(1);
     setSecondsLeft(timerSeconds);
-  }, [currentQuestion?.id, timerSeconds]);
+  }, [currentQuestion?.id, timerSeconds, wallPhase]);
 
   /* ---------------------------------------------------------
      TIMER: source of truth = questionStartedAt
@@ -747,7 +716,10 @@ export default function TriviaUserInterfacePage() {
         totals.set((a as any).player_id, (totals.get((a as any).player_id) || 0) + pts);
       }
 
-      const guestMap = new Map<string, { name: string; selfieUrl: string | null }>();
+      const guestMap = new Map<
+        string,
+        { name: string; selfieUrl: string | null }
+      >();
 
       if (guestIds.length > 0) {
         const { data: guests, error: guestsErr } = await supabase
@@ -785,7 +757,7 @@ export default function TriviaUserInterfacePage() {
         .sort((a: any, b: any) => b.points - a.points)
         .map((r: any, idx: number) => ({ ...r, rank: idx + 1 }));
 
-      const hasPoints = built.some((r: any) => r.points > 0);
+      const hasPoints = built.some((r) => r.points > 0);
       const finalRows = hasPoints ? built : [];
 
       if (!cancelled) {
@@ -1014,7 +986,13 @@ export default function TriviaUserInterfacePage() {
           </div>
 
           <div style={{ display: "flex", flexDirection: "column" }}>
-            <div style={{ fontSize: "0.95rem", fontWeight: 700, letterSpacing: 0.3 }}>
+            <div
+              style={{
+                fontSize: "0.95rem",
+                fontWeight: 700,
+                letterSpacing: 0.3,
+              }}
+            >
               {trivia?.public_name || "Trivia Game"}
             </div>
             <div style={{ fontSize: "0.75rem", opacity: 0.75, marginTop: 2 }}>
@@ -1195,7 +1173,10 @@ export default function TriviaUserInterfacePage() {
             })}
         </div>
 
-        {/* AD SLOT (locked per question) */}
+        {/* AD SLOT
+            ✅ Images: cover (fill box, may crop)
+            ✅ Videos: contain (no crop, no stretch)
+        */}
         <div
           style={{
             marginBottom: 10,
@@ -1226,9 +1207,10 @@ export default function TriviaUserInterfacePage() {
                 style={{
                   width: "100%",
                   height: "100%",
-                  objectFit: "contain",
+                  objectFit: "contain", // ✅ video NOT stretched/cropped
                   objectPosition: "center",
                   display: "block",
+                  background: "rgba(0,0,0,0.35)",
                 }}
               />
             ) : (
@@ -1238,7 +1220,7 @@ export default function TriviaUserInterfacePage() {
                 style={{
                   width: "100%",
                   height: "100%",
-                  objectFit: "contain",
+                  objectFit: "cover", // ✅ image fills box
                   objectPosition: "center",
                   display: "block",
                 }}
@@ -1272,7 +1254,13 @@ export default function TriviaUserInterfacePage() {
               zIndex: 50,
             }}
           >
-            <div style={{ textAlign: "center", textTransform: "uppercase", letterSpacing: "0.08em" }}>
+            <div
+              style={{
+                textAlign: "center",
+                textTransform: "uppercase",
+                letterSpacing: "0.08em",
+              }}
+            >
               <div
                 style={{
                   fontFamily:
