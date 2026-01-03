@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import { getSupabaseClient } from "@/lib/supabaseClient";
 
 const supabase = getSupabaseClient();
@@ -90,7 +90,6 @@ const FALLBACK_BG = "linear-gradient(to bottom right,#1b2735,#090a0f)";
 export default function TriviaLeaderboardPage() {
   const params = useParams<{ triviaId: string }>();
   const triviaId = params?.triviaId;
-  const router = useRouter();
 
   const [rows, setRows] = useState<LeaderRow[]>([]);
   const rowsRef = useRef<LeaderRow[]>([]);
@@ -99,9 +98,6 @@ export default function TriviaLeaderboardPage() {
   // 🎨 background from trivia card
   const [bg, setBg] = useState<string>(FALLBACK_BG);
   const [brightness, setBrightness] = useState<number>(100);
-
-  // prevent double-advance
-  const advanceLockRef = useRef(false);
 
   /* -------------------------------------------------- */
   /* BACKGROUND FROM trivia_cards                        */
@@ -176,7 +172,7 @@ export default function TriviaLeaderboardPage() {
   }, [triviaId]);
 
   /* -------------------------------------------------- */
-  /* LEADERBOARD DATA                                   */
+  /* LEADERBOARD DATA (READ-ONLY)                        */
   /* -------------------------------------------------- */
   useEffect(() => {
     if (!triviaId) return;
@@ -240,10 +236,7 @@ export default function TriviaLeaderboardPage() {
         totals.set(a.player_id, (totals.get(a.player_id) || 0) + pts);
       }
 
-      const guestMap = new Map<
-        string,
-        { name: string; selfieUrl: string | null }
-      >();
+      const guestMap = new Map<string, { name: string; selfieUrl: string | null }>();
 
       if (guestIds.length > 0) {
         const { data: guests, error: guestsErr } = await supabase
@@ -300,60 +293,10 @@ export default function TriviaLeaderboardPage() {
     };
   }, [triviaId]);
 
-  /* -------------------------------------------------- */
-  /* AFTER 15s → ADVANCE QUESTION THEN ROUTE BACK        */
-  /* -------------------------------------------------- */
-  useEffect(() => {
-    if (!triviaId) return;
-    if (advanceLockRef.current) return;
-
-    const timeoutId = window.setTimeout(async () => {
-      if (advanceLockRef.current) return;
-      advanceLockRef.current = true;
-
-      // 1) get running session + current question
-      const { data: session, error: sErr } = await supabase
-        .from("trivia_sessions")
-        .select("id,current_question,status")
-        .eq("trivia_card_id", triviaId)
-        .eq("status", "running")
-        .maybeSingle();
-
-      if (sErr || !session?.id) {
-        // if something weird, just go back
-        router.replace(`/trivia/${triviaId}`);
-        return;
-      }
-
-      // 2) count total questions for this trivia card
-      const { count, error: cErr } = await supabase
-        .from("trivia_questions")
-        .select("*", { count: "exact", head: true })
-        .eq("trivia_card_id", triviaId);
-
-      const total = typeof count === "number" ? count : null;
-
-      // last question?
-      if (total != null && session.current_question >= total) {
-        router.replace(`/trivia/${triviaId}/podium`);
-        return;
-      }
-
-      // 3) advance question NOW (so nobody can see next question early)
-      await supabase
-        .from("trivia_sessions")
-        .update({
-          current_question: session.current_question + 1,
-          question_started_at: new Date().toISOString(),
-        })
-        .eq("id", session.id);
-
-      // 4) back to active wall (now it will load the NEXT question)
-      router.replace(`/trivia/${triviaId}`);
-    }, 15000);
-
-    return () => window.clearTimeout(timeoutId);
-  }, [triviaId, router]);
+  // ✅ IMPORTANT:
+  // This page is now READ-ONLY.
+  // It does NOT advance current_question or change any session fields.
+  // That prevents multi-client "double advance" and the Q1→Q3 / Q3→Q8 skipping.
 
   return (
     <div
@@ -494,8 +437,7 @@ export default function TriviaLeaderboardPage() {
                             height: 30,
                             borderRadius: "50%",
                             background: "rgba(0,0,0,0.75)",
-                            border:
-                              "1px solid rgba(255,255,255,0.25)",
+                            border: "1px solid rgba(255,255,255,0.25)",
                             display: "flex",
                             alignItems: "center",
                             justifyContent: "center",
