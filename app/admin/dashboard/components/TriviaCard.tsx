@@ -21,6 +21,42 @@ function sameLeaderboard(a: LeaderRow[], b: LeaderRow[]) {
   return true;
 }
 
+const DEFAULT_TRIVIA_GRADIENT =
+  "linear-gradient(135deg,#0d47a1cc 0%, #0d47a199 45%, #1976d299 60%, #1976d2cc 100%)";
+
+function getTriviaCardBackground(trivia: any) {
+  if (!trivia) {
+    return { background: "#1b2638" };
+  }
+
+  const type = trivia.background_type || "gradient";
+  const value =
+    typeof trivia.background_value === "string" && trivia.background_value.length
+      ? trivia.background_value
+      : DEFAULT_TRIVIA_GRADIENT;
+
+  // Image background
+  if (type === "image" && value.startsWith("http")) {
+    return {
+      backgroundImage: `url(${value})`,
+      backgroundSize: "cover",
+      backgroundPosition: "center",
+    };
+  }
+
+  // Gradient string
+  if (value.includes("gradient(")) {
+    return {
+      backgroundImage: value,
+    };
+  }
+
+  // Solid color
+  return {
+    background: value || "#1b2638",
+  };
+}
+
 export default function TriviaCard({
   trivia,
   onOpenOptions,
@@ -133,7 +169,7 @@ export default function TriviaCard({
 
       const { data, error } = await supabase
         .from("trivia_cards")
-        .select("status, countdown_active")
+        .select("status, countdown_active, background_type, background_value")
         .eq("id", trivia.id)
         .maybeSingle();
 
@@ -145,6 +181,9 @@ export default function TriviaCard({
       if (!isMounted) return;
       setCardStatus(data.status);
       setCardCountdownActive(!!data.countdown_active);
+      // also keep background in sync if it changes remotely
+      (trivia.background_type = data.background_type),
+        (trivia.background_value = data.background_value);
     };
 
     pollCard();
@@ -539,10 +578,6 @@ export default function TriviaCard({
 
   /* ------------------------------------------------------------
      ▶️ PLAY TRIVIA
-     ✅ FIX: when starting, ALSO set:
-       - trivia_sessions.current_question = 1
-       - trivia_sessions.question_started_at = now()
-     This is why your Active Wall was "not showing questions".
  ------------------------------------------------------------ */
   async function handlePlayTrivia() {
     if (playLockRef.current) return;
@@ -698,16 +733,18 @@ export default function TriviaCard({
   const visibleQuestions = questions.slice(startIndex, startIndex + PAGE_SIZE);
 
   const isActiveBorder = cardStatus === "running" || cardCountdownActive;
+  const cardBgStyle = getTriviaCardBackground(trivia);
 
   return (
     <div
       className={cn(
-        "rounded-xl p-5 bg-[#1b2638] shadow-lg",
+        "rounded-xl p-5 shadow-lg",
         "col-span-2 row-span-2 min-h-[420px] w-full",
         isActiveBorder
           ? "border-4 border-lime-400 shadow-[0_0_28px_rgba(190,242,100,0.7)]"
           : "border border-white/10"
       )}
+      style={cardBgStyle}
     >
       <Tabs.Root
         value={activeTab}
@@ -797,13 +834,14 @@ export default function TriviaCard({
 
             <div
               className={cn(
-                "bg-gray-800",
+                "bg-gray-800/80",
                 "p-3",
                 "rounded-lg",
                 "flex",
                 "flex-col",
                 "items-center",
-                "justify-center"
+                "justify-center",
+                "backdrop-blur-sm"
               )}
             >
               <p className={cn("text-xs", "opacity-75")}>Participants</p>
@@ -918,7 +956,12 @@ export default function TriviaCard({
           {!loadingQuestions && questions.length > 0 && (
             <>
               <div
-                className={cn("max-h-80", "overflow-y-auto", "space-y-3", "pr-1")}
+                className={cn(
+                  "max-h-80",
+                  "overflow-y-auto",
+                  "space-y-3",
+                  "pr-1"
+                )}
               >
                 {visibleQuestions.map((q) => {
                   const isActive = !!q.is_active;
@@ -927,7 +970,7 @@ export default function TriviaCard({
                     <div
                       key={q.id}
                       className={cn(
-                        "border rounded-lg p-4 bg-gray-900/60",
+                        "border rounded-lg p-4 bg-gray-900/70 backdrop-blur-sm",
                         isActive
                           ? "border-green-500/40"
                           : "border-red-500/40 opacity-80"

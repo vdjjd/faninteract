@@ -21,6 +21,45 @@ function getStoredGuestProfile() {
 
 const supabase = getSupabaseClient();
 
+const DEFAULT_JOIN_BG =
+  "linear-gradient(135deg,#020617 0%,#020617 30%,#0f172a 70%,#020617 100%)";
+
+function getTriviaJoinBackground(trivia: any | null) {
+  if (!trivia) {
+    return {
+      backgroundImage: DEFAULT_JOIN_BG,
+      backgroundSize: "cover",
+      backgroundPosition: "center",
+    };
+  }
+
+  const type = trivia.background_type || "gradient";
+  const value =
+    typeof trivia.background_value === "string" && trivia.background_value.length
+      ? trivia.background_value
+      : DEFAULT_JOIN_BG;
+
+  if (type === "image" && value.startsWith("http")) {
+    return {
+      backgroundImage: `url(${value})`,
+      backgroundSize: "cover",
+      backgroundPosition: "center",
+    };
+  }
+
+  if (value.includes("gradient(")) {
+    return {
+      backgroundImage: value,
+      backgroundSize: "cover",
+      backgroundPosition: "center",
+    };
+  }
+
+  return {
+    background: value || "#020617",
+  };
+}
+
 export default function TriviaJoinPage() {
   const router = useRouter();
   const params = useParams();
@@ -138,7 +177,7 @@ export default function TriviaJoinPage() {
   }, [router, triviaId]);
 
   /* -------------------------------------------------- */
-  /* 2) LOAD TRIVIA CONFIG (TITLE / HOST LOGO / SELFIE) */
+  /* 2) LOAD TRIVIA CONFIG (TITLE / HOST LOGO / SELFIE / BG) */
   /* -------------------------------------------------- */
   useEffect(() => {
     if (!triviaId) return;
@@ -146,10 +185,11 @@ export default function TriviaJoinPage() {
     let cancelled = false;
 
     async function loadTrivia() {
-      // ✅ MATCHES YOUR SCHEMA: no background_type/background_value here
       const { data, error } = await supabase
         .from("trivia_cards")
-        .select("id, public_name, require_selfie, host_id")
+        .select(
+          "id, public_name, require_selfie, host_id, background_type, background_value"
+        )
         .eq("id", triviaId)
         .maybeSingle();
 
@@ -157,12 +197,14 @@ export default function TriviaJoinPage() {
 
       if (error || !data) {
         console.error("Load trivia card error:", error);
-        // Fallback so the page STILL WORKS
+        // fallback so page still works
         setTrivia({
           id: triviaId,
           public_name: "Trivia Game",
           require_selfie: true,
           host: null,
+          background_type: "gradient",
+          background_value: DEFAULT_JOIN_BG,
         });
         return;
       }
@@ -368,7 +410,7 @@ export default function TriviaJoinPage() {
       }
 
       const displayName =
-        `${profile.first_name || ""} ${profile.last_name || ""}`.trim() ||
+        `${profile.first_name || ""} ${profile.last_name ? profile.last_name : ""}`.trim() ||
         profile.nickname ||
         "Guest";
 
@@ -535,8 +577,7 @@ export default function TriviaJoinPage() {
     );
   }
 
-  // We don't have background fields on trivia_cards, so just use a default
-  const bg = "linear-gradient(135deg,#020617,#0f172a)";
+  const bgStyle = getTriviaJoinBackground(trivia);
 
   // Host logo: branding_logo_url -> logo_url -> FanInteract default
   const logo =
@@ -552,12 +593,10 @@ export default function TriviaJoinPage() {
     <div
       style={{
         minHeight: "100vh",
-        backgroundImage: bg,
-        backgroundSize: "cover",
-        backgroundPosition: "center",
         position: "relative",
         padding: 20,
         color: "#fff",
+        ...bgStyle,
       }}
     >
       <div

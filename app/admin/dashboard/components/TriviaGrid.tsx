@@ -5,6 +5,7 @@ import { getSupabaseClient } from "@/lib/supabaseClient";
 import { cn } from "@/lib/utils";
 
 import TriviaCard from "./TriviaCard";
+import OptionsModalTrivia from "@/components/OptionsModalTrivia"; // ⬅️ NEW
 
 const supabase = getSupabaseClient();
 
@@ -13,7 +14,7 @@ interface TriviaGridProps {
   host: any;
   refreshTrivia: () => Promise<void>;
   onOpenOptions: (trivia: any) => void;
-  // ✅ NEW: moderation handler
+  // ✅ moderation handler
   onOpenModeration: (trivia: any) => void;
 }
 
@@ -25,6 +26,7 @@ export default function TriviaGrid({
   onOpenModeration,
 }: TriviaGridProps) {
   const [localTrivia, setLocalTrivia] = useState<any[]>([]);
+  const [optionsTrivia, setOptionsTrivia] = useState<any | null>(null); // ⬅️ NEW
 
   /* ------------------------------------------------------------
      Sync props → local state
@@ -76,10 +78,17 @@ export default function TriviaGrid({
      Launch trivia popup window (HOST WALL ROUTER)
   ------------------------------------------------------------ */
   function handleLaunch(triviaId: string) {
-    // 🔑 Launch the router page at /trivia/:triviaId
     const url = `${window.location.origin}/trivia/${triviaId}`;
     const popup = window.open(url, "_blank", "width=1280,height=800");
     popup?.focus();
+  }
+
+  /* ------------------------------------------------------------
+     Open Options modal (local) + still call parent handler
+  ------------------------------------------------------------ */
+  function handleOpenOptionsLocal(triviaItem: any) {
+    setOptionsTrivia(triviaItem);      // open modal
+    onOpenOptions?.(triviaItem);      // keep parent behavior if needed
   }
 
   /* ------------------------------------------------------------
@@ -100,14 +109,23 @@ export default function TriviaGrid({
           <TriviaCard
             key={triviaItem.id}
             trivia={triviaItem}
-            onOpenOptions={onOpenOptions}
+            onOpenOptions={handleOpenOptionsLocal}   // ⬅️ use local handler
             onDelete={handleDelete}
             onLaunch={() => handleLaunch(triviaItem.id)}
-            // ✅ Wire moderation down to the card
             onOpenModeration={onOpenModeration}
           />
         ))}
       </div>
+
+      {/* ✅ OPTIONS MODAL (APPEARANCE / BACKGROUND / COLORS) */}
+      {optionsTrivia && host?.id && (
+        <OptionsModalTrivia
+          trivia={optionsTrivia}
+          hostId={host.id}
+          onClose={() => setOptionsTrivia(null)}
+          refreshTrivia={refreshTrivia}
+        />
+      )}
     </div>
   );
 }

@@ -1,220 +1,360 @@
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
-import { useParams } from "next/navigation";
+import { QRCodeCanvas } from "qrcode.react";
+import { useEffect, useMemo, useState } from "react";
 import { getSupabaseClient } from "@/lib/supabaseClient";
-
-import InactiveWall from "@/app/trivia/layouts/inactivewall";
-import TriviaActiveWall from "@/app/trivia/layouts/TriviaActiveWall";
 
 const supabase = getSupabaseClient();
 
-type TriviaSessionRow = {
-  id: string;
-  status: string; // "waiting" | "running" | "finished" etc
-  current_question: number | null;
-  question_started_at: string | null;
-  created_at: string;
-};
+/* ---------- TYPES ---------- */
+interface TriviaInactiveWallProps {
+  trivia: any;
+}
 
-export default function TriviaWallPage() {
-  const params = useParams<{ triviaId: string }>();
-  const triviaId = params?.triviaId;
+/* ---------- COUNTDOWN COMPONENT (DB-synced) ---------- */
+function CountdownDisplay({
+  countdown,
+  countdownActive,
+  countdownStartedAt,
+}: {
+  countdown: string;
+  countdownActive: boolean;
+  countdownStartedAt?: string | null;
+}) {
+  const [now, setNow] = useState<number>(() => Date.now());
 
-  const [trivia, setTrivia] = useState<any>(null);
+  // Parse "10 seconds" → 10
+  const totalSeconds = useMemo(() => {
+    const value =
+      countdown && countdown !== "none" ? countdown : "10 seconds";
 
-  // 🔥 Fullscreen container (same pattern as FanWallPage)
-  const wallRef = useRef<HTMLDivElement | null>(null);
+    const [numStr] = value.split(" ");
+    const num = parseInt(numStr, 10);
+    return isNaN(num) ? 10 : num;
+  }, [countdown]);
 
-  /* ------------------------------------------------------------
-     POLLING — trivia_cards + host (via host_id) + latest session
-     KEY FIX:
-     - ActiveWall was using trivia.status (from trivia_cards) to decide isRunning.
-     - If you only flip trivia_sessions.status to "running" but trivia_cards.status
-       stays "inactive", the leaderboard/timers never truly "run" on the wall.
-     - We merge the *latest session* into the trivia object AND set an
-       "effective status" so the wall components see the real running state.
-  ------------------------------------------------------------ */
   useEffect(() => {
-    if (!triviaId) return;
+    if (!countdownActive || !countdownStartedAt) return;
 
-    let alive = true;
+    const id = setInterval(() => {
+      setNow(Date.now());
+    }, 250);
 
-    async function fetchTrivia() {
-      // 1️⃣ Load trivia card
-      const { data: triviaRow, error: triviaErr } = await supabase
-        .from("trivia_cards")
-        .select("*")
-        .eq("id", triviaId)
-        .single();
+    return () => clearInterval(id);
+  }, [countdownActive, countdownStartedAt]);
 
-      if (triviaErr) {
-        console.error("❌ trivia_cards fetch error:", triviaErr);
-        if (alive) setTrivia(null);
-        return;
-      }
+  if (!countdownActive || !countdownStartedAt) {
+    // Not in countdown yet → show full time as a static value
+    const mFull = Math.floor(totalSeconds / 60);
+    const sFull = totalSeconds % 60;
+    return (
+      <div
+        style={{
+          fontSize: "clamp(6rem,8vw,9rem)",
+          fontWeight: 900,
+          color: "#fff",
+          textShadow: "0 0 40px rgba(0,0,0,0.7)",
+        }}
+      >
+        {mFull}:{sFull.toString().padStart(2, "0")}
+      </div>
+    );
+  }
 
-      // 2️⃣ Host branding (optional)
-      let host: any = null;
-      if (triviaRow?.host_id) {
-        const { data: hostRow, error: hostErr } = await supabase
-          .from("hosts")
-          .select("id, venue_name, branding_logo_url, logo_url")
-          .eq("id", triviaRow.host_id)
-          .maybeSingle();
+  const startMs = new Date(countdownStartedAt).getTime();
+  const elapsed = Math.max(0, (now - startMs) / 1000);
+  const remaining = Math.max(0, totalSeconds - elapsed);
 
-        if (hostErr) {
-          console.error("❌ hosts fetch error:", hostErr);
-        } else {
-          host = hostRow;
-        }
-      }
-
-      // 3️⃣ Latest non-finished session for this card (source-of-truth for running)
-      const { data: sessionRow, error: sessionErr } = await supabase
-        .from("trivia_sessions")
-        .select("id,status,current_question,question_started_at,created_at")
-        .eq("trivia_card_id", triviaId)
-        .neq("status", "finished")
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      if (sessionErr) {
-        console.error("❌ trivia_sessions fetch error:", sessionErr);
-      }
-
-      // IMPORTANT:
-      // Force wall components to see the REAL running status from trivia_sessions
-      const effectiveStatus = sessionRow?.status ?? triviaRow?.status;
-
-      if (alive) {
-        setTrivia({
-          ...triviaRow,
-          status: effectiveStatus, // ✅ critical: makes ActiveWall's isRunning correct
-          host,
-          session: (sessionRow as TriviaSessionRow | null) ?? null, // handy if you want it later
-        });
-      }
-    }
-
-    fetchTrivia();
-    const interval = window.setInterval(fetchTrivia, 1000);
-
-    return () => {
-      alive = false;
-      window.clearInterval(interval);
-    };
-  }, [triviaId]);
-
-  if (!trivia) return null;
-
-  /* ------------------------------------------------------------
-     SHARED FULLSCREEN HANDLER (router-level)
-  ------------------------------------------------------------ */
-  const toggleFullscreen = async () => {
-    const el = wallRef.current;
-    if (!el) {
-      console.warn("Fullscreen element missing");
-      return;
-    }
-
-    try {
-      if (!document.fullscreenElement) {
-        await (el as any)
-          .requestFullscreen({ navigationUI: "hide" } as any)
-          .catch((err: any) => {
-            console.error("❌ Fullscreen failed:", err);
-          });
-      } else {
-        await document.exitFullscreen();
-      }
-    } catch (err) {
-      console.error("🔥 Fullscreen error:", err);
-    }
-  };
-
-  // ✅ Use session.status as the primary driver for inactive/active
-  const sessionStatus = trivia?.session?.status; // "running" | "waiting" | null
-  const isActive =
-    sessionStatus === "running" && trivia.countdown_active !== true;
-
-  const isInactive =
-    !isActive ||
-    trivia.status === "inactive" ||
-    trivia.status === "finished" ||
-    trivia.countdown_active === true;
-
-  const bg =
-    trivia.background_type === "image"
-      ? `url(${trivia.background_value}) center/cover no-repeat`
-      : trivia.background_value ||
-        "linear-gradient(to bottom right,#1b2735,#090a0f)";
-
-  const brightness = trivia.background_brightness ?? 100;
+  const m = Math.floor(remaining / 60);
+  const s = Math.floor(remaining % 60);
 
   return (
     <div
-      ref={wallRef}
       style={{
-        position: "relative",
-        width: "100%",
-        height: "100vh",
-        background: bg,
-        filter: `brightness(${brightness}%)`,
-        overflow: "hidden",
+        fontSize: "clamp(6rem,8vw,9rem)",
+        fontWeight: 900,
+        color: "#fff",
+        textShadow: "0 0 40px rgba(0,0,0,0.7)",
       }}
     >
-      {/* INACTIVE WALL */}
-      <div
+      {m}:{s.toString().padStart(2, "0")}
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* 🎮 TRIVIA INACTIVE WALL (no background, router handles skin)               */
+/* -------------------------------------------------------------------------- */
+
+export default function TriviaInactiveWall({
+  trivia,
+}: TriviaInactiveWallProps) {
+  const [wallState, setWallState] = useState({
+    countdown: trivia?.countdown || "10 seconds",
+    countdownActive: trivia?.countdown_active === true,
+    countdownStartedAt: trivia?.countdown_started_at || null,
+    title: trivia?.title || "",
+  });
+
+  /* 🌟 Pulse animation */
+  const PulseStyle = (
+    <style>{`
+      @keyframes pulseSoonGlow {
+        0%,100% { opacity:.7; text-shadow:0 0 14px rgba(255,255,255,0.3); }
+        50% { opacity:1; text-shadow:0 0 22px rgba(180,220,255,0.8); }
+      }
+      .pulseSoon { animation:pulseSoonGlow 2.5s ease-in-out infinite; }
+    `}</style>
+  );
+
+  // Initial props → local state
+  useEffect(() => {
+    if (!trivia) return;
+
+    setWallState({
+      countdown: trivia.countdown || "10 seconds",
+      countdownActive: trivia.countdown_active === true,
+      countdownStartedAt: trivia.countdown_started_at || null,
+      title: trivia.title || "",
+    });
+  }, [trivia]);
+
+  // 🔁 Live updates from DB (keeps countdown & title in sync)
+  useEffect(() => {
+    if (!trivia?.id) return;
+
+    const channel = supabase
+      .channel(`inactive-wall-trivia-${trivia.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "trivia_cards",
+          filter: `id=eq.${trivia.id}`,
+        },
+        (payload: any) => {
+          const next = payload?.new;
+          if (!next) return;
+
+          setWallState((prev) => ({
+            ...prev,
+            countdown: next.countdown || prev.countdown || "10 seconds",
+            countdownActive: next.countdown_active === true,
+            countdownStartedAt: next.countdown_started_at || null,
+            title: next.title ?? prev.title,
+          }));
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [trivia?.id]);
+
+  /* 🔗 BUILD QR URL → straight to signup with host + redirect */
+  const origin =
+    typeof window !== "undefined"
+      ? window.location.origin
+      : "https://faninteract.vercel.app";
+
+  // Where they should land AFTER signup (the join page)
+  const redirectPath = trivia?.id ? `/trivia/${trivia.id}/join` : "";
+  const encodedRedirect = encodeURIComponent(redirectPath);
+
+  // Host UUID for signup. Prefer a direct host_id column, else nested host.id
+  const hostParam =
+    (trivia as any)?.host_id ||
+    (trivia as any)?.host?.id ||
+    "";
+
+  // Final QR value → hits signup directly, passes trivia + host + redirect
+  const qrValue = `${origin}/guest/signup?trivia=${
+    trivia?.id || ""
+  }&host=${hostParam}&redirect=${encodedRedirect}`;
+
+  /* ✅ LOGO PRIORITY */
+  const displayLogo =
+    trivia?.host?.branding_logo_url?.trim() ||
+    trivia?.host?.logo_url?.trim() ||
+    "/faninteractlogo.png";
+
+  if (!trivia) return <div>Loading Trivia…</div>;
+
+  const displayTitle =
+    wallState.title || trivia.public_name || "Trivia Game";
+
+  return (
+    <div
+      style={{
+        // ⬇️ no background here; router already handles bg + brightness
+        width: "100%",
+        height: "100%",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        overflow: "hidden",
+        position: "relative",
+        paddingTop: "3vh",
+      }}
+    >
+      {PulseStyle}
+
+      {/* Title */}
+      <h1
         style={{
-          position: "absolute",
-          inset: 0,
-          opacity: isInactive ? 1 : 0,
-          transition: "opacity 0.6s ease",
-          zIndex: 1,
+          color: "#fff",
+          fontSize: "clamp(2.5rem,4vw,5rem)",
+          fontWeight: 900,
+          marginBottom: "1vh",
+          textShadow: `
+            2px 2px 2px #000,
+            -2px 2px 2px #000,
+            2px -2px 2px #000,
+            -2px -2px 2px #000
+          `,
         }}
       >
-        <InactiveWall trivia={trivia} />
-      </div>
+        {displayTitle}
+      </h1>
 
-      {/* ACTIVE WALL */}
+      {/* Main Panel */}
       <div
         style={{
-          position: "absolute",
-          inset: 0,
-          opacity: isInactive ? 0 : 1,
-          transition: "opacity 0.6s ease",
-          zIndex: 2,
-        }}
-      >
-        <TriviaActiveWall trivia={trivia} />
-      </div>
-
-      {/* FULLSCREEN BUTTON (shared) */}
-      <div
-        style={{
-          position: "fixed",
-          bottom: "30px",
-          right: "30px",
-          width: 40,
-          height: 40,
-          borderRadius: 12,
+          width: "90vw",
+          height: "78vh",
+          maxWidth: "1800px",
+          aspectRatio: "16 / 9",
           background: "rgba(255,255,255,0.08)",
-          border: "1px solid rgba(255,255,255,0.2)",
+          backdropFilter: "blur(20px)",
+          border: "1px solid rgba(255,255,255,0.15)",
+          borderRadius: 24,
+          position: "relative",
+          overflow: "hidden",
           display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          cursor: "pointer",
-          opacity: 0.35,
-          transition: "opacity 0.2s ease",
-          zIndex: 999999999,
         }}
-        onMouseEnter={(e) => (e.currentTarget.style.opacity = "1")}
-        onMouseLeave={(e) => (e.currentTarget.style.opacity = "0.35")}
-        onClick={toggleFullscreen}
       >
-        ⛶
+        {/* QR SECTION */}
+        <div
+          style={{
+            position: "absolute",
+            top: "5%",
+            left: "3%",
+            width: "47%",
+            height: "90%",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <QRCodeCanvas
+            value={qrValue}
+            size={1000}
+            level="H"
+            style={{ width: "100%", height: "100%" }}
+          />
+        </div>
+
+        {/* TEXT + LOGO AREA */}
+        <div
+          style={{
+            position: "relative",
+            flexGrow: 1,
+            marginLeft: "44%",
+          }}
+        >
+          {/* LOGO */}
+          <div
+            style={{
+              position: "absolute",
+              top: "2%",
+              left: "53%",
+              transform: "translateX(-50%)",
+              width: "clamp(300px,27vw,400px)",
+              height: "clamp(300px,12vw,260px)",
+              display: "flex",
+              justifyContent: "center",
+              alignItems: "center",
+              overflow: "hidden",
+            }}
+          >
+            <img
+              src={displayLogo}
+              style={{
+                width: "100%",
+                height: "100%",
+                objectFit: "contain",
+                filter: "drop-shadow(0 0 12px rgba(0,0,0,0.6))",
+              }}
+            />
+          </div>
+
+          {/* GREY DIVIDER */}
+          <div
+            style={{
+              position: "absolute",
+              top: "50%",
+              left: "53%",
+              transform: "translateX(-50%)",
+              width: "75%",
+              height: "1.4vh",
+              borderRadius: 6,
+              background: "linear-gradient(to right,#000,#444)",
+            }}
+          />
+
+          {/* MAIN TEXT */}
+          <p
+            style={{
+              position: "absolute",
+              top: "56%",
+              left: "53%",
+              transform: "translateX(-50%)",
+              color: "#fff",
+              fontSize: "clamp(2em,3.5vw,6rem)",
+              fontWeight: 900,
+              textAlign: "center",
+              textShadow: "0 0 14px rgba(0,0,0,0.6)",
+            }}
+          >
+            {displayTitle}
+          </p>
+
+          {/* STARTING SOON */}
+          <p
+            className="pulseSoon"
+            style={{
+              position: "absolute",
+              top: "67%",
+              left: "53%",
+              transform: "translateX(-50%)",
+              color: "#bcd9ff",
+              fontSize: "clamp(2.8rem,2.4vw,3.2rem)",
+              fontWeight: 700,
+              textAlign: "center",
+              margin: 0,
+            }}
+          >
+            Starting Soon!!
+          </p>
+
+          {/* COUNTDOWN */}
+          <div
+            style={{
+              position: "absolute",
+              top: "73%",
+              left: "53%",
+              transform: "translateX(-50%)",
+            }}
+          >
+            <CountdownDisplay
+              countdown={wallState.countdown}
+              countdownActive={wallState.countdownActive}
+              countdownStartedAt={wallState.countdownStartedAt}
+            />
+          </div>
+        </div>
       </div>
     </div>
   );
