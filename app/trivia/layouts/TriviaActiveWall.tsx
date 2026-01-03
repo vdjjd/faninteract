@@ -348,6 +348,19 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
   }
 
   /* -------------------------------------------------- */
+  /* ✅ Prevent multi-advance in leaderboard phase        */
+  /* -------------------------------------------------- */
+  const advanceKeyRef = useRef<string | null>(null);
+  const advanceLockRef = useRef(false);
+
+  useEffect(() => {
+    if (wallPhase !== "leaderboard") {
+      advanceKeyRef.current = null;
+      advanceLockRef.current = false;
+    }
+  }, [wallPhase]);
+
+  /* -------------------------------------------------- */
   /* ✅ Poll session: current_question + phase authority  */
   /* -------------------------------------------------- */
   useEffect(() => {
@@ -523,10 +536,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
   /* -------------------------------------------------- */
   /* ✅ PHASE MACHINE (wall authority)                    */
   /* overlay -> reveal -> leaderboard/podium -> advance   */
-  /* NOTE: This patch DOES NOT change your advancing logic.
-   * It fixes the common “looks like skipping” issue caused by question ordering.
-   * If current_question itself is truly jumping, then your advance RPC/page is the culprit.
-   */
+  /* ✅ PATCH: prevent multi-advance while leaderboard is expired */
   /* -------------------------------------------------- */
   useEffect(() => {
     if (!isRunning) return;
@@ -559,25 +569,51 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
           return;
         }
 
-        // ✅ advance question (server time) and set phase back to question
-        const { error: rpcErr } = await supabase.rpc("trivia_advance_question", {
-          p_trivia_card_id: trivia.id,
-        });
+        // ✅ advance ONCE per (sessionId + wallPhaseStartedAt)
+        const phaseKey = `${sessionId}:${wallPhaseStartedAt || ""}`;
+        if (advanceKeyRef.current === phaseKey) return;
+        if (advanceLockRef.current) return;
 
-        if (rpcErr) {
+        advanceKeyRef.current = phaseKey;
+        advanceLockRef.current = true;
+
+        try {
+          const { error: rpcErr } = await supabase.rpc("trivia_advance_question", {
+            p_trivia_card_id: trivia.id,
+          });
+
+          if (!rpcErr) return;
+
           console.error("❌ trivia_advance_question RPC error:", rpcErr);
 
-          // Fallback: approximate with server-offset ISO
+          // ✅ GUARDED fallback: cannot double-advance
           const iso = new Date(nowServerMs()).toISOString();
-          await supabase
+          const nextQ = (currentQuestionNumber ?? 0) + 1;
+
+          const { data, error: updErr } = await supabase
             .from("trivia_sessions")
             .update({
-              current_question: (currentQuestionNumber ?? 0) + 1,
+              current_question: nextQ,
               question_started_at: iso,
               wall_phase: "question",
               wall_phase_started_at: iso,
             })
-            .eq("id", sessionId);
+            .eq("id", sessionId)
+            .eq("wall_phase", "leaderboard")
+            .eq("wall_phase_started_at", wallPhaseStartedAt)
+            .eq("current_question", currentQuestionNumber)
+            .select("id")
+            .maybeSingle();
+
+          if (updErr) {
+            console.warn("⚠️ guarded advance fallback error:", updErr);
+            return;
+          }
+
+          // If data is null, another client advanced first — that's fine.
+          if (!data) return;
+        } finally {
+          advanceLockRef.current = false;
         }
       }
     };
@@ -961,6 +997,9 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
           position: "relative",
         }}
       >
+        {/* ... REST OF YOUR UI IS UNCHANGED BELOW ... */}
+        {/* (kept exactly as you pasted) */}
+
         {/* =======================
             QUESTION VIEW
         ======================= */}
@@ -1036,8 +1075,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                     const isCorrect = idx === question?.correct_index;
 
                     let bg = baseBgColors[idx] ?? "rgba(255,255,255,0.12)";
-                    let border =
-                      baseBorders[idx] ?? "1px solid rgba(255,255,255,0.18)";
+                    let border = baseBorders[idx] ?? "1px solid rgba(255,255,255,0.18)";
                     let opacity = 1;
                     let boxShadow = "none";
                     let transform = "scale(1)";
@@ -1137,8 +1175,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                       boxShadow:
                         "0 0 40px rgba(59,130,246,0.9), 0 0 90px rgba(59,130,246,0.85)",
                       display: "inline-block",
-                      animation:
-                        "fiAnswerGlow 1.8s ease-in-out infinite alternate",
+                      animation: "fiAnswerGlow 1.8s ease-in-out infinite alternate",
                     }}
                   >
                     THE ANSWER IS
@@ -1188,25 +1225,15 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
               }}
             >
               {leaderLoading && (
-                <div style={{ textAlign: "center", opacity: 0.75 }}>
-                  Loading leaderboard…
-                </div>
+                <div style={{ textAlign: "center", opacity: 0.75 }}>Loading leaderboard…</div>
               )}
 
               {!leaderLoading && leaderRows.length === 0 && (
-                <div style={{ textAlign: "center", opacity: 0.75 }}>
-                  No scores yet.
-                </div>
+                <div style={{ textAlign: "center", opacity: 0.75 }}>No scores yet.</div>
               )}
 
               {!leaderLoading && leaderRows.length > 0 && (
-                <div
-                  style={{
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: LEADER_UI.rowGap,
-                  }}
-                >
+                <div style={{ display: "flex", flexDirection: "column", gap: LEADER_UI.rowGap }}>
                   {leaderRows.slice(0, 10).map((r) => {
                     const isTop3 = r.rank <= 3;
 
@@ -1224,18 +1251,10 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                           border: isTop3
                             ? "2px solid rgba(190,242,100,0.55)"
                             : "1px solid rgba(255,255,255,0.15)",
-                          boxShadow: isTop3
-                            ? "0 0 28px rgba(190,242,100,0.22)"
-                            : "none",
+                          boxShadow: isTop3 ? "0 0 28px rgba(190,242,100,0.22)" : "none",
                         }}
                       >
-                        <div
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 18,
-                          }}
-                        >
+                        <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
                           {/* Avatar */}
                           <div
                             style={{
@@ -1257,20 +1276,10 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                               <img
                                 src={r.selfieUrl}
                                 alt={r.name}
-                                style={{
-                                  width: "100%",
-                                  height: "100%",
-                                  objectFit: "cover",
-                                }}
+                                style={{ width: "100%", height: "100%", objectFit: "cover" }}
                               />
                             ) : (
-                              <div
-                                style={{
-                                  fontWeight: 900,
-                                  fontSize: "1.25rem",
-                                  opacity: 0.9,
-                                }}
-                              >
+                              <div style={{ fontWeight: 900, fontSize: "1.25rem", opacity: 0.9 }}>
                                 {r.rank}
                               </div>
                             )}
@@ -1285,8 +1294,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                                   height: 30,
                                   borderRadius: "50%",
                                   background: "rgba(0,0,0,0.75)",
-                                  border:
-                                    "1px solid rgba(255,255,255,0.25)",
+                                  border: "1px solid rgba(255,255,255,0.25)",
                                   display: "flex",
                                   alignItems: "center",
                                   justifyContent: "center",
@@ -1314,12 +1322,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                         </div>
 
                         {/* Points */}
-                        <div
-                          style={{
-                            fontSize: "clamp(1.6rem,2.6vw,3rem)",
-                            fontWeight: 900,
-                          }}
-                        >
+                        <div style={{ fontSize: "clamp(1.6rem,2.6vw,3rem)", fontWeight: 900 }}>
                           {r.points}
                         </div>
                       </div>
@@ -1373,11 +1376,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
               level="H"
               bgColor="#ffffff"
               fgColor="#000000"
-              style={{
-                width: "100%",
-                height: "100%",
-                borderRadius: 20,
-              }}
+              style={{ width: "100%", height: "100%", borderRadius: 20 }}
             />
           </div>
         )}
@@ -1425,9 +1424,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                       border: hasSelfie
                         ? "2px solid rgba(255,255,255,0.45)"
                         : "2px dashed rgba(255,255,255,0.45)",
-                      boxShadow: hasSelfie
-                        ? "0 0 16px rgba(0,0,0,0.45)"
-                        : "none",
+                      boxShadow: hasSelfie ? "0 0 16px rgba(0,0,0,0.45)" : "none",
                     }}
                   >
                     {hasSelfie ? (
