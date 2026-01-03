@@ -46,13 +46,22 @@ type HostRow = {
   master_id: string | null;
   branding_logo_url: string | null;
   logo_url: string | null;
+
   injector_enabled: boolean | null; // GLOBAL gate
+
+  // ✅ NEW: Trivia behavior
+  trivia_ignore_injector_rules?: boolean | null;
+
+  // (optional) injector settings (only used if ignore=false)
+  ad_every_x_submissions?: number | null;
+  ad_duration_seconds?: number | null;
+  ad_overlay_transition?: string | null;
 };
 
 type SlideAd = {
   id: string;
   url: string;
-  type: "image" | "video" | string; // allow weird db values safely
+  type: "image" | "video" | string;
   active: boolean | null;
   order_index: number;
   global_order_index: number | null;
@@ -150,6 +159,13 @@ export default function TriviaUserInterfacePage() {
   // ✅ per-game trivia switch (poll this)
   const [adsEnabled, setAdsEnabled] = useState<boolean>(false);
 
+  // ✅ NEW: read the host toggle; default TRUE to “ignore injector rules”
+  const [triviaIgnoreInjectorRules, setTriviaIgnoreInjectorRules] =
+    useState<boolean>(true);
+
+  // ✅ Only used when triviaIgnoreInjectorRules === false (injector mode)
+  const [showAdOverlay, setShowAdOverlay] = useState<boolean>(true);
+
   /* ---------------------------------------------------------
      Server clock sync
   --------------------------------------------------------- */
@@ -245,21 +261,37 @@ export default function TriviaUserInterfacePage() {
       setTrivia(card);
       setAdsEnabled(Boolean(card.ads_enabled));
 
-      // 2️⃣ Host row (logo + master_id + injector_enabled)
+      // 2️⃣ Host row (logo + master_id + injector_enabled + trivia toggle)
       let logo = "/faninteractlogo.png";
       if (card.host_id) {
         const { data: host, error: hostErr } = await supabase
           .from("hosts")
-          .select("id,master_id,branding_logo_url,logo_url,injector_enabled")
+          .select(
+            `
+            id,
+            master_id,
+            branding_logo_url,
+            logo_url,
+            injector_enabled,
+            trivia_ignore_injector_rules,
+            ad_every_x_submissions,
+            ad_duration_seconds,
+            ad_overlay_transition
+          `
+          )
           .eq("id", card.host_id)
           .maybeSingle();
 
         if (!hostErr && host) {
-          setHostRow(host as HostRow);
-          logo =
-            host.branding_logo_url?.trim() ||
-            host.logo_url?.trim() ||
-            logo;
+          const h = host as HostRow;
+          setHostRow(h);
+
+          // default true if null/undefined
+          setTriviaIgnoreInjectorRules(
+            h.trivia_ignore_injector_rules ?? true
+          );
+
+          logo = h.branding_logo_url?.trim() || h.logo_url?.trim() || logo;
         }
       }
       if (!cancelled) setHostLogoUrl(logo);
@@ -374,9 +406,63 @@ export default function TriviaUserInterfacePage() {
   }, [gameId]);
 
   /* ---------------------------------------------------------
+     ✅ Poll host gates + trivia toggle every 5 seconds (mid-game changes)
+     - injector_enabled (global)
+     - trivia_ignore_injector_rules (new)
+  --------------------------------------------------------- */
+  useEffect(() => {
+    if (!hostRow?.id) return;
+    let cancelled = false;
+
+    const poll = async () => {
+      const { data, error } = await supabase
+        .from("hosts")
+        .select(
+          `
+          id,
+          master_id,
+          branding_logo_url,
+          logo_url,
+          injector_enabled,
+          trivia_ignore_injector_rules,
+          ad_every_x_submissions,
+          ad_duration_seconds,
+          ad_overlay_transition
+        `
+        )
+        .eq("id", hostRow.id)
+        .maybeSingle();
+
+      if (cancelled) return;
+      if (error || !data) return;
+
+      const next = data as HostRow;
+
+      setHostRow((prev) => ({ ...(prev || (next as any)), ...(next as any) }));
+      setTriviaIgnoreInjectorRules(next.trivia_ignore_injector_rules ?? true);
+
+      // keep logo live too (no reload)
+      const nextLogo =
+        next.branding_logo_url?.trim() ||
+        next.logo_url?.trim() ||
+        "/faninteractlogo.png";
+      setHostLogoUrl(nextLogo);
+    };
+
+    poll();
+    const id = window.setInterval(poll, 5000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [hostRow?.id]);
+
+  /* ---------------------------------------------------------
      ✅ Load Slide Ads when allowed (GLOBAL + TRIVIA)
-     IMPORTANT: NO type filter here so Trivia sees ALL ads.
-     Trivia ignores injector "show every X" / duration rules.
+     - Trivia fetches ALL active ads (image + video)
+     - Trivia does NOT use injector “every X / duration / transition”
+       when triviaIgnoreInjectorRules is TRUE
   --------------------------------------------------------- */
   useEffect(() => {
     if (!hostRow?.id) return;
@@ -436,7 +522,12 @@ export default function TriviaUserInterfacePage() {
     return () => {
       cancelled = true;
     };
-  }, [hostRow?.id, hostRow?.master_id, hostRow?.injector_enabled, adsEnabled]);
+  }, [
+    hostRow?.id,
+    hostRow?.master_id,
+    hostRow?.injector_enabled,
+    adsEnabled,
+  ]);
 
   /* ---------------------------------------------------------
      Poll trivia_sessions for current_question / status / wall_phase
@@ -496,17 +587,82 @@ export default function TriviaUserInterfacePage() {
     | "podium";
 
   /* ---------------------------------------------------------
-     ✅ Ad changes per question (NOT time-based)
-     Ignores injector "show every X submissions / duration"
+     ✅ Ad selection
+     - Default: per-question rotation (ignore injector rules)
+     - If triviaIgnoreInjectorRules === false:
+       show ad ONLY every X questions and only for duration seconds.
   --------------------------------------------------------- */
+  const injectorEveryX = Math.max(
+    1,
+    Number(hostRow?.ad_every_x_submissions ?? 8)
+  );
+  const injectorDurationSec = Math.max(
+    2,
+    Number(hostRow?.ad_duration_seconds ?? 8)
+  );
+
   const currentAd: SlideAd | null = useMemo(() => {
     if (!adsEnabled) return null;
+    if (!hostRow?.injector_enabled) return null;
     if (!ads || ads.length === 0) return null;
 
     const qNum = session?.current_question ?? 1;
-    const idx = ((qNum - 1) % ads.length + ads.length) % ads.length;
+
+    // ✅ Trivia ignores injector rules => ALWAYS show per question
+    if (triviaIgnoreInjectorRules) {
+      const idx = ((qNum - 1) % ads.length + ads.length) % ads.length;
+      return ads[idx] || null;
+    }
+
+    // Injector mode => show only every X questions (mapped from “every X submissions”)
+    const shouldShow = injectorEveryX === 1 || qNum % injectorEveryX === 0;
+    if (!shouldShow) return null;
+
+    // Cycle ads only when an ad is “due”
+    const slot = Math.floor((qNum - 1) / injectorEveryX);
+    const idx = ((slot % ads.length) + ads.length) % ads.length;
     return ads[idx] || null;
-  }, [adsEnabled, ads, session?.current_question]);
+  }, [
+    adsEnabled,
+    hostRow?.injector_enabled,
+    ads,
+    session?.current_question,
+    triviaIgnoreInjectorRules,
+    injectorEveryX,
+  ]);
+
+  // ✅ Injector-mode overlay timing (ignored when triviaIgnoreInjectorRules === true)
+  useEffect(() => {
+    if (!adsEnabled || !hostRow?.injector_enabled) {
+      setShowAdOverlay(false);
+      return;
+    }
+
+    if (triviaIgnoreInjectorRules) {
+      setShowAdOverlay(true);
+      return;
+    }
+
+    // injector mode: show only when currentAd exists, and only for duration seconds
+    if (!currentAd?.url) {
+      setShowAdOverlay(false);
+      return;
+    }
+
+    setShowAdOverlay(true);
+    const t = window.setTimeout(() => setShowAdOverlay(false), injectorDurationSec * 1000);
+
+    return () => window.clearTimeout(t);
+    // include questionStartedAt so duration begins at question start (best effort)
+  }, [
+    adsEnabled,
+    hostRow?.injector_enabled,
+    triviaIgnoreInjectorRules,
+    currentAd?.url,
+    injectorDurationSec,
+    questionStartedAt,
+    session?.current_question,
+  ]);
 
   /* ---------------------------------------------------------
      Follow wall phase
@@ -913,6 +1069,13 @@ export default function TriviaUserInterfacePage() {
     typeof currentAd?.type === "string" &&
     currentAd.type.toLowerCase().includes("video");
 
+  // ✅ Effective show/hide for the ad media
+  const shouldRenderAdMedia =
+    adsEnabled &&
+    Boolean(hostRow?.injector_enabled) &&
+    Boolean(currentAd?.url) &&
+    (triviaIgnoreInjectorRules ? true : showAdOverlay);
+
   return (
     <>
       <div
@@ -958,7 +1121,9 @@ export default function TriviaUserInterfacePage() {
           </div>
 
           <div style={{ display: "flex", flexDirection: "column" }}>
-            <div style={{ fontSize: "0.95rem", fontWeight: 700, letterSpacing: 0.3 }}>
+            <div
+              style={{ fontSize: "0.95rem", fontWeight: 700, letterSpacing: 0.3 }}
+            >
               {trivia?.public_name || "Trivia Game"}
             </div>
             <div style={{ fontSize: "0.75rem", opacity: 0.75, marginTop: 2 }}>
@@ -1139,7 +1304,7 @@ export default function TriviaUserInterfacePage() {
             })}
         </div>
 
-        {/* ✅ AD SLOT (CHANGES PER QUESTION) */}
+        {/* ✅ AD SLOT */}
         <div
           style={{
             marginBottom: 10,
@@ -1159,12 +1324,12 @@ export default function TriviaUserInterfacePage() {
             <div style={{ fontSize: "0.95rem", opacity: 0.9, padding: 16 }}>
               Loading ad…
             </div>
-          ) : !adsEnabled ? (
+          ) : !adsEnabled || !hostRow?.injector_enabled ? (
             <div style={{ fontSize: "0.95rem", opacity: 0.95, padding: 16 }} />
-          ) : currentAd?.url ? (
+          ) : shouldRenderAdMedia ? (
             isVideo ? (
               <video
-                src={currentAd.url}
+                src={currentAd!.url}
                 muted
                 playsInline
                 autoPlay
@@ -1175,11 +1340,13 @@ export default function TriviaUserInterfacePage() {
                   objectFit: "contain",
                   objectPosition: "center",
                   display: "block",
+                  opacity: triviaIgnoreInjectorRules ? 1 : showAdOverlay ? 1 : 0,
+                  transition: "opacity 400ms ease",
                 }}
               />
             ) : (
               <img
-                src={currentAd.url}
+                src={currentAd!.url}
                 alt="Sponsored"
                 style={{
                   width: "100%",
@@ -1187,16 +1354,18 @@ export default function TriviaUserInterfacePage() {
                   objectFit: "contain",
                   objectPosition: "center",
                   display: "block",
+                  opacity: triviaIgnoreInjectorRules ? 1 : showAdOverlay ? 1 : 0,
+                  transition: "opacity 400ms ease",
                 }}
               />
             )
           ) : (
             <div style={{ fontSize: "0.95rem", opacity: 0.95, padding: 16 }}>
-              AD SLOT
+              {/* Keep the slot reserved, but no forced placeholder */}
             </div>
           )}
 
-          {adsEnabled && currentAd?.url && (
+          {adsEnabled && hostRow?.injector_enabled && currentAd?.url && shouldRenderAdMedia && (
             <div
               style={{
                 position: "absolute",
@@ -1241,7 +1410,13 @@ export default function TriviaUserInterfacePage() {
               zIndex: 50,
             }}
           >
-            <div style={{ textAlign: "center", textTransform: "uppercase", letterSpacing: "0.08em" }}>
+            <div
+              style={{
+                textAlign: "center",
+                textTransform: "uppercase",
+                letterSpacing: "0.08em",
+              }}
+            >
               <div
                 style={{
                   fontFamily:
