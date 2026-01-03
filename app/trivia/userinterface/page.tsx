@@ -47,7 +47,7 @@ type HostRow = {
   master_id: string | null;
   branding_logo_url: string | null;
   logo_url: string | null;
-  injector_enabled: boolean | null; // system-wide master switch
+  injector_enabled: boolean | null;
 };
 
 type SlideAd = {
@@ -107,7 +107,7 @@ export default function TriviaUserInterfacePage() {
   const gameId = searchParams.get("game"); // trivia_cards.id
 
   const [profile, setProfile] = useState<any>(null);
-  const [trivia, setTrivia] = useState<any>(null); // includes ads_enabled
+  const [trivia, setTrivia] = useState<any>(null);
   const [session, setSession] = useState<TriviaSession | null>(null);
   const [playerId, setPlayerId] = useState<string | null>(null);
   const [questions, setQuestions] = useState<any[]>([]);
@@ -144,10 +144,13 @@ export default function TriviaUserInterfacePage() {
   // ✅ server-time offset to prevent drift
   const [serverOffsetMs, setServerOffsetMs] = useState<number>(0);
 
-  // ✅ ads (phone changes per-question)
+  // ✅ NEW: ads (phone changes per-question)
   const [hostRow, setHostRow] = useState<HostRow | null>(null);
   const [ads, setAds] = useState<SlideAd[]>([]);
   const [adsLoading, setAdsLoading] = useState(false);
+
+  // ✅ NEW: poll trivia_cards.ads_enabled so toggling works mid-game
+  const [adsEnabled, setAdsEnabled] = useState<boolean>(false);
 
   /* ---------------------------------------------------------
      ✅ Server clock sync (prevents drift)
@@ -214,7 +217,7 @@ export default function TriviaUserInterfacePage() {
       setLoading(true);
       setLoadingMessage("Loading trivia game…");
 
-      // 1️⃣ Load trivia card  ✅ include ads_enabled
+      // 1️⃣ Load trivia card
       const { data: card, error: cardErr } = await supabase
         .from("trivia_cards")
         .select(
@@ -243,6 +246,7 @@ export default function TriviaUserInterfacePage() {
       }
 
       setTrivia(card);
+      setAdsEnabled(Boolean(card.ads_enabled));
 
       // 2️⃣ Host row (logo + master_id + injector_enabled)
       let logo = "/faninteractlogo.png";
@@ -344,16 +348,15 @@ export default function TriviaUserInterfacePage() {
   }, [gameId, profile?.id, router]);
 
   /* ---------------------------------------------------------
-     ✅ POLL trivia_cards.ads_enabled every 5s (mid-game switch)
-     - This is the per-trivia toggle you described.
-     - NO refresh required.
+     ✅ Poll trivia_cards.ads_enabled (every 5s)
+     so toggling works mid-game without refresh.
   --------------------------------------------------------- */
   useEffect(() => {
     if (!gameId) return;
 
     let cancelled = false;
 
-    const pollAdsEnabled = async () => {
+    const poll = async () => {
       const { data, error } = await supabase
         .from("trivia_cards")
         .select("ads_enabled")
@@ -361,19 +364,13 @@ export default function TriviaUserInterfacePage() {
         .maybeSingle();
 
       if (cancelled) return;
+      if (error || !data) return;
 
-      if (error || !data) {
-        console.warn("⚠️ trivia_cards ads_enabled poll error:", error);
-        return;
-      }
-
-      setTrivia((prev: any) =>
-        prev ? { ...prev, ads_enabled: !!data.ads_enabled } : prev
-      );
+      setAdsEnabled(Boolean((data as any).ads_enabled));
     };
 
-    pollAdsEnabled();
-    const id = window.setInterval(pollAdsEnabled, 5000);
+    poll();
+    const id = window.setInterval(poll, 5000);
 
     return () => {
       cancelled = true;
@@ -382,18 +379,9 @@ export default function TriviaUserInterfacePage() {
   }, [gameId]);
 
   /* ---------------------------------------------------------
-     ✅ Show/hide ad slot based on:
-     1) hosts.injector_enabled (system-wide master switch)
-     2) trivia_cards.ads_enabled (per-trivia switch)
-  --------------------------------------------------------- */
-  const showAdSlot = useMemo(() => {
-    return Boolean(hostRow?.injector_enabled) && Boolean(trivia?.ads_enabled);
-  }, [hostRow?.injector_enabled, trivia?.ads_enabled]);
-
-  /* ---------------------------------------------------------
      ✅ Load Slide Ads once we have hostRow
      (master + host merged like AdsManagerModal)
-     - Only loads when showAdSlot is true
+     Re-fetch when adsEnabled changes
   --------------------------------------------------------- */
   useEffect(() => {
     if (!hostRow?.id) return;
@@ -404,8 +392,8 @@ export default function TriviaUserInterfacePage() {
       try {
         setAdsLoading(true);
 
-        // If ad slot disabled, clear ads immediately.
-        if (!showAdSlot) {
+        // If system injector disabled OR trivia ads disabled => clear ads
+        if (!hostRow.injector_enabled || !adsEnabled) {
           if (!cancelled) setAds([]);
           return;
         }
@@ -450,7 +438,7 @@ export default function TriviaUserInterfacePage() {
     return () => {
       cancelled = true;
     };
-  }, [hostRow?.id, hostRow?.master_id, showAdSlot]);
+  }, [hostRow?.id, hostRow?.master_id, hostRow?.injector_enabled, adsEnabled]);
 
   /* ---------------------------------------------------------
      Poll trivia_sessions for current_question / status / wall_phase
@@ -1276,64 +1264,69 @@ export default function TriviaUserInterfacePage() {
             })}
         </div>
 
-        {/* ✅ AD SLOT (only when BOTH switches are ON) */}
-        {showAdSlot && (
-          <div
-            style={{
-              marginBottom: 10,
-              padding: 0,
-              borderRadius: 16,
-              border: "1px solid rgba(148,163,184,0.35)",
-              background: "rgba(15,23,42,0.65)",
-              minHeight: 160,
-              overflow: "hidden",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              position: "relative",
-            }}
-          >
-            {adsLoading ? (
-              <div style={{ fontSize: "0.95rem", opacity: 0.9, padding: 16 }}>
-                Loading ad…
-              </div>
-            ) : currentAd?.url ? (
-              <img
-                src={currentAd.url}
-                alt="Sponsored"
-                style={{
-                  width: "100%",
-                  height: 160,
-                  objectFit: "cover",
-                  display: "block",
-                }}
-              />
-            ) : (
-              <div style={{ fontSize: "0.95rem", opacity: 0.95, padding: 16 }}>
-                AD SLOT
-              </div>
-            )}
+        {/* ✅ AD SLOT (CHANGES PER QUESTION) */}
+        <div
+          style={{
+            marginBottom: 10,
+            padding: 0,
+            borderRadius: 16,
+            border: "1px solid rgba(148,163,184,0.35)",
+            background: "rgba(15,23,42,0.65)",
+            height: 160, // ✅ fixed height for perfect fit
+            overflow: "hidden",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            position: "relative",
+          }}
+        >
+          {adsLoading ? (
+            <div style={{ fontSize: "0.95rem", opacity: 0.9, padding: 16 }}>
+              Loading ad…
+            </div>
+          ) : !adsEnabled ? (
+            <div style={{ fontSize: "0.95rem", opacity: 0.95, padding: 16 }}>
+              {/* ads disabled */}
+            </div>
+          ) : currentAd?.url ? (
+            <img
+              src={currentAd.url}
+              alt="Sponsored"
+              style={{
+                width: "100%",
+                height: "100%",
+                maxHeight: 160,
+                objectFit: "contain", // ✅ NO CROPPING
+                objectPosition: "center",
+                display: "block",
+              }}
+            />
+          ) : (
+            <div style={{ fontSize: "0.95rem", opacity: 0.95, padding: 16 }}>
+              AD SLOT
+            </div>
+          )}
 
-            {currentAd?.url && (
-              <div
-                style={{
-                  position: "absolute",
-                  bottom: 8,
-                  right: 10,
-                  padding: "3px 8px",
-                  borderRadius: 999,
-                  background: "rgba(0,0,0,0.55)",
-                  border: "1px solid rgba(255,255,255,0.18)",
-                  fontSize: "0.7rem",
-                  fontWeight: 800,
-                  letterSpacing: 0.2,
-                }}
-              >
-                Sponsored
-              </div>
-            )}
-          </div>
-        )}
+          {/* optional tiny label */}
+          {adsEnabled && currentAd?.url && (
+            <div
+              style={{
+                position: "absolute",
+                bottom: 8,
+                right: 10,
+                padding: "3px 8px",
+                borderRadius: 999,
+                background: "rgba(0,0,0,0.55)",
+                border: "1px solid rgba(255,255,255,0.18)",
+                fontSize: "0.7rem",
+                fontWeight: 800,
+                letterSpacing: 0.2,
+              }}
+            >
+              Sponsored
+            </div>
+          )}
+        </div>
 
         {/* FOOTER STATUS */}
         <div
