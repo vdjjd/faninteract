@@ -1,4 +1,4 @@
-'use client';
+"use client"
 
 import { useEffect, useState, useRef } from "react";
 import { supabase } from "@/lib/supabaseClient";
@@ -46,15 +46,19 @@ const TRANSITIONS = [
 ];
 
 export default function AdsManagerModal({ host, onClose }: AdsManagerModalProps) {
-
   const [ads, setAds] = useState<AdItem[]>([]);
   const [loading, setLoading] = useState(true);
 
   /* Settings */
   const [injectorEnabled, setInjectorEnabled] = useState(false);
-  const [triggerInterval, setTriggerInterval] = useState(8);          // maps to ad_every_x_submissions
-  const [adDuration, setAdDuration] = useState(8);                   // maps to ad_duration_seconds
-  const [overlayTransition, setOverlayTransition] = useState("Fade In / Fade Out");
+  const [triggerInterval, setTriggerInterval] = useState(8); // maps to ad_every_x_submissions
+  const [adDuration, setAdDuration] = useState(8); // maps to ad_duration_seconds
+  const [overlayTransition, setOverlayTransition] =
+    useState("Fade In / Fade Out");
+
+  // ✅ NEW: Trivia-only behavior toggle
+  const [triviaIgnoreInjectorRules, setTriviaIgnoreInjectorRules] =
+    useState(true);
 
   const [reorderMode, setReorderMode] = useState(false);
   const [savingOrder, setSavingOrder] = useState(false);
@@ -68,19 +72,23 @@ export default function AdsManagerModal({ host, onClose }: AdsManagerModalProps)
 
     loadHostSettings();
     loadMixedAds();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [host?.id]);
 
   /* Load correct host fields */
   async function loadHostSettings() {
     const { data, error } = await supabase
       .from("hosts")
-      .select(`
+      .select(
+        `
         injector_enabled,
         ad_every_x_submissions,
         ad_duration_seconds,
         ad_overlay_transition,
-        master_id
-      `)
+        master_id,
+        trivia_ignore_injector_rules
+      `
+      )
       .eq("id", host.id)
       .single();
 
@@ -94,6 +102,7 @@ export default function AdsManagerModal({ host, onClose }: AdsManagerModalProps)
       setTriggerInterval(Number(data.ad_every_x_submissions ?? 8));
       setAdDuration(Number(data.ad_duration_seconds ?? 8));
       setOverlayTransition(data.ad_overlay_transition || "Fade In / Fade Out");
+      setTriviaIgnoreInjectorRules(Boolean(data.trivia_ignore_injector_rules));
     }
   }
 
@@ -130,7 +139,6 @@ export default function AdsManagerModal({ host, onClose }: AdsManagerModalProps)
       } else {
         setAds(data || []);
       }
-
     } finally {
       setLoading(false);
     }
@@ -175,14 +183,20 @@ export default function AdsManagerModal({ host, onClose }: AdsManagerModalProps)
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const ext = file.name.split('.').pop();
+    const ext = file.name.split(".").pop();
     const uuid = crypto.randomUUID();
     const path = `${host.id}/${uuid}.${ext}`;
 
-    const { error: uploadErr } = await supabase.storage.from("ads-images").upload(path, file);
+    const { error: uploadErr } = await supabase.storage
+      .from("ads-images")
+      .upload(path, file);
     if (uploadErr) return alert("Upload failed");
 
-    const { data: { publicUrl } } = supabase.storage.from("ads-images").getPublicUrl(path);
+    const { data: urlData } = supabase.storage
+      .from("ads-images")
+      .getPublicUrl(path);
+
+    const publicUrl = urlData?.publicUrl;
 
     await supabase.from("slide_ads").insert({
       host_profile_id: isMaster ? null : host.id,
@@ -218,9 +232,7 @@ export default function AdsManagerModal({ host, onClose }: AdsManagerModalProps)
 
     if (!isMaster) {
       const movingHostAdUpOverMaster =
-        draggedAd.is_host_ad &&
-        ads[to]?.is_master_ad &&
-        to < from;
+        draggedAd.is_host_ad && ads[to]?.is_master_ad && to < from;
 
       if (movingHostAdUpOverMaster) {
         dragFrom.current = null;
@@ -236,37 +248,69 @@ export default function AdsManagerModal({ host, onClose }: AdsManagerModalProps)
   /* UI */
   return (
     <div
-      className={cn('fixed', 'inset-0', 'bg-black/70', 'backdrop-blur-md', 'z-[9999]', 'flex', 'items-center', 'justify-center')}
+      className={cn(
+        "fixed",
+        "inset-0",
+        "bg-black/70",
+        "backdrop-blur-md",
+        "z-[9999]",
+        "flex",
+        "items-center",
+        "justify-center"
+      )}
       onClick={onClose}
     >
       <div
-        onClick={e => e.stopPropagation()}
+        onClick={(e) => e.stopPropagation()}
         className={cn(
           "relative w-full max-w-[960px] max-h-[90vh] rounded-2xl border border-blue-500/30",
           "bg-gradient-to-br from-[#0b0f1a]/95 to-[#111827]/95 shadow-[0_0_40px_rgba(0,140,255,0.45)]",
           "p-6 flex flex-col overflow-hidden"
         )}
       >
-
         {/* CLOSE BUTTON */}
-        <button onClick={onClose} className={cn('absolute', 'top-3', 'right-3', 'text-white', 'text-xl')}>
+        <button
+          onClick={onClose}
+          className={cn("absolute", "top-3", "right-3", "text-white", "text-xl")}
+        >
           ✕
         </button>
 
         {/* TITLE */}
-        <div className={cn('text-center', 'mb-4', 'border-b', 'border-white/10', 'pb-3')}>
-          <h1 className={cn('text-2xl', 'font-bold', 'bg-gradient-to-r', 'from-blue-400', 'to-cyan-400', 'bg-clip-text', 'text-transparent')}>
+        <div className={cn("text-center", "mb-4", "border-b", "border-white/10", "pb-3")}>
+          <h1
+            className={cn(
+              "text-2xl",
+              "font-bold",
+              "bg-gradient-to-r",
+              "from-blue-400",
+              "to-cyan-400",
+              "bg-clip-text",
+              "text-transparent"
+            )}
+          >
             Ad Manager
           </h1>
         </div>
 
         {/* SETTINGS PANEL */}
         {!isMaster && (
-          <div className={cn('mb-6', 'space-y-4', 'bg-white/5', 'border', 'border-white/10', 'rounded-xl', 'p-4')}>
-
+          <div
+            className={cn(
+              "mb-6",
+              "space-y-4",
+              "bg-white/5",
+              "border",
+              "border-white/10",
+              "rounded-xl",
+              "p-4"
+            )}
+          >
             {/* Injector Switch */}
-            <div className={cn('flex', 'items-center', 'justify-between')}>
-              <span className={cn('text-white/80', 'text-sm', 'font-medium')}>Ad Injector Enabled</span>
+            <div className={cn("flex", "items-center", "justify-between")}>
+              <span className={cn("text-white/80", "text-sm", "font-medium")}>
+                Ad Injector Enabled
+              </span>
 
               <div
                 onClick={() => {
@@ -288,65 +332,149 @@ export default function AdsManagerModal({ host, onClose }: AdsManagerModalProps)
               </div>
             </div>
 
+            {/* ✅ NEW: Trivia ignores injector rules */}
+            <div className={cn("flex", "items-center", "justify-between", "gap-4")}>
+              <div className={cn("flex", "flex-col", "gap-1")}>
+                <span className={cn("text-white/80", "text-sm", "font-medium")}>
+                  Trivia: Ignore Injector Timing/Transitions
+                </span>
+                <span className={cn("text-white/50", "text-xs")}>
+                  If ON: Trivia rotates ads per question and ignores “Every X”, Duration, and Transition.
+                  Fan Zone Wall still uses those settings.
+                </span>
+              </div>
+
+              <div
+                onClick={() => {
+                  const next = !triviaIgnoreInjectorRules;
+                  setTriviaIgnoreInjectorRules(next);
+                  saveSettings("trivia_ignore_injector_rules", next);
+                }}
+                className={cn(
+                  "relative w-14 h-7 rounded-full cursor-pointer transition-all shrink-0",
+                  triviaIgnoreInjectorRules ? "bg-green-500" : "bg-gray-600"
+                )}
+              >
+                <span
+                  className={cn(
+                    "absolute top-1 left-1 w-5 h-5 rounded-full bg-white shadow transition-all",
+                    triviaIgnoreInjectorRules ? "translate-x-7" : ""
+                  )}
+                />
+              </div>
+            </div>
+
             {/* Ad Every X Submissions */}
-            <div className={cn('flex', 'items-center', 'justify-between')}>
-              <label className={cn('text-white/80', 'text-sm', 'font-medium')}>Show Ad Every X Submissions</label>
+            <div className={cn("flex", "items-center", "justify-between")}>
+              <label className={cn("text-white/80", "text-sm", "font-medium")}>
+                Show Ad Every X Submissions
+              </label>
               <input
                 type="number"
                 min={1}
                 value={triggerInterval}
-                onChange={e => {
+                onChange={(e) => {
                   const val = Number(e.target.value);
                   setTriggerInterval(val);
-                  saveSettings("ad_every_x_submissions", val); // FIXED
+                  saveSettings("ad_every_x_submissions", val);
                 }}
-                className={cn('w-20', 'bg-black/30', 'border', 'border-white/20', 'rounded', 'px-2', 'py-1', 'text-white')}
+                className={cn(
+                  "w-20",
+                  "bg-black/30",
+                  "border",
+                  "border-white/20",
+                  "rounded",
+                  "px-2",
+                  "py-1",
+                  "text-white"
+                )}
               />
             </div>
 
             {/* Ad Duration */}
-            <div className={cn('flex', 'items-center', 'justify-between')}>
-              <label className={cn('text-white/80', 'text-sm', 'font-medium')}>Ad Duration (seconds)</label>
+            <div className={cn("flex", "items-center", "justify-between")}>
+              <label className={cn("text-white/80", "text-sm", "font-medium")}>
+                Ad Duration (seconds)
+              </label>
               <input
                 type="number"
                 min={2}
                 max={20}
                 value={adDuration}
-                onChange={e => {
+                onChange={(e) => {
                   const val = Number(e.target.value);
                   setAdDuration(val);
                   saveSettings("ad_duration_seconds", val);
                 }}
-                className={cn('w-20', 'bg-black/30', 'border', 'border-white/20', 'rounded', 'px-2', 'py-1', 'text-white')}
+                className={cn(
+                  "w-20",
+                  "bg-black/30",
+                  "border",
+                  "border-white/20",
+                  "rounded",
+                  "px-2",
+                  "py-1",
+                  "text-white"
+                )}
               />
             </div>
 
             {/* Overlay Transition */}
-            <div className={cn('flex', 'items-center', 'justify-between')}>
-              <label className={cn('text-white/80', 'text-sm', 'font-medium')}>Overlay Transition</label>
+            <div className={cn("flex", "items-center", "justify-between")}>
+              <label className={cn("text-white/80", "text-sm", "font-medium")}>
+                Overlay Transition
+              </label>
               <select
                 value={overlayTransition}
-                onChange={e => {
+                onChange={(e) => {
                   setOverlayTransition(e.target.value);
                   saveSettings("ad_overlay_transition", e.target.value);
                 }}
-                className={cn('bg-black/40', 'text-white', 'border', 'border-white/20', 'rounded', 'px-2', 'py-1')}
+                className={cn(
+                  "bg-black/40",
+                  "text-white",
+                  "border",
+                  "border-white/20",
+                  "rounded",
+                  "px-2",
+                  "py-1"
+                )}
               >
-                {TRANSITIONS.map(t => (
-                  <option key={t} value={t}>{t}</option>
+                {TRANSITIONS.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
                 ))}
               </select>
             </div>
-
           </div>
         )}
 
         {/* UPLOAD + REORDER */}
-        <div className={cn('mb-4', 'flex', 'items-center', 'gap-3')}>
-          <label className={cn('cursor-pointer', 'flex', 'items-center', 'gap-2', 'text-white/80', 'border', 'border-white/20', 'px-3', 'py-2', 'rounded-lg', 'hover:bg-white/10')}>
+        <div className={cn("mb-4", "flex", "items-center", "gap-3")}>
+          <label
+            className={cn(
+              "cursor-pointer",
+              "flex",
+              "items-center",
+              "gap-2",
+              "text-white/80",
+              "border",
+              "border-white/20",
+              "px-3",
+              "py-2",
+              "rounded-lg",
+              "hover:bg-white/10"
+            )}
+          >
             <Upload size={18} />
             Upload Ad
-            <input type="file" className="hidden" accept="image/*,video/*" onChange={handleFileUpload} />
+            <input
+              type="file"
+              className="hidden"
+              accept="image/*,video/*"
+              onChange={handleFileUpload}
+            />
           </label>
 
           <button
@@ -359,70 +487,115 @@ export default function AdsManagerModal({ host, onClose }: AdsManagerModalProps)
             {reorderMode ? "Done" : "Reorder"}
           </button>
 
-          <span className={cn('text-red-400', 'text-sm', 'font-semibold')}>
+          <span className={cn("text-red-400", "text-sm", "font-semibold")}>
             AD Slides best formats: JPEG, JPG, WEBP, PNG — 1920 × 1080 recommended
           </span>
         </div>
 
         {/* AD GRID — 4 columns + 16:9 previews */}
-        <div className={cn('grid', 'grid-cols-4', 'gap-3', 'overflow-y-auto', 'pr-2')}>
-          {ads.map((ad, i) => {
-            const locked = ad.is_master_ad && !isMaster;
+        <div className={cn("grid", "grid-cols-4", "gap-3", "overflow-y-auto", "pr-2")}>
+          {loading ? (
+            <div className={cn("col-span-4", "text-white/70", "text-sm")}>
+              Loading ads…
+            </div>
+          ) : (
+            ads.map((ad, i) => {
+              const locked = ad.is_master_ad && !isMaster;
 
-            return (
-              <div
-                key={ad.id}
-                draggable={reorderMode && !locked}
-                onDragStart={e => handleDragStart(e, i, locked)}
-                onDragOver={handleDragOver}
-                onDrop={e => handleDrop(e, i, locked)}
-                className={cn(
-                  "relative rounded-lg overflow-hidden border cursor-pointer select-none",
-                  locked ? "border-amber-400/40 bg-amber-700/20 opacity-80"
-                        : "border-white/10 bg-white/5"
-                )}
-              >
-
-                {locked && (
-                  <div className={cn('absolute', 'top-2', 'right-2', 'bg-amber-600/90', 'text-white', 'p-1', 'rounded-full', 'z-20')}>
-                    <Lock size={14} />
-                  </div>
-                )}
-
-                {(isMaster || ad.is_host_ad) && (
-                  <button
-                    onClick={() => deleteAd(ad)}
-                    className={cn('absolute', 'top-2', 'left-2', 'bg-red-600/80', 'text-white', 'p-1', 'rounded-full', 'z-20')}
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                )}
-
-                {/* 16:9 Preview */}
-                <div className={cn('w-full', 'aspect-video', 'relative')}>
-                  {ad.type === "image" ? (
-                    <Image
-                      src={ad.url}
-                      alt=""
-                      fill
-                      className={cn('object-cover', 'rounded-md')}
-                    />
-                  ) : (
-                    <video
-                      src={ad.url}
-                      muted
-                      className={cn('absolute', 'inset-0', 'w-full', 'h-full', 'object-cover', 'rounded-md')}
-                    />
+              return (
+                <div
+                  key={ad.id}
+                  draggable={reorderMode && !locked}
+                  onDragStart={(e) => handleDragStart(e, i, locked)}
+                  onDragOver={handleDragOver}
+                  onDrop={(e) => handleDrop(e, i, locked)}
+                  className={cn(
+                    "relative rounded-lg overflow-hidden border cursor-pointer select-none",
+                    locked
+                      ? "border-amber-400/40 bg-amber-700/20 opacity-80"
+                      : "border-white/10 bg-white/5"
                   )}
-                </div>
+                >
+                  {locked && (
+                    <div
+                      className={cn(
+                        "absolute",
+                        "top-2",
+                        "right-2",
+                        "bg-amber-600/90",
+                        "text-white",
+                        "p-1",
+                        "rounded-full",
+                        "z-20"
+                      )}
+                    >
+                      <Lock size={14} />
+                    </div>
+                  )}
 
-                {/* Order badge */}
-                <div className={cn('absolute', 'bottom-1', 'left-1', 'bg-black/50', 'text-white', 'text-xs', 'px-2', 'py-0.5', 'rounded')}>
-                  #{i + 1}
+                  {(isMaster || ad.is_host_ad) && (
+                    <button
+                      onClick={() => deleteAd(ad)}
+                      className={cn(
+                        "absolute",
+                        "top-2",
+                        "left-2",
+                        "bg-red-600/80",
+                        "text-white",
+                        "p-1",
+                        "rounded-full",
+                        "z-20"
+                      )}
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  )}
+
+                  {/* 16:9 Preview */}
+                  <div className={cn("w-full", "aspect-video", "relative")}>
+                    {ad.type === "image" ? (
+                      <Image
+                        src={ad.url}
+                        alt=""
+                        fill
+                        className={cn("object-cover", "rounded-md")}
+                      />
+                    ) : (
+                      <video
+                        src={ad.url}
+                        muted
+                        className={cn(
+                          "absolute",
+                          "inset-0",
+                          "w-full",
+                          "h-full",
+                          "object-cover",
+                          "rounded-md"
+                        )}
+                      />
+                    )}
+                  </div>
+
+                  {/* Order badge */}
+                  <div
+                    className={cn(
+                      "absolute",
+                      "bottom-1",
+                      "left-1",
+                      "bg-black/50",
+                      "text-white",
+                      "text-xs",
+                      "px-2",
+                      "py-0.5",
+                      "rounded"
+                    )}
+                  >
+                    #{i + 1}
+                  </div>
                 </div>
-              </div>
-            );
-          })}
+              );
+            })
+          )}
         </div>
 
         {/* SAVE ORDER BUTTON */}
@@ -430,12 +603,19 @@ export default function AdsManagerModal({ host, onClose }: AdsManagerModalProps)
           <button
             disabled={savingOrder}
             onClick={saveOrder}
-            className={cn('mt-4', 'w-full', 'py-2', 'bg-blue-600', 'hover:bg-blue-500', 'text-white', 'rounded-lg')}
+            className={cn(
+              "mt-4",
+              "w-full",
+              "py-2",
+              "bg-blue-600",
+              "hover:bg-blue-500",
+              "text-white",
+              "rounded-lg"
+            )}
           >
             {savingOrder ? "Saving…" : "Save Order"}
           </button>
         )}
-
       </div>
     </div>
   );
