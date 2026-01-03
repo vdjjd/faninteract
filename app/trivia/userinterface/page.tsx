@@ -93,6 +93,22 @@ function pickSelfieUrl(guest: any): string | null {
   );
 }
 
+// ✅ PATCH: prevent leaderboard flicker / pointless state churn
+function sameLeaderRows(a: LeaderRow[], b: LeaderRow[]) {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (
+      a[i].rank !== b[i].rank ||
+      a[i].name !== b[i].name ||
+      a[i].points !== b[i].points ||
+      (a[i].selfieUrl || null) !== (b[i].selfieUrl || null)
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
 /* ---------------------------------------------------------
    Component
 --------------------------------------------------------- */
@@ -153,6 +169,10 @@ export default function TriviaUserInterfacePage() {
   // lock ad to question number (prevents mid-question jumping)
   const [adLockedQuestion, setAdLockedQuestion] = useState<number>(1);
   const [lockedAdIndex, setLockedAdIndex] = useState<number>(0);
+
+  // ✅ PATCH: leaderboard flicker guard
+  const lastLeaderRowsRef = useRef<LeaderRow[]>([]);
+  const leaderScrollRef = useRef<HTMLDivElement | null>(null);
 
   /* ---------------------------------------------------------
      ✅ COUNTDOWN TIMER (LOCKED TO INACTIVE WALL)
@@ -388,7 +408,6 @@ export default function TriviaUserInterfacePage() {
 
   /* ---------------------------------------------------------
      ✅ Subscribe to trivia_cards countdown fields (LOCKS TO INACTIVE WALL)
-     (does not change existing polling behavior for ads_enabled)
   --------------------------------------------------------- */
   useEffect(() => {
     if (!gameId) return;
@@ -452,9 +471,6 @@ export default function TriviaUserInterfacePage() {
 
   /* ---------------------------------------------------------
      Load Slide Ads when allowed (GLOBAL + TRIVIA)
-     IMPORTANT: order MUST match Ad Manager:
-       global_order_index asc, then order_index asc
-     IMPORTANT: include ALL types (image/video)
   --------------------------------------------------------- */
   useEffect(() => {
     if (!hostRow?.id) return;
@@ -594,7 +610,6 @@ export default function TriviaUserInterfacePage() {
 
   /* ---------------------------------------------------------
      Advance ad index ONLY when question changes
-     and preserve exact array order from ad manager
   --------------------------------------------------------- */
   useEffect(() => {
     if (!adsEnabled) return;
@@ -609,11 +624,11 @@ export default function TriviaUserInterfacePage() {
 
   /* ---------------------------------------------------------
      Follow wall phase
+     ✅ PATCH: remove forced setLeaderLoading(true) to stop flicker
   --------------------------------------------------------- */
   useEffect(() => {
     if (wallPhase === "leaderboard") {
       setView("leaderboard");
-      setLeaderLoading(true);
     } else {
       setView("question");
     }
@@ -631,6 +646,7 @@ export default function TriviaUserInterfacePage() {
     if (!currentQuestion?.id) return;
 
     setLeaderRows([]);
+    lastLeaderRowsRef.current = [];
     setLeaderLoading(false);
 
     setSelectedIndex(null);
@@ -740,11 +756,12 @@ export default function TriviaUserInterfacePage() {
   }, [playerId, currentQuestion?.id]);
 
   /* ---------------------------------------------------------
-     ✅ Load leaderboard when wallPhase === 'leaderboard'
+     ✅ Leaderboard loader (ONLY players who have points)
      PATCHES:
-     - include approved + active players
-     - show players even when all points are 0
-     - remove leaderRows.length dependency to avoid rerun loops
+     - filter to points > 0
+     - rank after filtering
+     - avoid flicker by only setting state when rows changed
+     - poll slower to reduce churn
   --------------------------------------------------------- */
   useEffect(() => {
     if (!session?.id) return;
@@ -753,17 +770,20 @@ export default function TriviaUserInterfacePage() {
     let cancelled = false;
 
     async function loadLeaderboard() {
-      if (!leaderRows.length) setLeaderLoading(true);
+      if (lastLeaderRowsRef.current.length === 0) setLeaderLoading(true);
 
       const { data: players, error: playersErr } = await supabase
         .from("trivia_players")
         .select("id,status,guest_id,display_name,photo_url")
         .eq("session_id", session.id)
-        .in("status", ["approved", "active"]); // ✅ PATCH
+        .in("status", ["approved", "active"]);
 
       if (playersErr || !players || players.length === 0) {
         if (!cancelled) {
-          setLeaderRows([]);
+          if (!sameLeaderRows([], lastLeaderRowsRef.current)) {
+            lastLeaderRowsRef.current = [];
+            setLeaderRows([]);
+          }
           setLeaderLoading(false);
         }
         return;
@@ -785,8 +805,7 @@ export default function TriviaUserInterfacePage() {
 
       const totals = new Map<string, number>();
       for (const a of answers || []) {
-        const pts =
-          typeof (a as any).points === "number" ? (a as any).points : 0;
+        const pts = typeof (a as any).points === "number" ? (a as any).points : 0;
         totals.set(
           (a as any).player_id,
           (totals.get((a as any).player_id) || 0) + pts
@@ -818,6 +837,7 @@ export default function TriviaUserInterfacePage() {
         }
       }
 
+      // Build rows, then FILTER points > 0
       const built: LeaderRow[] = players
         .map((p: any) => {
           const guest = p.guest_id ? guestMap.get(p.guest_id) : undefined;
@@ -831,25 +851,85 @@ export default function TriviaUserInterfacePage() {
             selfieUrl: safeSelfie,
           };
         })
-        .sort((a: any, b: any) => b.points - a.points)
-        .map((r: any, idx: number) => ({ ...r, rank: idx + 1 }));
+        .filter((r) => r.points > 0) // ✅ ONLY players with points
+        .sort((a, b) => b.points - a.points)
+        .map((r, idx) => ({ ...r, rank: idx + 1 }));
 
-      // ✅ PATCH: do NOT wipe leaderboard when points are all zero
       if (!cancelled) {
-        setLeaderRows(built);
+        if (!sameLeaderRows(built, lastLeaderRowsRef.current)) {
+          lastLeaderRowsRef.current = built;
+          setLeaderRows(built);
+        }
         setLeaderLoading(false);
       }
     }
 
     loadLeaderboard();
-    const id = window.setInterval(loadLeaderboard, 1000);
+    const id = window.setInterval(loadLeaderboard, 2500);
 
     return () => {
       cancelled = true;
       window.clearInterval(id);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session?.id, wallPhase]); // ✅ PATCH
+  }, [session?.id, wallPhase]);
+
+  /* ---------------------------------------------------------
+     ✅ Auto-scroll leaderboard down then back up (when list is long)
+     - only runs in leaderboard view
+     - pauses briefly at top/bottom
+  --------------------------------------------------------- */
+  useEffect(() => {
+    if (view !== "leaderboard") return;
+
+    const el = leaderScrollRef.current;
+    if (!el) return;
+
+    // only bother if we can actually scroll
+    const canScroll = el.scrollHeight - el.clientHeight > 8;
+    if (!canScroll) return;
+
+    let cancelled = false;
+    let dir: 1 | -1 = 1;
+    let pauseUntil = 0;
+
+    const stepPx = 1.2; // speed
+    const tickMs = 22;
+
+    const tick = () => {
+      if (cancelled) return;
+
+      const now = Date.now();
+      if (now < pauseUntil) return;
+
+      const max = el.scrollHeight - el.clientHeight;
+      const next = el.scrollTop + dir * stepPx;
+
+      // bottom
+      if (next >= max) {
+        el.scrollTop = max;
+        dir = -1;
+        pauseUntil = now + 850;
+        return;
+      }
+
+      // top
+      if (next <= 0) {
+        el.scrollTop = 0;
+        dir = 1;
+        pauseUntil = now + 850;
+        return;
+      }
+
+      el.scrollTop = next;
+    };
+
+    const id = window.setInterval(tick, tickMs);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [view, leaderRows.length]);
 
   /* ---------------------------------------------------------
      Answer submission
@@ -1141,6 +1221,7 @@ export default function TriviaUserInterfacePage() {
 
         {/* ANSWERS / LEADERBOARD LIST */}
         <div
+          ref={view === "leaderboard" ? leaderScrollRef : undefined}
           style={{
             display: "grid",
             gap: 10,
@@ -1151,7 +1232,6 @@ export default function TriviaUserInterfacePage() {
             paddingRight: 2,
           }}
         >
-          {/* ✅ PATCH: render leaderboard rows on phone UI */}
           {view === "leaderboard" && (
             <>
               {leaderLoading && (
@@ -1180,7 +1260,7 @@ export default function TriviaUserInterfacePage() {
                     opacity: 0.9,
                   }}
                 >
-                  No players yet.
+                  No scores yet.
                 </div>
               )}
 
@@ -1277,7 +1357,6 @@ export default function TriviaUserInterfacePage() {
                 typeof currentQuestion.correct_index === "number" &&
                 idx === currentQuestion.correct_index;
 
-              // ✅ countdown lock added (only change here)
               const disabled =
                 hasAnswered ||
                 locked ||
