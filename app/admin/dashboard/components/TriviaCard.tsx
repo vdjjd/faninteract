@@ -94,6 +94,12 @@ export default function TriviaCard({
   const [requireSelfie, setRequireSelfie] = useState<boolean>(
     trivia?.require_selfie ?? true
   );
+
+  // ✅ NEW: Ads toggle for phone UI
+  const [adsEnabled, setAdsEnabled] = useState<boolean>(
+    !!trivia?.ads_enabled
+  );
+
   const [savingSettings, setSavingSettings] = useState(false);
 
   /* ------------------------------------------------------------
@@ -146,6 +152,8 @@ export default function TriviaCard({
     setPlayMode(trivia?.play_mode || "auto");
     setScoringMode(trivia?.scoring_mode || "100s");
     setRequireSelfie(trivia?.require_selfie ?? true);
+    setAdsEnabled(!!trivia?.ads_enabled);
+
     setCardStatus(trivia?.status);
     setCardCountdownActive(!!trivia?.countdown_active);
   }, [
@@ -154,6 +162,7 @@ export default function TriviaCard({
     trivia?.play_mode,
     trivia?.scoring_mode,
     trivia?.require_selfie,
+    trivia?.ads_enabled,
     trivia?.status,
     trivia?.countdown_active,
   ]);
@@ -169,7 +178,9 @@ export default function TriviaCard({
 
       const { data, error } = await supabase
         .from("trivia_cards")
-        .select("status, countdown_active, background_type, background_value")
+        .select(
+          "status, countdown_active, background_type, background_value, ads_enabled"
+        )
         .eq("id", trivia.id)
         .maybeSingle();
 
@@ -181,9 +192,13 @@ export default function TriviaCard({
       if (!isMounted) return;
       setCardStatus(data.status);
       setCardCountdownActive(!!data.countdown_active);
+      setAdsEnabled(!!data.ads_enabled);
+
       // also keep background in sync if it changes remotely
       (trivia.background_type = data.background_type),
         (trivia.background_value = data.background_value);
+      // keep local trivia object roughly consistent (optional)
+      (trivia.ads_enabled = data.ads_enabled);
     };
 
     pollCard();
@@ -200,6 +215,7 @@ export default function TriviaCard({
     play_mode?: string;
     scoring_mode?: string;
     require_selfie?: boolean;
+    ads_enabled?: boolean; // ✅ NEW
   }) {
     try {
       setSavingSettings(true);
@@ -236,6 +252,13 @@ export default function TriviaCard({
     const value = e.target.value === "on";
     setRequireSelfie(value);
     await updateTriviaSettings({ require_selfie: value });
+  }
+
+  // ✅ NEW: ads enabled toggle
+  async function handleAdsEnabledChange(e: any) {
+    const value = e.target.value === "on";
+    setAdsEnabled(value);
+    await updateTriviaSettings({ ads_enabled: value });
   }
 
   /* ------------------------------------------------------------
@@ -913,7 +936,7 @@ export default function TriviaCard({
                 "flex",
                 "flex-col",
                 "items-center",
-                "justify-center",
+                "justify-content",
                 "text-sm"
               )}
             >
@@ -1269,6 +1292,39 @@ export default function TriviaCard({
             <select
               value={requireSelfie ? "on" : "off"}
               onChange={handleRequireSelfieChange}
+              className={cn(
+                "bg-gray-800",
+                "border",
+                "border-white/20",
+                "rounded-md",
+                "px-3",
+                "py-1.5",
+                "text-sm",
+                "outline-none",
+                "focus:border-blue-400"
+              )}
+            >
+              <option value="on">On</option>
+              <option value="off">Off</option>
+            </select>
+          </div>
+
+          {/* ✅ NEW: Ads toggle */}
+          <div
+            className={cn("flex", "items-center", "justify-between", "gap-4")}
+          >
+            <div>
+              <p className={cn("text-sm", "font-semibold")}>
+                Show Ads on Phone
+              </p>
+              <p className={cn("text-xs", "opacity-70")}>
+                When enabled, the phone UI shows an ad image that changes each
+                new question (pulled from Ad Manager slides).
+              </p>
+            </div>
+            <select
+              value={adsEnabled ? "on" : "off"}
+              onChange={handleAdsEnabledChange}
               className={cn(
                 "bg-gray-800",
                 "border",
