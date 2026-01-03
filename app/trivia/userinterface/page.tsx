@@ -48,6 +48,9 @@ type HostRow = {
   branding_logo_url: string | null;
   logo_url: string | null;
   injector_enabled: boolean | null;
+
+  // ✅ NEW: trivia ad slot toggle (you added this column)
+  trivia_ads_enabled?: boolean | null;
 };
 
 type SlideAd = {
@@ -144,10 +147,15 @@ export default function TriviaUserInterfacePage() {
   // ✅ server-time offset to prevent drift
   const [serverOffsetMs, setServerOffsetMs] = useState<number>(0);
 
-  // ✅ NEW: ads (phone changes per-question)
+  // ✅ Ads (phone changes per-question)
   const [hostRow, setHostRow] = useState<HostRow | null>(null);
   const [ads, setAds] = useState<SlideAd[]>([]);
   const [adsLoading, setAdsLoading] = useState(false);
+
+  // ✅ Fade ad on change
+  const [displayAd, setDisplayAd] = useState<SlideAd | null>(null);
+  const [adOpacity, setAdOpacity] = useState<number>(1);
+  const adFadeTimerRef = useRef<number | null>(null);
 
   /* ---------------------------------------------------------
      ✅ Server clock sync (prevents drift)
@@ -243,12 +251,14 @@ export default function TriviaUserInterfacePage() {
 
       setTrivia(card);
 
-      // 2️⃣ Host row (logo + master_id + injector_enabled)
+      // 2️⃣ Host row (logo + master_id + injector_enabled + trivia_ads_enabled)
       let logo = "/faninteractlogo.png";
       if (card.host_id) {
         const { data: host, error: hostErr } = await supabase
           .from("hosts")
-          .select("id,master_id,branding_logo_url,logo_url,injector_enabled")
+          .select(
+            "id,master_id,branding_logo_url,logo_url,injector_enabled,trivia_ads_enabled"
+          )
           .eq("id", card.host_id)
           .maybeSingle();
 
@@ -343,6 +353,14 @@ export default function TriviaUserInterfacePage() {
   }, [gameId, profile?.id, router]);
 
   /* ---------------------------------------------------------
+     ✅ Show/hide ad slot entirely
+     - OFF => no placeholder, nothing rendered
+--------------------------------------------------------- */
+  const showAdSlot = useMemo(() => {
+    return Boolean(hostRow?.injector_enabled) && Boolean(hostRow?.trivia_ads_enabled);
+  }, [hostRow?.injector_enabled, hostRow?.trivia_ads_enabled]);
+
+  /* ---------------------------------------------------------
      ✅ Load Slide Ads once we have hostRow
      (master + host merged like AdsManagerModal)
      Phone behavior: change ad per question
@@ -356,8 +374,8 @@ export default function TriviaUserInterfacePage() {
       try {
         setAdsLoading(true);
 
-        // If injector disabled, just clear ads.
-        if (!hostRow.injector_enabled) {
+        // If slot disabled, clear ads.
+        if (!showAdSlot) {
           if (!cancelled) setAds([]);
           return;
         }
@@ -402,7 +420,7 @@ export default function TriviaUserInterfacePage() {
     return () => {
       cancelled = true;
     };
-  }, [hostRow?.id, hostRow?.master_id, hostRow?.injector_enabled]);
+  }, [hostRow?.id, hostRow?.master_id, showAdSlot]);
 
   /* ---------------------------------------------------------
      Poll trivia_sessions for current_question / status / wall_phase
@@ -471,6 +489,53 @@ export default function TriviaUserInterfacePage() {
     const idx = ((qNum - 1) % ads.length + ads.length) % ads.length;
     return ads[idx] || null;
   }, [ads, session?.current_question]);
+
+  /* ---------------------------------------------------------
+     ✅ Smooth fade between ads (fade out -> swap -> fade in)
+  --------------------------------------------------------- */
+  useEffect(() => {
+    if (adFadeTimerRef.current) {
+      window.clearTimeout(adFadeTimerRef.current);
+      adFadeTimerRef.current = null;
+    }
+
+    // slot is OFF => nothing
+    if (!showAdSlot) {
+      setDisplayAd(null);
+      setAdOpacity(1);
+      return;
+    }
+
+    // loading => don’t animate
+    if (adsLoading) return;
+
+    // first paint
+    if (!displayAd) {
+      setDisplayAd(currentAd);
+      setAdOpacity(1);
+      return;
+    }
+
+    // no change
+    if ((currentAd?.id || null) === (displayAd?.id || null)) return;
+
+    // fade out
+    setAdOpacity(0);
+
+    // swap after fade-out then fade-in
+    adFadeTimerRef.current = window.setTimeout(() => {
+      setDisplayAd(currentAd);
+      requestAnimationFrame(() => setAdOpacity(1));
+    }, 180);
+
+    return () => {
+      if (adFadeTimerRef.current) {
+        window.clearTimeout(adFadeTimerRef.current);
+        adFadeTimerRef.current = null;
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentAd?.id, showAdSlot, adsLoading]);
 
   /* ---------------------------------------------------------
      ✅ Follow wall phase EXACTLY (no client phase timers)
@@ -1228,63 +1293,67 @@ export default function TriviaUserInterfacePage() {
             })}
         </div>
 
-        {/* ✅ AD SLOT (CHANGES PER QUESTION) */}
-        <div
-          style={{
-            marginBottom: 10,
-            padding: 0,
-            borderRadius: 16,
-            border: "1px solid rgba(148,163,184,0.35)",
-            background: "rgba(15,23,42,0.65)",
-            minHeight: 160,
-            overflow: "hidden",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            position: "relative",
-          }}
-        >
-          {adsLoading ? (
-            <div style={{ fontSize: "0.95rem", opacity: 0.9, padding: 16 }}>
-              Loading ad…
-            </div>
-          ) : currentAd?.url ? (
-            <img
-              src={currentAd.url}
-              alt="Sponsored"
-              style={{
-                width: "100%",
-                height: 160,
-                objectFit: "cover",
-                display: "block",
-              }}
-            />
-          ) : (
-            <div style={{ fontSize: "0.95rem", opacity: 0.95, padding: 16 }}>
-              AD SLOT
-            </div>
-          )}
+        {/* ✅ AD SLOT (ONLY WHEN ENABLED) */}
+        {showAdSlot && (
+          <div
+            style={{
+              marginBottom: 10,
+              padding: 0,
+              borderRadius: 16,
+              border: "1px solid rgba(148,163,184,0.35)",
+              background: "rgba(0,0,0,0.35)",
+              height: 160,
+              overflow: "hidden",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              position: "relative",
+            }}
+          >
+            {adsLoading ? (
+              <div style={{ fontSize: "0.95rem", opacity: 0.9, padding: 16 }}>
+                Loading ad…
+              </div>
+            ) : displayAd?.url ? (
+              <img
+                src={displayAd.url}
+                alt="Sponsored"
+                style={{
+                  width: "100%",
+                  height: "100%",
+                  objectFit: "contain", // ✅ no cropping
+                  objectPosition: "center",
+                  display: "block",
 
-          {/* optional tiny label */}
-          {currentAd?.url && (
-            <div
-              style={{
-                position: "absolute",
-                bottom: 8,
-                right: 10,
-                padding: "3px 8px",
-                borderRadius: 999,
-                background: "rgba(0,0,0,0.55)",
-                border: "1px solid rgba(255,255,255,0.18)",
-                fontSize: "0.7rem",
-                fontWeight: 800,
-                letterSpacing: 0.2,
-              }}
-            >
-              Sponsored
-            </div>
-          )}
-        </div>
+                  // ✅ fade
+                  opacity: adOpacity,
+                  transition: "opacity 220ms ease",
+                }}
+              />
+            ) : null}
+
+            {!!displayAd?.url && (
+              <div
+                style={{
+                  position: "absolute",
+                  bottom: 8,
+                  right: 10,
+                  padding: "3px 8px",
+                  borderRadius: 999,
+                  background: "rgba(0,0,0,0.55)",
+                  border: "1px solid rgba(255,255,255,0.18)",
+                  fontSize: "0.7rem",
+                  fontWeight: 800,
+                  letterSpacing: 0.2,
+                  opacity: adOpacity,
+                  transition: "opacity 220ms ease",
+                }}
+              >
+                Sponsored
+              </div>
+            )}
+          </div>
+        )}
 
         {/* FOOTER STATUS */}
         <div
