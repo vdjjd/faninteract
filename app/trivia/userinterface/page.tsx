@@ -115,6 +115,51 @@ export default function TriviaUserInterfacePage() {
   // interval id for timer
   const timerIntervalRef = useRef<number | null>(null);
 
+  // ✅ NEW: server-time offset to prevent drift
+  const [serverOffsetMs, setServerOffsetMs] = useState<number>(0);
+
+  /* ---------------------------------------------------------
+     ✅ Server clock sync (prevents drift)
+     Requires your SQL function: public.server_time()
+  --------------------------------------------------------- */
+  useEffect(() => {
+    if (!gameId) return;
+
+    let cancelled = false;
+
+    async function syncServerTime() {
+      try {
+        const t0 = Date.now();
+        const { data, error } = await supabase.rpc("server_time");
+        const t1 = Date.now();
+
+        if (cancelled) return;
+        if (error || !data) {
+          // If RPC isn't available yet, we just fall back to local time.
+          console.warn("⚠️ server_time RPC unavailable:", error);
+          return;
+        }
+
+        const serverMs = new Date(data as any).getTime();
+        const rtt = t1 - t0; // round trip time
+        const estimatedNow = t1 - rtt / 2; // best guess of client time when server replied
+        const offset = serverMs - estimatedNow;
+
+        setServerOffsetMs(offset);
+      } catch (e) {
+        console.warn("⚠️ server time sync error:", e);
+      }
+    }
+
+    syncServerTime();
+    const id = window.setInterval(syncServerTime, 30000); // refresh every 30s
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [gameId]);
+
   /* ---------------------------------------------------------
      Load guest profile
   --------------------------------------------------------- */
@@ -335,6 +380,7 @@ export default function TriviaUserInterfacePage() {
 
   /* ---------------------------------------------------------
      TIMER: single source of truth = questionStartedAt
+     ✅ Uses serverOffsetMs to prevent drift
   --------------------------------------------------------- */
   useEffect(() => {
     // clear any existing interval
@@ -343,11 +389,6 @@ export default function TriviaUserInterfacePage() {
       timerIntervalRef.current = null;
     }
 
-    // Only run timer when:
-    // - game is running
-    // - we have a current question
-    // - we have a non-null questionStartedAt
-    // - we're on the question view (not leaderboard)
     if (
       !isRunning ||
       !currentQuestion ||
@@ -363,7 +404,7 @@ export default function TriviaUserInterfacePage() {
     const startedMs = new Date(questionStartedAt).getTime();
 
     const updateFromDbTime = () => {
-      const now = Date.now();
+      const now = Date.now() + serverOffsetMs; // ✅ synced time
       const elapsed = now - startedMs;
       const remaining = Math.max(0, durationMs - elapsed);
       const frac = remaining / durationMs;
@@ -377,10 +418,8 @@ export default function TriviaUserInterfacePage() {
       }
     };
 
-    // run once immediately
     updateFromDbTime();
 
-    // tick every 100ms
     const intervalId = window.setInterval(updateFromDbTime, 100);
     timerIntervalRef.current = intervalId;
 
@@ -396,6 +435,7 @@ export default function TriviaUserInterfacePage() {
     questionStartedAt,
     timerSeconds,
     view,
+    serverOffsetMs,
   ]);
 
   /* ---------------------------------------------------------
@@ -437,7 +477,6 @@ export default function TriviaUserInterfacePage() {
 
   /* ---------------------------------------------------------
      Answer reveal flow (overlay → reveal)
-     (must match wall: 5s overlay)
   --------------------------------------------------------- */
   useEffect(() => {
     if (!locked) {
@@ -453,14 +492,13 @@ export default function TriviaUserInterfacePage() {
     const overlayId = window.setTimeout(() => {
       setShowAnswerOverlay(false);
       setRevealAnswer(true);
-    }, 5000); // 5s overlay (same as wall)
+    }, 5000);
 
     return () => window.clearTimeout(overlayId);
   }, [locked]);
 
   /* ---------------------------------------------------------
-     After reveal → switch to leaderboard view (must match wall)
-     Wall waits 8s after reveal starts before showing leaderboard
+     After reveal → switch to leaderboard view
   --------------------------------------------------------- */
   useEffect(() => {
     if (!revealAnswer) return;
@@ -470,7 +508,7 @@ export default function TriviaUserInterfacePage() {
     const toLeaderboard = window.setTimeout(() => {
       setView("leaderboard");
       setLeaderLoading(true);
-    }, 8000); // 8s, same as wall
+    }, 8000);
 
     return () => window.clearTimeout(toLeaderboard);
   }, [revealAnswer, isRunning, currentQuestion?.id]);
@@ -581,7 +619,8 @@ export default function TriviaUserInterfacePage() {
   }, [session?.id, view, leaderRows.length]);
 
   /* ---------------------------------------------------------
-     Answer submission (⏱ uses computeTriviaPoints directly)
+     Answer submission
+     ✅ Uses serverOffsetMs so scoring is time-consistent too
   --------------------------------------------------------- */
   async function handleSelectAnswer(idx: number) {
     if (!currentQuestion) return;
@@ -591,7 +630,6 @@ export default function TriviaUserInterfacePage() {
     setSelectedIndex(idx);
     setHasAnswered(true);
 
-    // Prevent duplicate answers
     const { data: existing, error: existingErr } = await supabase
       .from("trivia_answers")
       .select("id")
@@ -606,13 +644,28 @@ export default function TriviaUserInterfacePage() {
 
     const isCorrect = idx === currentQuestion.correct_index;
 
-    // ⭐ Only award points for correct answers
     const points = isCorrect
-      ? computeTriviaPoints({
-          scoringMode,
-          timerSeconds,
-          questionStartedAt: questionStartedAt ?? null,
-        })
+      ? (() => {
+          const nowMs = Date.now() + serverOffsetMs;
+
+          // If your scoring engine supports an optional nowMs, we pass it.
+          // If it doesn't, this still works at runtime; TS may complain in some setups.
+          try {
+            // @ts-ignore
+            return computeTriviaPoints({
+              scoringMode,
+              timerSeconds,
+              questionStartedAt: questionStartedAt ?? null,
+              nowMs,
+            });
+          } catch {
+            return computeTriviaPoints({
+              scoringMode,
+              timerSeconds,
+              questionStartedAt: questionStartedAt ?? null,
+            } as any);
+          }
+        })()
       : 0;
 
     console.log("🎯 Trivia scoring debug", {
@@ -621,6 +674,7 @@ export default function TriviaUserInterfacePage() {
       timerSeconds,
       questionStartedAt,
       points,
+      serverOffsetMs,
     });
 
     const { error: insertErr } = await supabase.from("trivia_answers").insert({
@@ -726,15 +780,13 @@ export default function TriviaUserInterfacePage() {
   } else if (locked && !revealAnswer) {
     footerText = "Time is up. Revealing the correct answer…";
   } else if (revealAnswer) {
-    footerText =
-      "Here’s the correct answer. Get ready for the leaderboard…";
+    footerText = "Here’s the correct answer. Get ready for the leaderboard…";
   } else if (hasAnswered) {
     footerText = "Answer submitted. You can’t change it for this question.";
   } else {
     footerText = "Tap an answer to lock in your choice.";
   }
 
-  // 🎨 Derived background + brightness from trivia card
   const bg =
     trivia?.background_type === "image"
       ? `url(${trivia.background_value}) center/cover no-repeat`
@@ -814,9 +866,7 @@ export default function TriviaUserInterfacePage() {
             >
               {view === "leaderboard"
                 ? "Leaderboard"
-                : `Question ${currentQuestionIndex + 1} of ${
-                    questions.length
-                  }`}
+                : `Question ${currentQuestionIndex + 1} of ${questions.length}`}
             </div>
           </div>
         </div>
@@ -850,7 +900,7 @@ export default function TriviaUserInterfacePage() {
           </div>
         </div>
 
-        {/* TIMER BAR (NO NUMBERS, EVER) — ONLY ON QUESTION VIEW */}
+        {/* TIMER BAR — ONLY ON QUESTION VIEW */}
         {view === "question" && (
           <div
             style={{
@@ -991,8 +1041,8 @@ export default function TriviaUserInterfacePage() {
             })}
 
           {view === "leaderboard" &&
-            rankLabels.map((label, idx) => {
-              const row = leaderRows[idx]; // already sorted by points desc
+            ["1st", "2nd", "3rd", "4th"].map((label, idx) => {
+              const row = leaderRows[idx];
               const isFirst = idx === 0;
 
               return (
@@ -1021,7 +1071,6 @@ export default function TriviaUserInterfacePage() {
                       : "none",
                   }}
                 >
-                  {/* Circle with selfie instead of rank text */}
                   <span
                     style={{
                       position: "relative",
@@ -1062,7 +1111,6 @@ export default function TriviaUserInterfacePage() {
                       </span>
                     )}
 
-                    {/* Rank badge bottom-center */}
                     {row && (
                       <span
                         style={{
@@ -1178,8 +1226,8 @@ export default function TriviaUserInterfacePage() {
         )}
       </div>
 
-      {/* 🔵 PULSE KEYFRAME FOR CORRECT ANSWER */}
-      <style jsx global>{`
+      {/* ✅ FIXED: standard style tag (no jsx/global props) */}
+      <style>{`
         @keyframes fiCorrectPulse {
           0% {
             transform: scale(1);

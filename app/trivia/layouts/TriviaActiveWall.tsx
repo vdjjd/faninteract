@@ -686,13 +686,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
     }, 8000);
 
     return () => window.clearTimeout(toNextView);
-  }, [
-    revealAnswer,
-    isRunning,
-    currentQuestionNumber,
-    totalQuestions,
-    view,
-  ]);
+  }, [revealAnswer, isRunning, currentQuestionNumber, totalQuestions, view]);
 
   /* -------------------------------------------------- */
   /* LEADERBOARD VIEW TIMER (8s) THEN ADVANCE QUESTION   */
@@ -709,14 +703,25 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
           return;
         }
 
-        await supabase
-          .from("trivia_sessions")
-          .update({
-            current_question: currentQuestionNumber + 1,
-            question_started_at: new Date().toISOString(),
-          })
-          .eq("trivia_card_id", trivia.id)
-          .eq("status", "running");
+        // ✅ PATCH: advance via RPC so question_started_at is SERVER "now()"
+        const { error: rpcErr } = await supabase.rpc(
+          "trivia_advance_question",
+          { p_trivia_card_id: trivia.id }
+        );
+
+        if (rpcErr) {
+          console.error("❌ trivia_advance_question RPC error:", rpcErr);
+
+          // Fallback (keeps game alive, but uses client time)
+          await supabase
+            .from("trivia_sessions")
+            .update({
+              current_question: currentQuestionNumber + 1,
+              question_started_at: new Date().toISOString(),
+            })
+            .eq("trivia_card_id", trivia.id)
+            .eq("status", "running");
+        }
 
         setView("question");
       } catch (err) {
@@ -813,8 +818,8 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
     <>
       <div
         style={{
-          background: bg, // ✅ uses DB-driven background
-          filter: `brightness(${brightness}%)`, // ✅ brightness from DB
+          background: bg,
+          filter: `brightness(${brightness}%)`,
           width: "100vw",
           height: "100vh",
           display: "flex",
@@ -1378,7 +1383,8 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
         )}
       </div>
 
-      <style jsx global>{`
+      {/* ✅ FIXED: standard style tag (no jsx/global props) */}
+      <style>{`
         @keyframes fiAnswerGlow {
           0% {
             transform: scale(1);
