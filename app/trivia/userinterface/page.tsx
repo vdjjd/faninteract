@@ -73,6 +73,9 @@ function pickSelfieUrl(guest: any): string | null {
 /* ---------------------------------------------------------
    Component
 --------------------------------------------------------- */
+const FALLBACK_BG =
+  "radial-gradient(circle at top,#1d4ed8 0,#020617 55%,#000 100%)";
+
 export default function TriviaUserInterfacePage() {
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -136,7 +139,7 @@ export default function TriviaUserInterfacePage() {
       setLoading(true);
       setLoadingMessage("Loading trivia game…");
 
-      // 1️⃣ Load trivia card (include host_id so we can pull logo)
+      // 1️⃣ Load trivia card (include host_id + background settings)
       const { data: card, error: cardErr } = await supabase
         .from("trivia_cards")
         .select(
@@ -145,7 +148,10 @@ export default function TriviaUserInterfacePage() {
           public_name,
           timer_seconds,
           scoring_mode,
-          host_id
+          host_id,
+          background_type,
+          background_value,
+          background_brightness
         `
         )
         .eq("id", gameId)
@@ -728,13 +734,24 @@ export default function TriviaUserInterfacePage() {
     footerText = "Tap an answer to lock in your choice.";
   }
 
+  // 🎨 Derived background + brightness from trivia card
+  const bg =
+    trivia?.background_type === "image"
+      ? `url(${trivia.background_value}) center/cover no-repeat`
+      : trivia?.background_value || FALLBACK_BG;
+
+  const brightness =
+    typeof trivia?.background_brightness === "number"
+      ? trivia.background_brightness
+      : 100;
+
   return (
     <>
       <div
         style={{
           minHeight: "100vh",
-          background:
-            "radial-gradient(circle at top,#1d4ed8 0,#020617 55%,#000 100%)",
+          background: bg,
+          filter: `brightness(${brightness}%)`,
           color: "#fff",
           padding: 20,
           display: "flex",
@@ -882,35 +899,35 @@ export default function TriviaUserInterfacePage() {
 
               const disabled = hasAnswered || locked;
 
-              let bg = "rgba(15,23,42,0.85)";
+              let bgBtn = "rgba(15,23,42,0.85)";
               let border = "1px solid rgba(148,163,184,0.4)";
-              let opacity = 1;
+              let opacityBtn = 1;
               let boxShadow = "none";
 
               const gotItRightPulse = revealAnswer && chosen && isCorrect;
 
               if (!revealAnswer && chosen) {
-                bg = "linear-gradient(90deg,#22c55e,#15803d)";
+                bgBtn = "linear-gradient(90deg,#22c55e,#15803d)";
                 border = "1px solid rgba(240,253,250,0.9)";
                 boxShadow = "0 0 12px rgba(74,222,128,0.6)";
               }
 
               if (revealAnswer) {
                 if (isCorrect) {
-                  bg = "linear-gradient(90deg,#22c55e,#16a34a)";
+                  bgBtn = "linear-gradient(90deg,#22c55e,#16a34a)";
                   border = "2px solid rgba(74,222,128,1)";
                   boxShadow = gotItRightPulse
                     ? "0 0 26px rgba(74,222,128,1)"
                     : "0 0 20px rgba(74,222,128,0.9)";
                 } else if (chosen && !isCorrect) {
-                  bg = "linear-gradient(90deg,#ef4444,#b91c1c)";
+                  bgBtn = "linear-gradient(90deg,#ef4444,#b91c1c)";
                   border = "2px solid rgba(248,113,113,1)";
                   boxShadow = "0 0 16px rgba(248,113,113,0.9)";
                 } else {
-                  opacity = 0.4;
+                  opacityBtn = 0.4;
                 }
               } else if (disabled && !chosen) {
-                opacity = 0.7;
+                opacityBtn = 0.7;
               }
 
               return (
@@ -922,9 +939,9 @@ export default function TriviaUserInterfacePage() {
                     width: "100%",
                     padding: "6px 12px",
                     borderRadius: 20,
-                    background: bg,
+                    background: bgBtn,
                     border,
-                    opacity,
+                    opacity: opacityBtn,
                     color: "#fff",
                     textAlign: "left",
                     display: "flex",

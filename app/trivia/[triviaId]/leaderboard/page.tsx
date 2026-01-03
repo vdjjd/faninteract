@@ -81,9 +81,11 @@ const UI = {
  * with your QR + logo overlays on the main wall.
  */
 const SAFE_BOUNDS = {
-  left: "18vw",  // move this right if QR still overlaps
+  left: "18vw", // move this right if QR still overlaps
   right: "18vw", // move this left if logo still overlaps
 };
+
+const FALLBACK_BG = "linear-gradient(to bottom right,#1b2735,#090a0f)";
 
 export default function TriviaLeaderboardPage() {
   const params = useParams<{ triviaId: string }>();
@@ -94,9 +96,88 @@ export default function TriviaLeaderboardPage() {
   const rowsRef = useRef<LeaderRow[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // 🎨 background from trivia card
+  const [bg, setBg] = useState<string>(FALLBACK_BG);
+  const [brightness, setBrightness] = useState<number>(100);
+
   // prevent double-advance
   const advanceLockRef = useRef(false);
 
+  /* -------------------------------------------------- */
+  /* BACKGROUND FROM trivia_cards                        */
+  /* -------------------------------------------------- */
+  useEffect(() => {
+    if (!triviaId) return;
+
+    let cancelled = false;
+
+    const applyBackgroundFromRow = (row: any | null) => {
+      if (!row) {
+        setBg(FALLBACK_BG);
+        setBrightness(100);
+        return;
+      }
+
+      const value =
+        row.background_type === "image"
+          ? `url(${row.background_value}) center/cover no-repeat`
+          : row.background_value || FALLBACK_BG;
+
+      setBg(value);
+      setBrightness(
+        typeof row.background_brightness === "number"
+          ? row.background_brightness
+          : 100
+      );
+    };
+
+    async function loadTriviaBg() {
+      const { data, error } = await supabase
+        .from("trivia_cards")
+        .select("background_type, background_value, background_brightness")
+        .eq("id", triviaId)
+        .maybeSingle();
+
+      if (cancelled) return;
+
+      if (!error && data) {
+        applyBackgroundFromRow(data);
+      } else {
+        applyBackgroundFromRow(null);
+      }
+    }
+
+    loadTriviaBg();
+
+    // Optional: live updates if host changes background mid-game
+    const channel = supabase
+      .channel(`leaderboard-trivia-${triviaId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "trivia_cards",
+          filter: `id=eq.${triviaId}`,
+        },
+        (payload: any) => {
+          if (cancelled) return;
+          const next = payload?.new;
+          if (!next) return;
+          applyBackgroundFromRow(next);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      cancelled = true;
+      supabase.removeChannel(channel);
+    };
+  }, [triviaId]);
+
+  /* -------------------------------------------------- */
+  /* LEADERBOARD DATA                                   */
+  /* -------------------------------------------------- */
   useEffect(() => {
     if (!triviaId) return;
 
@@ -279,7 +360,8 @@ export default function TriviaLeaderboardPage() {
       style={{
         width: "100vw",
         height: "100vh",
-        background: "linear-gradient(to bottom right,#1b2735,#090a0f)",
+        background: bg,
+        filter: `brightness(${brightness}%)`,
         color: "#fff",
         position: "relative",
         overflow: "hidden",
@@ -308,7 +390,7 @@ export default function TriviaLeaderboardPage() {
         style={{
           position: "absolute",
           top: UI.listTop,
-          left: SAFE_BOUNDS.left,   // 🔧 start to the right of QR
+          left: SAFE_BOUNDS.left, // 🔧 start to the right of QR
           right: SAFE_BOUNDS.right, // 🔧 end to the left of logo
           maxWidth: UI.maxWidth,
           margin: "0 auto",

@@ -28,6 +28,7 @@ const STEP_DURATION_MS = 5000; // 5 seconds between 3rd → 2nd → 1st
 
 const fallbackLogo = "/faninteractlogo.png";
 const fallbackPhoto = "/fallback.png";
+const FALLBACK_BG = "linear-gradient(135deg,#1b2735,#090a0f)";
 
 /* ---------- HELPERS (same logic flavor as wall) ---------- */
 
@@ -149,12 +150,35 @@ export default function TriviaPodum({ trivia }: TriviaPodiumProps) {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [loading, setLoading] = useState(true);
 
+  // 🎨 Background from trivia card
+  const [bg, setBg] = useState<string>(FALLBACK_BG);
+  const [brightness, setBrightness] = useState<number>(
+    trivia?.background_brightness ?? 100
+  );
+
   const logoSrc =
     trivia?.host?.branding_logo_url?.trim() ||
     trivia?.host?.logo_url?.trim() ||
     fallbackLogo;
 
   const title = trivia?.title || "Trivia Podium";
+
+  /* --- Apply background from trivia props --- */
+  useEffect(() => {
+    if (!trivia) return;
+
+    const value =
+      trivia.background_type === "image"
+        ? `url(${trivia.background_value}) center/cover no-repeat`
+        : trivia.background_value || FALLBACK_BG;
+
+    setBg(value);
+    setBrightness(
+      typeof trivia.background_brightness === "number"
+        ? trivia.background_brightness
+        : 100
+    );
+  }, [trivia]);
 
   /* --- Load final leaderboard & build top 3 --- */
   useEffect(() => {
@@ -355,9 +379,7 @@ export default function TriviaPodum({ trivia }: TriviaPodiumProps) {
     }
 
     const id = window.setTimeout(() => {
-      setCurrentIndex((prev) =>
-        Math.min(prev + 1, podiumRows.length - 1)
-      );
+      setCurrentIndex((prev) => Math.min(prev + 1, podiumRows.length - 1));
     }, STEP_DURATION_MS);
 
     return () => window.clearTimeout(id);
@@ -370,7 +392,8 @@ export default function TriviaPodum({ trivia }: TriviaPodiumProps) {
       style={{
         width: "100vw",
         height: "100vh",
-        background: "linear-gradient(135deg,#1b2735,#090a0f)",
+        background: bg,
+        filter: `brightness(${brightness}%)`,
         display: "flex",
         flexDirection: "column",
         alignItems: "center",

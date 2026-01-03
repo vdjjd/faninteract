@@ -166,6 +166,15 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
     trivia?.host?.logo_url?.trim() ||
     fallbackLogo;
 
+  // ✅ NEW: use same background config as card/inactive wall
+  const bg =
+    trivia?.background_type === "image"
+      ? `url(${trivia.background_value}) center/cover no-repeat`
+      : trivia?.background_value ||
+        "linear-gradient(to bottom right,#1b2735,#090a0f)";
+
+  const brightness = trivia?.background_brightness ?? 100;
+
   const isRunning =
     trivia?.status === "running" && trivia?.countdown_active === false;
 
@@ -804,7 +813,8 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
     <>
       <div
         style={{
-          background: "linear-gradient(to bottom right,#1b2735,#090a0f)",
+          background: bg, // ✅ uses DB-driven background
+          filter: `brightness(${brightness}%)`, // ✅ brightness from DB
           width: "100vw",
           height: "100vh",
           display: "flex",

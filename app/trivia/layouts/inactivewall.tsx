@@ -86,15 +86,13 @@ function CountdownDisplay({
 /* 🎮 TRIVIA INACTIVE WALL                                                     */
 /* -------------------------------------------------------------------------- */
 
+const FALLBACK_BG = "linear-gradient(to bottom right,#1b2735,#090a0f)";
+
 export default function TriviaInactiveWall({
   trivia,
 }: TriviaInactiveWallProps) {
-  const [bg, setBg] = useState(
-    "linear-gradient(to bottom right,#1b2735,#090a0f)"
-  );
-  const [brightness, setBrightness] = useState(
-    trivia?.background_brightness || 100
-  );
+  const [bg, setBg] = useState<string>(FALLBACK_BG);
+  const [brightness, setBrightness] = useState<number>(100);
 
   const [wallState, setWallState] = useState({
     countdown: trivia?.countdown || "10 seconds",
@@ -114,6 +112,26 @@ export default function TriviaInactiveWall({
     `}</style>
   );
 
+  const applyBackgroundFromRow = (row: any) => {
+    if (!row) {
+      setBg(FALLBACK_BG);
+      setBrightness(100);
+      return;
+    }
+
+    const value =
+      row.background_type === "image"
+        ? `url(${row.background_value}) center/cover no-repeat`
+        : row.background_value || FALLBACK_BG;
+
+    setBg(value);
+    setBrightness(
+      typeof row.background_brightness === "number"
+        ? row.background_brightness
+        : 100
+    );
+  };
+
   // Initial props → local state
   useEffect(() => {
     if (!trivia) return;
@@ -125,17 +143,10 @@ export default function TriviaInactiveWall({
       title: trivia.title || "",
     });
 
-    const value =
-      trivia.background_type === "image"
-        ? `url(${trivia.background_value}) center/cover no-repeat`
-        : trivia.background_value ||
-          "linear-gradient(to bottom right,#1b2735,#090a0f)";
-
-    setBg(value);
-    setBrightness(trivia.background_brightness ?? 100);
+    applyBackgroundFromRow(trivia);
   }, [trivia]);
 
-  // 🔁 Live updates from DB (keeps countdown perfectly in sync)
+  // 🔁 Live updates from DB (keeps countdown + background in sync)
   useEffect(() => {
     if (!trivia?.id) return;
 
@@ -161,14 +172,7 @@ export default function TriviaInactiveWall({
             title: next.title ?? prev.title,
           }));
 
-          const value =
-            next.background_type === "image"
-              ? `url(${next.background_value}) center/cover no-repeat`
-              : next.background_value ||
-                "linear-gradient(to bottom right,#1b2735,#090a0f)";
-
-          setBg(value);
-          setBrightness(next.background_brightness ?? 100);
+          applyBackgroundFromRow(next);
         }
       )
       .subscribe();
