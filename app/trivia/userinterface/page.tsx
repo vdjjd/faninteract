@@ -740,7 +740,11 @@ export default function TriviaUserInterfacePage() {
   }, [playerId, currentQuestion?.id]);
 
   /* ---------------------------------------------------------
-     Load leaderboard (TOP 4) when wallPhase === 'leaderboard'
+     ✅ Load leaderboard when wallPhase === 'leaderboard'
+     PATCHES:
+     - include approved + active players
+     - show players even when all points are 0
+     - remove leaderRows.length dependency to avoid rerun loops
   --------------------------------------------------------- */
   useEffect(() => {
     if (!session?.id) return;
@@ -755,7 +759,7 @@ export default function TriviaUserInterfacePage() {
         .from("trivia_players")
         .select("id,status,guest_id,display_name,photo_url")
         .eq("session_id", session.id)
-        .eq("status", "approved");
+        .in("status", ["approved", "active"]); // ✅ PATCH
 
       if (playersErr || !players || players.length === 0) {
         if (!cancelled) {
@@ -789,7 +793,10 @@ export default function TriviaUserInterfacePage() {
         );
       }
 
-      const guestMap = new Map<string, { name: string; selfieUrl: string | null }>();
+      const guestMap = new Map<
+        string,
+        { name: string; selfieUrl: string | null }
+      >();
 
       if (guestIds.length > 0) {
         const { data: guests, error: guestsErr } = await supabase
@@ -811,7 +818,7 @@ export default function TriviaUserInterfacePage() {
         }
       }
 
-      const built = players
+      const built: LeaderRow[] = players
         .map((p: any) => {
           const guest = p.guest_id ? guestMap.get(p.guest_id) : undefined;
           const safeName = guest?.name || formatDisplayName(p.display_name);
@@ -827,11 +834,9 @@ export default function TriviaUserInterfacePage() {
         .sort((a: any, b: any) => b.points - a.points)
         .map((r: any, idx: number) => ({ ...r, rank: idx + 1 }));
 
-      const hasPoints = built.some((r) => r.points > 0);
-      const finalRows = hasPoints ? built : [];
-
+      // ✅ PATCH: do NOT wipe leaderboard when points are all zero
       if (!cancelled) {
-        setLeaderRows(finalRows);
+        setLeaderRows(built);
         setLeaderLoading(false);
       }
     }
@@ -843,7 +848,8 @@ export default function TriviaUserInterfacePage() {
       cancelled = true;
       window.clearInterval(id);
     };
-  }, [session?.id, wallPhase, leaderRows.length]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session?.id, wallPhase]); // ✅ PATCH
 
   /* ---------------------------------------------------------
      Answer submission
@@ -1133,7 +1139,7 @@ export default function TriviaUserInterfacePage() {
           </div>
         )}
 
-        {/* ANSWERS */}
+        {/* ANSWERS / LEADERBOARD LIST */}
         <div
           style={{
             display: "grid",
@@ -1145,6 +1151,125 @@ export default function TriviaUserInterfacePage() {
             paddingRight: 2,
           }}
         >
+          {/* ✅ PATCH: render leaderboard rows on phone UI */}
+          {view === "leaderboard" && (
+            <>
+              {leaderLoading && (
+                <div
+                  style={{
+                    background: "rgba(15,23,42,0.85)",
+                    border: "1px solid rgba(148,163,184,0.35)",
+                    borderRadius: 16,
+                    padding: 14,
+                    textAlign: "center",
+                    opacity: 0.9,
+                  }}
+                >
+                  Loading leaderboard…
+                </div>
+              )}
+
+              {!leaderLoading && leaderRows.length === 0 && (
+                <div
+                  style={{
+                    background: "rgba(15,23,42,0.85)",
+                    border: "1px solid rgba(148,163,184,0.35)",
+                    borderRadius: 16,
+                    padding: 14,
+                    textAlign: "center",
+                    opacity: 0.9,
+                  }}
+                >
+                  No players yet.
+                </div>
+              )}
+
+              {!leaderLoading &&
+                leaderRows.map((row) => (
+                  <div
+                    key={`${row.rank}-${row.name}`}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 12,
+                      padding: "10px 12px",
+                      borderRadius: 18,
+                      background: "rgba(15,23,42,0.85)",
+                      border: "1px solid rgba(148,163,184,0.35)",
+                    }}
+                  >
+                    <div
+                      style={{
+                        width: 34,
+                        height: 34,
+                        borderRadius: 999,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        fontWeight: 900,
+                        background: "rgba(59,130,246,0.35)",
+                        border: "1px solid rgba(147,197,253,0.55)",
+                        flexShrink: 0,
+                      }}
+                    >
+                      {row.rank}
+                    </div>
+
+                    <div
+                      style={{
+                        width: 44,
+                        height: 44,
+                        borderRadius: 999,
+                        overflow: "hidden",
+                        border: "1px solid rgba(226,232,240,0.6)",
+                        background: "rgba(2,6,23,0.6)",
+                        flexShrink: 0,
+                      }}
+                    >
+                      {row.selfieUrl ? (
+                        <img
+                          src={row.selfieUrl}
+                          alt=""
+                          style={{
+                            width: "100%",
+                            height: "100%",
+                            objectFit: "cover",
+                          }}
+                        />
+                      ) : null}
+                    </div>
+
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div
+                        style={{
+                          fontWeight: 800,
+                          fontSize: "0.95rem",
+                          whiteSpace: "nowrap",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                        }}
+                      >
+                        {row.name}
+                      </div>
+                      <div style={{ fontSize: "0.75rem", opacity: 0.75 }}>
+                        Points
+                      </div>
+                    </div>
+
+                    <div
+                      style={{
+                        fontWeight: 900,
+                        fontSize: "1.1rem",
+                        letterSpacing: 0.2,
+                      }}
+                    >
+                      {row.points}
+                    </div>
+                  </div>
+                ))}
+            </>
+          )}
+
           {view === "question" &&
             currentQuestion.options.map((opt: string, idx: number) => {
               const chosen = selectedIndex === idx;
@@ -1251,10 +1376,7 @@ export default function TriviaUserInterfacePage() {
             })}
         </div>
 
-        {/* AD SLOT
-            ✅ Images: cover (fill box, may crop)
-            ✅ Videos: contain (no crop, no stretch)
-        */}
+        {/* AD SLOT */}
         <div
           style={{
             marginBottom: 10,
@@ -1285,7 +1407,7 @@ export default function TriviaUserInterfacePage() {
                 style={{
                   width: "100%",
                   height: "100%",
-                  objectFit: "contain", // ✅ video NOT stretched/cropped
+                  objectFit: "contain",
                   objectPosition: "center",
                   display: "block",
                   background: "rgba(0,0,0,0.35)",
@@ -1298,7 +1420,7 @@ export default function TriviaUserInterfacePage() {
                 style={{
                   width: "100%",
                   height: "100%",
-                  objectFit: "cover", // ✅ image fills box
+                  objectFit: "cover",
                   objectPosition: "center",
                   display: "block",
                 }}
