@@ -144,10 +144,18 @@ export default function TriviaUserInterfacePage() {
   // ✅ server-time offset to prevent drift
   const [serverOffsetMs, setServerOffsetMs] = useState<number>(0);
 
-  // ✅ NEW: ads (phone changes per-question)
+  // ✅ Ads
   const [hostRow, setHostRow] = useState<HostRow | null>(null);
   const [ads, setAds] = useState<SlideAd[]>([]);
   const [adsLoading, setAdsLoading] = useState(false);
+
+  // ✅ NEW: mid-game toggle polling state
+  const [hostInjectorEnabled, setHostInjectorEnabled] = useState<boolean | null>(
+    null
+  );
+  const [triviaInjectorEnabled, setTriviaInjectorEnabled] = useState<
+    boolean | null
+  >(null);
 
   /* ---------------------------------------------------------
      ✅ Server clock sync (prevents drift)
@@ -204,6 +212,7 @@ export default function TriviaUserInterfacePage() {
 
   /* ---------------------------------------------------------
      Initial load: trivia card, host, session, player row, questions
+     ✅ (UNCHANGED FLOW)
   --------------------------------------------------------- */
   useEffect(() => {
     if (!gameId || !profile?.id) return;
@@ -254,6 +263,11 @@ export default function TriviaUserInterfacePage() {
 
         if (!hostErr && host) {
           setHostRow(host as HostRow);
+          // seed toggle state (initial)
+          setHostInjectorEnabled(
+            typeof host.injector_enabled === "boolean" ? host.injector_enabled : null
+          );
+
           logo =
             host.branding_logo_url?.trim() ||
             host.logo_url?.trim() ||
@@ -343,9 +357,88 @@ export default function TriviaUserInterfacePage() {
   }, [gameId, profile?.id, router]);
 
   /* ---------------------------------------------------------
+     ✅ Poll ad toggles mid-game every 5 seconds
+     - DOES NOT touch session flow
+  --------------------------------------------------------- */
+  useEffect(() => {
+    if (!gameId) return;
+
+    let cancelled = false;
+
+    const poll = async () => {
+      try {
+        // trivia_cards.injector_enabled (safe: if missing/permission denied, we just ignore)
+        const { data: cardRow, error: cardErr } = await supabase
+          .from("trivia_cards")
+          .select("id,host_id,injector_enabled")
+          .eq("id", gameId)
+          .maybeSingle();
+
+        if (!cancelled) {
+          if (!cardErr && cardRow && typeof cardRow.injector_enabled === "boolean") {
+            setTriviaInjectorEnabled(cardRow.injector_enabled);
+          } else if (cardErr) {
+            // If the column doesn't exist or RLS blocks it, don't break anything.
+            // We default to "enabled" behavior unless you explicitly turn host off.
+            // (No console spam; just keep it quiet.)
+          }
+        }
+
+        const hostId =
+          (cardRow as any)?.host_id || trivia?.host_id || hostRow?.id;
+
+        if (hostId) {
+          const { data: host, error: hostErr } = await supabase
+            .from("hosts")
+            .select("id,injector_enabled")
+            .eq("id", hostId)
+            .maybeSingle();
+
+          if (!cancelled) {
+            if (!hostErr && host && typeof host.injector_enabled === "boolean") {
+              setHostInjectorEnabled(host.injector_enabled);
+            }
+          }
+        }
+      } catch {
+        // swallow
+      }
+    };
+
+    poll();
+    const id = window.setInterval(poll, 5000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+    // intentionally NOT depending on trivia/hostRow to avoid flow churn
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gameId]);
+
+  /* ---------------------------------------------------------
+     ✅ Effective ads enabled (mid-game)
+     - host toggle must be true
+     - trivia toggle defaults to true if null/unknown (prevents accidental hiding)
+  --------------------------------------------------------- */
+  const adsEnabled = useMemo(() => {
+    const hostOn =
+      typeof hostInjectorEnabled === "boolean"
+        ? hostInjectorEnabled
+        : typeof hostRow?.injector_enabled === "boolean"
+        ? hostRow.injector_enabled
+        : false;
+
+    const cardOn =
+      typeof triviaInjectorEnabled === "boolean" ? triviaInjectorEnabled : true;
+
+    return Boolean(hostOn) && Boolean(cardOn);
+  }, [hostInjectorEnabled, hostRow?.injector_enabled, triviaInjectorEnabled]);
+
+  /* ---------------------------------------------------------
      ✅ Load Slide Ads once we have hostRow
      (master + host merged like AdsManagerModal)
-     Phone behavior: change ad per question
+     - now respects adsEnabled (updates mid-game)
   --------------------------------------------------------- */
   useEffect(() => {
     if (!hostRow?.id) return;
@@ -356,8 +449,8 @@ export default function TriviaUserInterfacePage() {
       try {
         setAdsLoading(true);
 
-        // If injector disabled, just clear ads.
-        if (!hostRow.injector_enabled) {
+        // If ads disabled, clear ads.
+        if (!adsEnabled) {
           if (!cancelled) setAds([]);
           return;
         }
@@ -402,7 +495,7 @@ export default function TriviaUserInterfacePage() {
     return () => {
       cancelled = true;
     };
-  }, [hostRow?.id, hostRow?.master_id, hostRow?.injector_enabled]);
+  }, [hostRow?.id, hostRow?.master_id, adsEnabled]);
 
   /* ---------------------------------------------------------
      Poll trivia_sessions for current_question / status / wall_phase
@@ -650,10 +743,7 @@ export default function TriviaUserInterfacePage() {
         totals.set(a.player_id, (totals.get(a.player_id) || 0) + pts);
       }
 
-      const guestMap = new Map<
-        string,
-        { name: string; selfieUrl: string | null }
-      >();
+      const guestMap = new Map<string, { name: string; selfieUrl: string | null }>();
 
       if (guestIds.length > 0) {
         const { data: guests, error: guestsErr } = await supabase
@@ -1228,7 +1318,7 @@ export default function TriviaUserInterfacePage() {
             })}
         </div>
 
-        {/* ✅ AD SLOT (CHANGES PER QUESTION) */}
+        {/* ✅ AD SLOT (ALWAYS RENDERED — responds mid-game) */}
         <div
           style={{
             marginBottom: 10,
@@ -1244,7 +1334,11 @@ export default function TriviaUserInterfacePage() {
             position: "relative",
           }}
         >
-          {adsLoading ? (
+          {!adsEnabled ? (
+            <div style={{ fontSize: "0.95rem", opacity: 0.95, padding: 16 }}>
+              ADS OFF
+            </div>
+          ) : adsLoading ? (
             <div style={{ fontSize: "0.95rem", opacity: 0.9, padding: 16 }}>
               Loading ad…
             </div>
@@ -1265,8 +1359,7 @@ export default function TriviaUserInterfacePage() {
             </div>
           )}
 
-          {/* optional tiny label */}
-          {currentAd?.url && (
+          {adsEnabled && currentAd?.url && (
             <div
               style={{
                 position: "absolute",
