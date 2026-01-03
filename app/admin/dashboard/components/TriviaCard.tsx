@@ -87,6 +87,40 @@ export default function TriviaCard({
   const [timerSeconds, setTimerSeconds] = useState<number>(
     trivia?.timer_seconds ?? 30
   );
+
+  // ✅ NEW: Countdown timer setting (trivia_cards.countdown_seconds)
+  const COUNTDOWN_OPTIONS: Array<{ label: string; value: number }> = [
+    { label: "10 seconds", value: 10 },
+    { label: "30 seconds", value: 30 },
+    { label: "1 minute", value: 60 },
+    { label: "2 minutes", value: 120 },
+    { label: "3 minutes", value: 180 },
+    { label: "4 minutes", value: 240 },
+    { label: "5 minutes", value: 300 },
+    { label: "10 minutes", value: 600 },
+    { label: "15 minutes", value: 900 },
+    { label: "20 minutes", value: 1200 },
+    { label: "25 minutes", value: 1500 },
+    { label: "30 minutes", value: 1800 },
+    { label: "35 minutes", value: 2100 },
+    { label: "40 minutes", value: 2400 },
+    { label: "45 minutes", value: 2700 },
+    { label: "50 minutes", value: 3000 },
+    { label: "55 minutes", value: 3300 },
+    { label: "1 hour", value: 3600 },
+  ];
+
+  const normalizeCountdownSeconds = (n: any) => {
+    const v = Number(n);
+    if (!Number.isFinite(v) || v <= 0) return 10;
+    // if not in options, keep the value but clamp to sane bounds
+    return Math.max(1, Math.min(24 * 60 * 60, Math.floor(v)));
+  };
+
+  const [countdownSeconds, setCountdownSeconds] = useState<number>(
+    normalizeCountdownSeconds(trivia?.countdown_seconds ?? 10)
+  );
+
   const [playMode, setPlayMode] = useState<string>(trivia?.play_mode || "auto");
   const [scoringMode, setScoringMode] = useState<string>(
     trivia?.scoring_mode || "100s"
@@ -96,9 +130,7 @@ export default function TriviaCard({
   );
 
   // ✅ NEW: Ads toggle for phone UI
-  const [adsEnabled, setAdsEnabled] = useState<boolean>(
-    !!trivia?.ads_enabled
-  );
+  const [adsEnabled, setAdsEnabled] = useState<boolean>(!!trivia?.ads_enabled);
 
   const [savingSettings, setSavingSettings] = useState(false);
 
@@ -149,6 +181,10 @@ export default function TriviaCard({
  ------------------------------------------------------------ */
   useEffect(() => {
     setTimerSeconds(trivia?.timer_seconds ?? 30);
+
+    // ✅ sync countdown_seconds too
+    setCountdownSeconds(normalizeCountdownSeconds(trivia?.countdown_seconds ?? 10));
+
     setPlayMode(trivia?.play_mode || "auto");
     setScoringMode(trivia?.scoring_mode || "100s");
     setRequireSelfie(trivia?.require_selfie ?? true);
@@ -159,6 +195,7 @@ export default function TriviaCard({
   }, [
     trivia?.id,
     trivia?.timer_seconds,
+    trivia?.countdown_seconds,
     trivia?.play_mode,
     trivia?.scoring_mode,
     trivia?.require_selfie,
@@ -179,7 +216,7 @@ export default function TriviaCard({
       const { data, error } = await supabase
         .from("trivia_cards")
         .select(
-          "status, countdown_active, background_type, background_value, ads_enabled"
+          "status, countdown_active, countdown_seconds, background_type, background_value, ads_enabled"
         )
         .eq("id", trivia.id)
         .maybeSingle();
@@ -194,11 +231,15 @@ export default function TriviaCard({
       setCardCountdownActive(!!data.countdown_active);
       setAdsEnabled(!!data.ads_enabled);
 
+      // ✅ keep countdown_seconds synced
+      setCountdownSeconds(normalizeCountdownSeconds((data as any).countdown_seconds ?? 10));
+
       // also keep background in sync if it changes remotely
       (trivia.background_type = data.background_type),
         (trivia.background_value = data.background_value);
       // keep local trivia object roughly consistent (optional)
       (trivia.ads_enabled = data.ads_enabled);
+      (trivia.countdown_seconds = (data as any).countdown_seconds);
     };
 
     pollCard();
@@ -212,6 +253,7 @@ export default function TriviaCard({
 
   async function updateTriviaSettings(patch: {
     timer_seconds?: number;
+    countdown_seconds?: number; // ✅ NEW
     play_mode?: string;
     scoring_mode?: string;
     require_selfie?: boolean;
@@ -228,6 +270,15 @@ export default function TriviaCard({
     } finally {
       setSavingSettings(false);
     }
+  }
+
+  async function handleCountdownSecondsChange(e: any) {
+    const raw = Number(e.target.value);
+    const value = normalizeCountdownSeconds(raw);
+    setCountdownSeconds(value);
+
+    // persist to DB
+    await updateTriviaSettings({ countdown_seconds: value });
   }
 
   async function handleTimerChange(e: any) {
@@ -652,7 +703,7 @@ export default function TriviaCard({
         return;
       }
 
-      // start 10s countdown on card
+      // ✅ start countdown on card (uses saved countdownSeconds)
       const nowIso = new Date().toISOString();
 
       await supabase
@@ -661,6 +712,7 @@ export default function TriviaCard({
           countdown_active: true,
           countdown_started_at: nowIso,
           status: "waiting",
+          countdown_seconds: countdownSeconds, // ✅ persist selection
         })
         .eq("id", trivia.id);
 
@@ -672,6 +724,8 @@ export default function TriviaCard({
         window.clearTimeout(playTimeoutRef.current);
         playTimeoutRef.current = null;
       }
+
+      const ms = Math.max(1, countdownSeconds) * 1000;
 
       playTimeoutRef.current = window.setTimeout(async () => {
         try {
@@ -706,7 +760,7 @@ export default function TriviaCard({
           playTimeoutRef.current = null;
           playLockRef.current = false;
         }
-      }, 10_000);
+      }, ms);
     } finally {
       // if we returned early before starting the countdown timer
       // ensure the lock is released (the timer callback also releases it)
@@ -810,6 +864,7 @@ export default function TriviaCard({
 
         {/* ---------------- HOME ---------------- */}
         <Tabs.Content value="menu">
+          {/* (unchanged) */}
           <div
             className={cn("grid", "grid-cols-3", "gap-2", "mb-4", "items-center")}
           >
@@ -950,6 +1005,7 @@ export default function TriviaCard({
 
         {/* ---------------- QUESTIONS ---------------- */}
         <Tabs.Content value="questions" className={cn("mt-4", "space-y-3")}>
+          {/* (unchanged) */}
           <div className={cn("flex", "items-center", "justify-between")}>
             <div className={cn("text-xs", "opacity-70")}>
               Total questions: {questions.length}
@@ -1128,6 +1184,7 @@ export default function TriviaCard({
 
         {/* ---------------- LEADERBOARD ---------------- */}
         <Tabs.Content value="leaderboard" className={cn("mt-4", "space-y-3")}>
+          {/* (unchanged) */}
           {leaderboardLoading && (
             <p className={cn("text-xs", "opacity-70")}>Loading leaderboard…</p>
           )}
@@ -1189,6 +1246,40 @@ export default function TriviaCard({
 
         {/* ---------------- SETTINGS ---------------- */}
         <Tabs.Content value="settings" className={cn("mt-4", "space-y-4")}>
+          {/* ✅ NEW: Countdown Timer setting (ABOVE Question Timer) */}
+          <div
+            className={cn("flex", "items-center", "justify-between", "gap-4")}
+          >
+            <div>
+              <p className={cn("text-sm", "font-semibold")}>Countdown Timer</p>
+              <p className={cn("text-xs", "opacity-70")}>
+                How long the wall stays on the QR / &quot;Starting soon&quot;
+                screen after you press Play.
+              </p>
+            </div>
+            <select
+              value={countdownSeconds}
+              onChange={handleCountdownSecondsChange}
+              className={cn(
+                "bg-gray-800",
+                "border",
+                "border-white/20",
+                "rounded-md",
+                "px-3",
+                "py-1.5",
+                "text-sm",
+                "outline-none",
+                "focus:border-blue-400"
+              )}
+            >
+              {COUNTDOWN_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
           <div
             className={cn("flex", "items-center", "justify-between", "gap-4")}
           >
@@ -1314,9 +1405,7 @@ export default function TriviaCard({
             className={cn("flex", "items-center", "justify-between", "gap-4")}
           >
             <div>
-              <p className={cn("text-sm", "font-semibold")}>
-                Show Ads on Phone
-              </p>
+              <p className={cn("text-sm", "font-semibold")}>Show Ads on Phone</p>
               <p className={cn("text-xs", "opacity-70")}>
                 When enabled, the phone UI shows an ad image that changes each
                 new question (pulled from Ad Manager slides).
