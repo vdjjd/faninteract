@@ -49,7 +49,7 @@ type HostRow = {
   logo_url: string | null;
   injector_enabled: boolean | null;
 
-  // ✅ NEW: trivia ad slot toggle (you added this column)
+  // ✅ trivia ad slot toggle (you added this column)
   trivia_ads_enabled?: boolean | null;
 };
 
@@ -265,9 +265,7 @@ export default function TriviaUserInterfacePage() {
         if (!hostErr && host) {
           setHostRow(host as HostRow);
           logo =
-            host.branding_logo_url?.trim() ||
-            host.logo_url?.trim() ||
-            logo;
+            host.branding_logo_url?.trim() || host.logo_url?.trim() || logo;
         }
       }
       if (!cancelled) setHostLogoUrl(logo);
@@ -353,17 +351,65 @@ export default function TriviaUserInterfacePage() {
   }, [gameId, profile?.id, router]);
 
   /* ---------------------------------------------------------
+     ✅ NEW: Poll HOST settings every 5 seconds (live toggle mid-game)
+     - keeps injector_enabled + trivia_ads_enabled + master_id in sync
+     - also updates logo if changed
+  --------------------------------------------------------- */
+  useEffect(() => {
+    if (!trivia?.host_id) return;
+
+    let cancelled = false;
+
+    const pollHost = async () => {
+      const { data, error } = await supabase
+        .from("hosts")
+        .select(
+          "id,master_id,branding_logo_url,logo_url,injector_enabled,trivia_ads_enabled"
+        )
+        .eq("id", trivia.host_id)
+        .maybeSingle();
+
+      if (cancelled) return;
+
+      if (error) {
+        console.warn("⚠️ host poll error (trivia phone):", error);
+        return;
+      }
+
+      if (data) {
+        setHostRow(data as HostRow);
+
+        const nextLogo =
+          (data.branding_logo_url || "").trim() ||
+          (data.logo_url || "").trim() ||
+          "/faninteractlogo.png";
+
+        setHostLogoUrl(nextLogo);
+      }
+    };
+
+    pollHost();
+    const id = window.setInterval(pollHost, 5000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [trivia?.host_id]);
+
+  /* ---------------------------------------------------------
      ✅ Show/hide ad slot entirely
      - OFF => no placeholder, nothing rendered
---------------------------------------------------------- */
+  --------------------------------------------------------- */
   const showAdSlot = useMemo(() => {
-    return Boolean(hostRow?.injector_enabled) && Boolean(hostRow?.trivia_ads_enabled);
+    return (
+      Boolean(hostRow?.injector_enabled) && Boolean(hostRow?.trivia_ads_enabled)
+    );
   }, [hostRow?.injector_enabled, hostRow?.trivia_ads_enabled]);
 
   /* ---------------------------------------------------------
      ✅ Load Slide Ads once we have hostRow
      (master + host merged like AdsManagerModal)
-     Phone behavior: change ad per question
   --------------------------------------------------------- */
   useEffect(() => {
     if (!hostRow?.id) return;
@@ -463,10 +509,7 @@ export default function TriviaUserInterfacePage() {
 
   const currentQuestionIndex =
     session?.current_question && questions.length > 0
-      ? Math.min(
-          questions.length - 1,
-          Math.max(0, session.current_question - 1)
-        )
+      ? Math.min(questions.length - 1, Math.max(0, session.current_question - 1))
       : 0;
 
   const currentQuestion = questions[currentQuestionIndex] || null;
@@ -582,12 +625,7 @@ export default function TriviaUserInterfacePage() {
       timerIntervalRef.current = null;
     }
 
-    if (
-      !isRunning ||
-      !currentQuestion ||
-      !questionStartedAt ||
-      wallPhase !== "question"
-    ) {
+    if (!isRunning || !currentQuestion || !questionStartedAt || wallPhase !== "question") {
       if (wallPhase !== "question") {
         setProgress(0);
         setSecondsLeft(0);
@@ -715,10 +753,7 @@ export default function TriviaUserInterfacePage() {
         totals.set(a.player_id, (totals.get(a.player_id) || 0) + pts);
       }
 
-      const guestMap = new Map<
-        string,
-        { name: string; selfieUrl: string | null }
-      >();
+      const guestMap = new Map<string, { name: string; selfieUrl: string | null }>();
 
       if (guestIds.length > 0) {
         const { data: guests, error: guestsErr } = await supabase
