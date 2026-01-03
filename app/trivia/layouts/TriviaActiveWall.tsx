@@ -162,21 +162,35 @@ function sameLeaderRows(a: LeaderRow[], b: LeaderRow[]) {
 }
 
 /**
- * ✅ Stable question ordering + resilient selection
- * - If you have question_number, we’ll respect it.
- * - Else if you have round_number, we’ll respect it.
- * - Else we fall back to created_at.
- * - Then we display by matching current_question to question_number/round_number if possible,
- *   otherwise treat current_question as 1-based index.
+ * ✅ FIX FOR “Q1 then jumps to Q4/Q8”
+ * The old logic used round_number ordering when only SOME questions had round_number set.
+ * That reorders the list and makes indexing look like skipping.
+ *
+ * New rule:
+ * - ONLY use question_number if *every* question has it
+ * - ELSE ONLY use round_number if *every* question has it
+ * - ELSE fall back to created_at (stable insertion order)
+ *
+ * Then, selection matches that ordering mode.
  */
-function orderQuestions(qs: any[]): any[] {
-  const list = Array.isArray(qs) ? [...qs] : [];
+type QuestionOrderMode = "question_number" | "round_number" | "created_at";
 
-  const hasAnyQN = list.some((q) => typeof q?.question_number === "number");
-  const hasAnyRN = list.some((q) => typeof q?.round_number === "number");
+function normalizeQuestions(qsRaw: any[]): { list: any[]; mode: QuestionOrderMode } {
+  const list = Array.isArray(qsRaw) ? [...qsRaw] : [];
+  if (!list.length) return { list: [], mode: "created_at" };
 
-  const num = (v: any, fallback: number) =>
-    typeof v === "number" && Number.isFinite(v) ? v : fallback;
+  const hasAllQN = list.every(
+    (q) => typeof q?.question_number === "number" && Number.isFinite(q.question_number)
+  );
+  const hasAllRN = list.every(
+    (q) => typeof q?.round_number === "number" && Number.isFinite(q.round_number)
+  );
+
+  const mode: QuestionOrderMode = hasAllQN
+    ? "question_number"
+    : hasAllRN
+    ? "round_number"
+    : "created_at";
 
   const time = (v: any) => {
     const t = new Date(v || 0).getTime();
@@ -184,35 +198,34 @@ function orderQuestions(qs: any[]): any[] {
   };
 
   list.sort((a, b) => {
-    if (hasAnyQN) {
-      const aq = num(a?.question_number, 1e9);
-      const bq = num(b?.question_number, 1e9);
-      if (aq !== bq) return aq - bq;
-    }
-    if (hasAnyRN) {
-      const ar = num(a?.round_number, 1e9);
-      const br = num(b?.round_number, 1e9);
-      if (ar !== br) return ar - br;
-    }
+    if (mode === "question_number") return a.question_number - b.question_number;
+    if (mode === "round_number") return a.round_number - b.round_number;
     return time(a?.created_at) - time(b?.created_at);
   });
 
-  return list;
+  return { list, mode };
 }
 
-function pickQuestionForCurrent(orderedQs: any[], currentQuestion: number): any | null {
-  if (!orderedQs?.length || !currentQuestion || currentQuestion < 1) return null;
+function pickQuestionForCurrent(
+  qs: any[],
+  currentQuestion: number,
+  mode: QuestionOrderMode
+): any | null {
+  if (!qs?.length || !currentQuestion || currentQuestion < 1) return null;
 
-  // First: try to match by question_number or round_number (supports either schema)
-  const byNumber =
-    orderedQs.find((q) => q?.question_number === currentQuestion) ||
-    orderedQs.find((q) => q?.round_number === currentQuestion);
+  // If current_question is meant to match a numbered field, only do that when mode proves it's safe.
+  if (mode === "question_number") {
+    const hit = qs.find((q) => q?.question_number === currentQuestion);
+    if (hit) return hit;
+  }
+  if (mode === "round_number") {
+    const hit = qs.find((q) => q?.round_number === currentQuestion);
+    if (hit) return hit;
+  }
 
-  if (byNumber) return byNumber;
-
-  // Fallback: treat as 1-based index
-  const idx = Math.max(0, Math.min(orderedQs.length - 1, currentQuestion - 1));
-  return orderedQs[idx] ?? null;
+  // Otherwise treat as 1-based index into the ordered list.
+  const idx = Math.max(0, Math.min(qs.length - 1, currentQuestion - 1));
+  return qs[idx] ?? null;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -319,7 +332,10 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
       const iso = new Date(nowServerMs()).toISOString();
       let q = supabase
         .from("trivia_sessions")
-        .update({ wall_phase: next, wall_phase_started_at: iso })
+        .update({
+          wall_phase: next,
+          wall_phase_started_at: iso,
+        })
         .eq("id", sessionId);
 
       if (expectedPrev) q = q.eq("wall_phase", expectedPrev);
@@ -328,52 +344,6 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
       if (updErr) console.warn("⚠️ wall_phase update fallback error:", updErr);
     } finally {
       phaseWriteLockRef.current = false;
-    }
-  }
-
-  /* -------------------------------------------------- */
-  /* ✅ Advance question ONCE (guarded across clients)    */
-  /* -------------------------------------------------- */
-  const advanceWriteLockRef = useRef(false);
-
-  // reset local lock when we leave leaderboard or a new leaderboard instance starts
-  useEffect(() => {
-    if (wallPhase !== "leaderboard") advanceWriteLockRef.current = false;
-  }, [wallPhase, wallPhaseStartedAt]);
-
-  async function advanceQuestionAuthoritativeOnce() {
-    if (!sessionId) return;
-    if (!wallPhaseStartedAt) return;
-    if (currentQuestionNumber == null) return;
-
-    if (advanceWriteLockRef.current) return;
-    advanceWriteLockRef.current = true;
-
-    const iso = new Date(nowServerMs()).toISOString();
-
-    // ✅ Guarded update:
-    // - only advance if we're STILL in leaderboard phase
-    // - and it's the SAME leaderboard instance (wall_phase_started_at match)
-    // - and current_question hasn't already changed
-    const { data, error } = await supabase
-      .from("trivia_sessions")
-      .update({
-        current_question: currentQuestionNumber + 1,
-        question_started_at: iso,
-        wall_phase: "question",
-        wall_phase_started_at: iso,
-      })
-      .eq("id", sessionId)
-      .eq("wall_phase", "leaderboard")
-      .eq("wall_phase_started_at", wallPhaseStartedAt)
-      .eq("current_question", currentQuestionNumber)
-      .select("id")
-      .maybeSingle();
-
-    // If someone else advanced first, data will be null (0 rows). That's fine.
-    if (error) console.warn("⚠️ advance guarded update error:", error);
-    if (!data) {
-      // someone else advanced; leave lock true to avoid spamming
     }
   }
 
@@ -388,7 +358,9 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
     async function pollSession() {
       const { data: session, error: sessionErr } = await supabase
         .from("trivia_sessions")
-        .select("id,status,current_question,question_started_at,wall_phase,wall_phase_started_at")
+        .select(
+          "id,status,current_question,question_started_at,wall_phase,wall_phase_started_at"
+        )
         .eq("trivia_card_id", trivia.id)
         .neq("status", "finished")
         .order("created_at", { ascending: false })
@@ -427,7 +399,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
         setWallPhaseAuthoritative("question", undefined);
       }
 
-      // ✅ Load questions list, then sort stably in JS
+      // ✅ Fetch questions WITHOUT relying on round_number/created_at mixing in SQL
       const { data: qsRaw, error: qErr } = await supabase
         .from("trivia_questions")
         .select("*")
@@ -438,7 +410,8 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
         return;
       }
 
-      const qs = orderQuestions(qsRaw || []);
+      const { list: qs, mode } = normalizeQuestions(qsRaw || []);
+
       if (!qs || qs.length === 0) {
         setQuestion(null);
         setTotalQuestions(0);
@@ -447,8 +420,8 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
 
       setTotalQuestions(qs.length);
 
-      // ✅ Resilient selection: match by question_number/round_number if possible, else index
-      const picked = pickQuestionForCurrent(qs, session.current_question);
+      // ✅ Pick consistently with the chosen ordering mode
+      const picked = pickQuestionForCurrent(qs, session.current_question, mode);
       setQuestion(picked);
     }
 
@@ -465,13 +438,16 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
   /* ✅ UI follows wall_phase ONLY                        */
   /* -------------------------------------------------- */
   useEffect(() => {
+    // view
     if (wallPhase === "leaderboard") setView("leaderboard");
     else if (wallPhase === "podium") setView("podium");
     else setView("question");
 
+    // overlays
     setShowAnswerOverlay(wallPhase === "overlay");
     setRevealAnswer(wallPhase === "reveal");
 
+    // lock answering after question ends
     setLocked(wallPhase !== "question");
   }, [wallPhase]);
 
@@ -494,6 +470,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
       !questionStartedAt ||
       wallPhase !== "question"
     ) {
+      // freeze bar if not in question phase
       if (wallPhase !== "question") {
         setProgress(0);
         setLocked(true);
@@ -510,7 +487,9 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
     setProgress(1);
 
     const durationMs =
-      typeof timerSeconds === "number" && timerSeconds > 0 ? timerSeconds * 1000 : 30000;
+      typeof timerSeconds === "number" && timerSeconds > 0
+        ? timerSeconds * 1000
+        : 30000;
 
     const startMs = new Date(questionStartedAt).getTime();
 
@@ -524,6 +503,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
 
       if (remaining <= 0) {
         setLocked(true);
+        // ✅ advance wall authority to overlay ONCE (guarded)
         await setWallPhaseAuthoritative("overlay", "question");
         if (intervalId != null) {
           window.clearInterval(intervalId);
@@ -543,6 +523,10 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
   /* -------------------------------------------------- */
   /* ✅ PHASE MACHINE (wall authority)                    */
   /* overlay -> reveal -> leaderboard/podium -> advance   */
+  /* NOTE: This patch DOES NOT change your advancing logic.
+   * It fixes the common “looks like skipping” issue caused by question ordering.
+   * If current_question itself is truly jumping, then your advance RPC/page is the culprit.
+   */
   /* -------------------------------------------------- */
   useEffect(() => {
     if (!isRunning) return;
@@ -562,8 +546,11 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
       }
 
       if (wallPhase === "reveal" && elapsed >= REVEAL_MS) {
-        if (isFinalQuestion) await setWallPhaseAuthoritative("podium", "reveal");
-        else await setWallPhaseAuthoritative("leaderboard", "reveal");
+        if (isFinalQuestion) {
+          await setWallPhaseAuthoritative("podium", "reveal");
+        } else {
+          await setWallPhaseAuthoritative("leaderboard", "reveal");
+        }
       }
 
       if (wallPhase === "leaderboard" && elapsed >= LEADERBOARD_MS) {
@@ -572,9 +559,26 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
           return;
         }
 
-        // ✅ IMPORTANT FIX:
-        // advance question with a GUARDED update so it cannot increment multiple times
-        await advanceQuestionAuthoritativeOnce();
+        // ✅ advance question (server time) and set phase back to question
+        const { error: rpcErr } = await supabase.rpc("trivia_advance_question", {
+          p_trivia_card_id: trivia.id,
+        });
+
+        if (rpcErr) {
+          console.error("❌ trivia_advance_question RPC error:", rpcErr);
+
+          // Fallback: approximate with server-offset ISO
+          const iso = new Date(nowServerMs()).toISOString();
+          await supabase
+            .from("trivia_sessions")
+            .update({
+              current_question: (currentQuestionNumber ?? 0) + 1,
+              question_started_at: iso,
+              wall_phase: "question",
+              wall_phase_started_at: iso,
+            })
+            .eq("id", sessionId);
+        }
       }
     };
 
@@ -612,7 +616,6 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
         return;
       }
 
-      // ✅ Make session selection deterministic (newest running)
       const { data: session, error: sessionErr } = await supabase
         .from("trivia_sessions")
         .select("id,status,created_at")
@@ -679,14 +682,19 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
       if (guestIds.length > 0) {
         const { data: guests, error: guestsErr } = await supabase
           .from("guest_profiles")
-          .select("id,first_name,last_name,photo_url,selfie_url,avatar_url,image_url,profile_photo_url")
+          .select(
+            "id,first_name,last_name,photo_url,selfie_url,avatar_url,image_url,profile_photo_url"
+          )
           .in("id", guestIds);
 
         if (guestsErr) {
           console.warn("⚠️ rankings guest_profiles fetch error:", guestsErr);
         } else {
           for (const g of guests || []) {
-            guestMap.set(g.id, { name: formatName(g?.first_name, g?.last_name), selfieUrl: pickSelfieUrl(g) });
+            guestMap.set(g.id, {
+              name: formatName(g?.first_name, g?.last_name),
+              selfieUrl: pickSelfieUrl(g),
+            });
           }
         }
       }
@@ -811,13 +819,19 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
       if (guestIds.length > 0) {
         const { data: guests, error: guestsErr } = await supabase
           .from("guest_profiles")
-          .select("id,first_name,last_name,photo_url,selfie_url,avatar_url,image_url,profile_photo_url")
+          .select(
+            "id,first_name,last_name,photo_url,selfie_url,avatar_url,image_url,profile_photo_url"
+          )
           .in("id", guestIds);
 
-        if (guestsErr) console.warn("⚠️ guest_profiles fetch error:", guestsErr);
-        else {
+        if (guestsErr) {
+          console.warn("⚠️ guest_profiles fetch error:", guestsErr);
+        } else {
           for (const g of guests || []) {
-            guestMap.set(g.id, { name: formatName(g?.first_name, g?.last_name), selfieUrl: pickSelfieUrl(g) });
+            guestMap.set(g.id, {
+              name: formatName(g?.first_name, g?.last_name),
+              selfieUrl: pickSelfieUrl(g),
+            });
           }
         }
       }
@@ -927,7 +941,9 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
     "rgba(253, 224, 71, 0.9)",
   ];
 
-  const origin = typeof window !== "undefined" ? window.location.origin : "https://faninteract.vercel.app";
+  const origin =
+    typeof window !== "undefined" ? window.location.origin : "https://faninteract.vercel.app";
+
   const qrValue = `${origin}/trivia/${trivia?.id}/join`;
 
   return (
@@ -1020,7 +1036,8 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                     const isCorrect = idx === question?.correct_index;
 
                     let bg = baseBgColors[idx] ?? "rgba(255,255,255,0.12)";
-                    let border = baseBorders[idx] ?? "1px solid rgba(255,255,255,0.18)";
+                    let border =
+                      baseBorders[idx] ?? "1px solid rgba(255,255,255,0.18)";
                     let opacity = 1;
                     let boxShadow = "none";
                     let transform = "scale(1)";
@@ -1028,7 +1045,9 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                     if (revealAnswer) {
                       if (isCorrect) {
                         border = highlightBorders[idx] ?? border;
-                        boxShadow = `0 0 40px 8px ${glowColors[idx] ?? "rgba(255,255,255,0.9)"}`;
+                        boxShadow = `0 0 40px 8px ${
+                          glowColors[idx] ?? "rgba(255,255,255,0.9)"
+                        }`;
                         transform = "scale(1.04)";
                       } else {
                         opacity = 0.35;
@@ -1094,7 +1113,13 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                   zIndex: 15,
                 }}
               >
-                <div style={{ textAlign: "center", textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                <div
+                  style={{
+                    textAlign: "center",
+                    textTransform: "uppercase",
+                    letterSpacing: "0.08em",
+                  }}
+                >
                   <div
                     style={{
                       fontFamily:
@@ -1107,10 +1132,13 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                         "0 0 2px #000000, 0 0 6px #000000, 0 0 18px rgba(15,23,42,0.9), 0 0 36px rgba(15,23,42,0.9), 0 0 72px rgba(59,130,246,0.9)",
                       padding: "0.4em 0.9em",
                       borderRadius: 18,
-                      background: "radial-gradient(circle at 50% 50%, rgba(59,130,246,0.65), rgba(15,23,42,0.0))",
-                      boxShadow: "0 0 40px rgba(59,130,246,0.9), 0 0 90px rgba(59,130,246,0.85)",
+                      background:
+                        "radial-gradient(circle at 50% 50%, rgba(59,130,246,0.65), rgba(15,23,42,0.0))",
+                      boxShadow:
+                        "0 0 40px rgba(59,130,246,0.9), 0 0 90px rgba(59,130,246,0.85)",
                       display: "inline-block",
-                      animation: "fiAnswerGlow 1.8s ease-in-out infinite alternate",
+                      animation:
+                        "fiAnswerGlow 1.8s ease-in-out infinite alternate",
                     }}
                   >
                     THE ANSWER IS
@@ -1151,15 +1179,34 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
               Leaderboard
             </div>
 
-            <div style={{ position: "absolute", top: LEADER_UI.listTop, width: "92vw", maxWidth: LEADER_UI.maxWidth }}>
-              {leaderLoading && <div style={{ textAlign: "center", opacity: 0.75 }}>Loading leaderboard…</div>}
+            <div
+              style={{
+                position: "absolute",
+                top: LEADER_UI.listTop,
+                width: "92vw",
+                maxWidth: LEADER_UI.maxWidth,
+              }}
+            >
+              {leaderLoading && (
+                <div style={{ textAlign: "center", opacity: 0.75 }}>
+                  Loading leaderboard…
+                </div>
+              )}
 
               {!leaderLoading && leaderRows.length === 0 && (
-                <div style={{ textAlign: "center", opacity: 0.75 }}>No scores yet.</div>
+                <div style={{ textAlign: "center", opacity: 0.75 }}>
+                  No scores yet.
+                </div>
               )}
 
               {!leaderLoading && leaderRows.length > 0 && (
-                <div style={{ display: "flex", flexDirection: "column", gap: LEADER_UI.rowGap }}>
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: LEADER_UI.rowGap,
+                  }}
+                >
                   {leaderRows.slice(0, 10).map((r) => {
                     const isTop3 = r.rank <= 3;
 
@@ -1174,11 +1221,21 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                           borderRadius: 22,
                           padding: `0 ${LEADER_UI.rowPadX}px`,
                           background: "rgba(255,255,255,0.07)",
-                          border: isTop3 ? "2px solid rgba(190,242,100,0.55)" : "1px solid rgba(255,255,255,0.15)",
-                          boxShadow: isTop3 ? "0 0 28px rgba(190,242,100,0.22)" : "none",
+                          border: isTop3
+                            ? "2px solid rgba(190,242,100,0.55)"
+                            : "1px solid rgba(255,255,255,0.15)",
+                          boxShadow: isTop3
+                            ? "0 0 28px rgba(190,242,100,0.22)"
+                            : "none",
                         }}
                       >
-                        <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 18,
+                          }}
+                        >
                           {/* Avatar */}
                           <div
                             style={{
@@ -1200,10 +1257,22 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                               <img
                                 src={r.selfieUrl}
                                 alt={r.name}
-                                style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                                style={{
+                                  width: "100%",
+                                  height: "100%",
+                                  objectFit: "cover",
+                                }}
                               />
                             ) : (
-                              <div style={{ fontWeight: 900, fontSize: "1.25rem", opacity: 0.9 }}>{r.rank}</div>
+                              <div
+                                style={{
+                                  fontWeight: 900,
+                                  fontSize: "1.25rem",
+                                  opacity: 0.9,
+                                }}
+                              >
+                                {r.rank}
+                              </div>
                             )}
 
                             {r.selfieUrl && (
@@ -1216,7 +1285,8 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                                   height: 30,
                                   borderRadius: "50%",
                                   background: "rgba(0,0,0,0.75)",
-                                  border: "1px solid rgba(255,255,255,0.25)",
+                                  border:
+                                    "1px solid rgba(255,255,255,0.25)",
                                   display: "flex",
                                   alignItems: "center",
                                   justifyContent: "center",
@@ -1244,7 +1314,14 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                         </div>
 
                         {/* Points */}
-                        <div style={{ fontSize: "clamp(1.6rem,2.6vw,3rem)", fontWeight: 900 }}>{r.points}</div>
+                        <div
+                          style={{
+                            fontSize: "clamp(1.6rem,2.6vw,3rem)",
+                            fontWeight: 900,
+                          }}
+                        >
+                          {r.points}
+                        </div>
                       </div>
                     );
                   })}
@@ -1279,7 +1356,14 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
               pointerEvents: "none",
             }}
           >
-            <p style={{ color: "#fff", fontWeight: 700, marginBottom: "0.6vh", fontSize: "clamp(1rem,1.4vw,1.4rem)" }}>
+            <p
+              style={{
+                color: "#fff",
+                fontWeight: 700,
+                marginBottom: "0.6vh",
+                fontSize: "clamp(1rem,1.4vw,1.4rem)",
+              }}
+            >
               Scan to Join
             </p>
 
@@ -1289,7 +1373,11 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
               level="H"
               bgColor="#ffffff"
               fgColor="#000000"
-              style={{ width: "100%", height: "100%", borderRadius: 20 }}
+              style={{
+                width: "100%",
+                height: "100%",
+                borderRadius: 20,
+              }}
             />
           </div>
         )}
@@ -1334,15 +1422,24 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                       borderRadius: "50%",
                       overflow: "hidden",
                       background: "rgba(255,255,255,0.12)",
-                      border: hasSelfie ? "2px solid rgba(255,255,255,0.45)" : "2px dashed rgba(255,255,255,0.45)",
-                      boxShadow: hasSelfie ? "0 0 16px rgba(0,0,0,0.45)" : "none",
+                      border: hasSelfie
+                        ? "2px solid rgba(255,255,255,0.45)"
+                        : "2px dashed rgba(255,255,255,0.45)",
+                      boxShadow: hasSelfie
+                        ? "0 0 16px rgba(0,0,0,0.45)"
+                        : "none",
                     }}
                   >
                     {hasSelfie ? (
                       <img
                         src={row!.selfieUrl as string}
                         alt={row!.name}
-                        style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+                        style={{
+                          width: "100%",
+                          height: "100%",
+                          objectFit: "cover",
+                          display: "block",
+                        }}
                       />
                     ) : null}
                   </div>
@@ -1398,7 +1495,12 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
             <img
               src={logoSrc}
               alt="Host Logo"
-              style={{ width: "100%", height: "100%", objectFit: "contain", filter: "drop-shadow(0 0 12px rgba(0,0,0,0.65))" }}
+              style={{
+                width: "100%",
+                height: "100%",
+                objectFit: "contain",
+                filter: "drop-shadow(0 0 12px rgba(0,0,0,0.65))",
+              }}
             />
           </div>
         )}
