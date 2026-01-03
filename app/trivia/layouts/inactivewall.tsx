@@ -11,40 +11,48 @@ interface TriviaInactiveWallProps {
   trivia: any;
 }
 
-/* ---------- COUNTDOWN COMPONENT (DB-synced) ---------- */
+/* ---------- Helpers ---------- */
+const FALLBACK_BG = "linear-gradient(to bottom right,#1b2735,#090a0f)";
+
+function parseCountdownSeconds(row: any): number {
+  // Prefer the new integer column
+  if (typeof row?.countdown_seconds === "number" && row.countdown_seconds > 0) {
+    return row.countdown_seconds;
+  }
+
+  // Back-compat if you still have `countdown` text like "10 seconds"
+  const raw = String(row?.countdown || "10 seconds").trim().toLowerCase();
+  const parts = raw.split(/\s+/);
+  const n = parseInt(parts[0] || "10", 10);
+  if (Number.isNaN(n)) return 10;
+
+  const unit = parts[1] || "seconds";
+  if (unit.startsWith("min")) return n * 60;
+  return n; // default seconds
+}
+
+/* ---------- COUNTDOWN COMPONENT (DB-synced + server-time synced) ---------- */
 function CountdownDisplay({
-  countdown,
+  totalSeconds,
   countdownActive,
   countdownStartedAt,
+  serverOffsetMs,
 }: {
-  countdown: string;
+  totalSeconds: number;
   countdownActive: boolean;
   countdownStartedAt?: string | null;
+  serverOffsetMs: number;
 }) {
   const [now, setNow] = useState<number>(() => Date.now());
-
-  // Parse "10 seconds" → 10
-  const totalSeconds = useMemo(() => {
-    const value =
-      countdown && countdown !== "none" ? countdown : "10 seconds";
-
-    const [numStr] = value.split(" ");
-    const num = parseInt(numStr, 10);
-    return isNaN(num) ? 10 : num;
-  }, [countdown]);
 
   useEffect(() => {
     if (!countdownActive || !countdownStartedAt) return;
 
-    const id = setInterval(() => {
-      setNow(Date.now());
-    }, 250);
-
-    return () => clearInterval(id);
+    const id = window.setInterval(() => setNow(Date.now()), 250);
+    return () => window.clearInterval(id);
   }, [countdownActive, countdownStartedAt]);
 
   if (!countdownActive || !countdownStartedAt) {
-    // Not in countdown yet → show full time as a static value
     const mFull = Math.floor(totalSeconds / 60);
     const sFull = totalSeconds % 60;
     return (
@@ -62,7 +70,8 @@ function CountdownDisplay({
   }
 
   const startMs = new Date(countdownStartedAt).getTime();
-  const elapsed = Math.max(0, (now - startMs) / 1000);
+  const nowMs = now + serverOffsetMs;
+  const elapsed = Math.max(0, (nowMs - startMs) / 1000);
   const remaining = Math.max(0, totalSeconds - elapsed);
 
   const m = Math.floor(remaining / 60);
@@ -85,17 +94,15 @@ function CountdownDisplay({
 /* -------------------------------------------------------------------------- */
 /* 🎮 TRIVIA INACTIVE WALL                                                     */
 /* -------------------------------------------------------------------------- */
-
-const FALLBACK_BG = "linear-gradient(to bottom right,#1b2735,#090a0f)";
-
-export default function TriviaInactiveWall({
-  trivia,
-}: TriviaInactiveWallProps) {
+export default function TriviaInactiveWall({ trivia }: TriviaInactiveWallProps) {
   const [bg, setBg] = useState<string>(FALLBACK_BG);
   const [brightness, setBrightness] = useState<number>(100);
 
+  // server-time offset (same approach as user UI)
+  const [serverOffsetMs, setServerOffsetMs] = useState<number>(0);
+
   const [wallState, setWallState] = useState({
-    countdown: trivia?.countdown || "10 seconds",
+    countdownSeconds: parseCountdownSeconds(trivia),
     countdownActive: trivia?.countdown_active === true,
     countdownStartedAt: trivia?.countdown_started_at || null,
     title: trivia?.title || "",
@@ -132,12 +139,47 @@ export default function TriviaInactiveWall({
     );
   };
 
+  /* ---------------------------------------------------------
+     Server clock sync (locks countdown timing to phones)
+  --------------------------------------------------------- */
+  useEffect(() => {
+    if (!trivia?.id) return;
+
+    let cancelled = false;
+
+    async function syncServerTime() {
+      try {
+        const t0 = Date.now();
+        const { data, error } = await supabase.rpc("server_time");
+        const t1 = Date.now();
+
+        if (cancelled) return;
+        if (error || !data) return;
+
+        const serverMs = new Date(data as any).getTime();
+        const rtt = t1 - t0;
+        const estimatedNow = t1 - rtt / 2;
+        setServerOffsetMs(serverMs - estimatedNow);
+      } catch {
+        // ignore
+      }
+    }
+
+    syncServerTime();
+    const id = window.setInterval(syncServerTime, 30000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [trivia?.id]);
+
   // Initial props → local state
   useEffect(() => {
     if (!trivia) return;
 
     setWallState({
-      countdown: trivia.countdown || "10 seconds",
+      countdownSeconds: parseCountdownSeconds(trivia),
       countdownActive: trivia.countdown_active === true,
       countdownStartedAt: trivia.countdown_started_at || null,
       title: trivia.title || "",
@@ -166,7 +208,7 @@ export default function TriviaInactiveWall({
 
           setWallState((prev) => ({
             ...prev,
-            countdown: next.countdown || prev.countdown || "10 seconds",
+            countdownSeconds: parseCountdownSeconds(next),
             countdownActive: next.countdown_active === true,
             countdownStartedAt: next.countdown_started_at || null,
             title: next.title ?? prev.title,
@@ -188,20 +230,12 @@ export default function TriviaInactiveWall({
       ? window.location.origin
       : "https://faninteract.vercel.app";
 
-  // Where they should land AFTER signup (the join page)
   const redirectPath = trivia?.id ? `/trivia/${trivia.id}/join` : "";
   const encodedRedirect = encodeURIComponent(redirectPath);
 
-  // Host UUID for signup. Prefer a direct host_id column, else nested host.id
-  const hostParam =
-    (trivia as any)?.host_id ||
-    (trivia as any)?.host?.id ||
-    "";
+  const hostParam = (trivia as any)?.host_id || (trivia as any)?.host?.id || "";
 
-  // Final QR value → hits signup directly, passes trivia + host + redirect
-  const qrValue = `${origin}/guest/signup?trivia=${
-    trivia?.id || ""
-  }&host=${hostParam}&redirect=${encodedRedirect}`;
+  const qrValue = `${origin}/guest/signup?trivia=${trivia?.id || ""}&host=${hostParam}&redirect=${encodedRedirect}`;
 
   /* ✅ LOGO PRIORITY */
   const displayLogo =
@@ -284,13 +318,7 @@ export default function TriviaInactiveWall({
         </div>
 
         {/* TEXT + LOGO AREA */}
-        <div
-          style={{
-            position: "relative",
-            flexGrow: 1,
-            marginLeft: "44%",
-          }}
-        >
+        <div style={{ position: "relative", flexGrow: 1, marginLeft: "44%" }}>
           {/* LOGO */}
           <div
             style={{
@@ -376,9 +404,10 @@ export default function TriviaInactiveWall({
             }}
           >
             <CountdownDisplay
-              countdown={wallState.countdown}
+              totalSeconds={wallState.countdownSeconds}
               countdownActive={wallState.countdownActive}
               countdownStartedAt={wallState.countdownStartedAt}
+              serverOffsetMs={serverOffsetMs}
             />
           </div>
         </div>

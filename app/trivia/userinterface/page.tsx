@@ -155,6 +155,31 @@ export default function TriviaUserInterfacePage() {
   const [lockedAdIndex, setLockedAdIndex] = useState<number>(0);
 
   /* ---------------------------------------------------------
+     ✅ COUNTDOWN TIMER (LOCKED TO INACTIVE WALL)
+     (DO NOT CHANGE OTHER FLOW)
+  --------------------------------------------------------- */
+  const [countdownSeconds, setCountdownSeconds] = useState<number>(10);
+  const [countdownActive, setCountdownActive] = useState<boolean>(false);
+  const [countdownStartedAt, setCountdownStartedAt] = useState<string | null>(
+    null
+  );
+
+  const countdownRemaining = useMemo(() => {
+    if (!countdownActive || !countdownStartedAt) return 0;
+
+    const startMs = new Date(countdownStartedAt).getTime();
+    const nowMs = Date.now() + serverOffsetMs;
+    const elapsed = Math.max(0, (nowMs - startMs) / 1000);
+
+    return Math.max(0, (countdownSeconds || 10) - elapsed);
+  }, [countdownActive, countdownStartedAt, countdownSeconds, serverOffsetMs]);
+
+  const isCountdownRunning =
+    Boolean(countdownActive) &&
+    Boolean(countdownStartedAt) &&
+    countdownRemaining > 0.01;
+
+  /* ---------------------------------------------------------
      Server clock sync
   --------------------------------------------------------- */
   useEffect(() => {
@@ -231,7 +256,10 @@ export default function TriviaUserInterfacePage() {
           background_type,
           background_value,
           background_brightness,
-          ads_enabled
+          ads_enabled,
+          countdown_seconds,
+          countdown_active,
+          countdown_started_at
         `
         )
         .eq("id", gameId)
@@ -247,23 +275,29 @@ export default function TriviaUserInterfacePage() {
       }
 
       setTrivia(card);
-      setAdsEnabled(Boolean(card.ads_enabled));
+      setAdsEnabled(Boolean((card as any).ads_enabled));
+
+      // ✅ countdown state seed (locks to inactive wall)
+      setCountdownSeconds(
+        typeof (card as any).countdown_seconds === "number"
+          ? (card as any).countdown_seconds
+          : 10
+      );
+      setCountdownActive(Boolean((card as any).countdown_active));
+      setCountdownStartedAt((card as any).countdown_started_at ?? null);
 
       // 2) host row (logo + master_id + injector_enabled)
       let logo = "/faninteractlogo.png";
-      if (card.host_id) {
+      if ((card as any).host_id) {
         const { data: host, error: hostErr } = await supabase
           .from("hosts")
           .select("id,master_id,branding_logo_url,logo_url,injector_enabled")
-          .eq("id", card.host_id)
+          .eq("id", (card as any).host_id)
           .maybeSingle();
 
         if (!hostErr && host) {
           setHostRow(host as HostRow);
-          logo =
-            host.branding_logo_url?.trim() ||
-            host.logo_url?.trim() ||
-            logo;
+          logo = host.branding_logo_url?.trim() || host.logo_url?.trim() || logo;
         }
       }
       if (!cancelled) setHostLogoUrl(logo);
@@ -292,7 +326,7 @@ export default function TriviaUserInterfacePage() {
       }
 
       setSession(sessionRow as TriviaSession);
-      setQuestionStartedAt(sessionRow.question_started_at ?? null);
+      setQuestionStartedAt((sessionRow as any).question_started_at ?? null);
 
       // seed ad lock to current question immediately
       const initialQ = Number((sessionRow as any)?.current_question ?? 1);
@@ -304,7 +338,7 @@ export default function TriviaUserInterfacePage() {
       const { data: playerRow, error: playerErr } = await supabase
         .from("trivia_players")
         .select("id,status")
-        .eq("session_id", sessionRow.id)
+        .eq("session_id", (sessionRow as any).id)
         .eq("guest_id", profile.id)
         .maybeSingle();
 
@@ -317,7 +351,7 @@ export default function TriviaUserInterfacePage() {
         return;
       }
 
-      setPlayerId(playerRow.id);
+      setPlayerId((playerRow as any).id);
 
       // 5) questions
       setLoadingMessage("Loading questions…");
@@ -351,6 +385,41 @@ export default function TriviaUserInterfacePage() {
       cancelled = true;
     };
   }, [gameId, profile?.id, router]);
+
+  /* ---------------------------------------------------------
+     ✅ Subscribe to trivia_cards countdown fields (LOCKS TO INACTIVE WALL)
+     (does not change existing polling behavior for ads_enabled)
+  --------------------------------------------------------- */
+  useEffect(() => {
+    if (!gameId) return;
+
+    const ch = supabase
+      .channel(`trivia-cards-ui-${gameId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "trivia_cards",
+          filter: `id=eq.${gameId}`,
+        },
+        (payload: any) => {
+          const next = payload?.new;
+          if (!next) return;
+
+          if (typeof next.countdown_seconds === "number") {
+            setCountdownSeconds(next.countdown_seconds);
+          }
+          setCountdownActive(next.countdown_active === true);
+          setCountdownStartedAt(next.countdown_started_at ?? null);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(ch);
+    };
+  }, [gameId]);
 
   /* ---------------------------------------------------------
      Poll trivia_cards.ads_enabled every 5 seconds (mid-game toggle)
@@ -712,14 +781,15 @@ export default function TriviaUserInterfacePage() {
 
       const totals = new Map<string, number>();
       for (const a of answers || []) {
-        const pts = typeof (a as any).points === "number" ? (a as any).points : 0;
-        totals.set((a as any).player_id, (totals.get((a as any).player_id) || 0) + pts);
+        const pts =
+          typeof (a as any).points === "number" ? (a as any).points : 0;
+        totals.set(
+          (a as any).player_id,
+          (totals.get((a as any).player_id) || 0) + pts
+        );
       }
 
-      const guestMap = new Map<
-        string,
-        { name: string; selfieUrl: string | null }
-      >();
+      const guestMap = new Map<string, { name: string; selfieUrl: string | null }>();
 
       if (guestIds.length > 0) {
         const { data: guests, error: guestsErr } = await supabase
@@ -783,6 +853,9 @@ export default function TriviaUserInterfacePage() {
     if (!playerId) return;
     if (hasAnswered || locked) return;
     if (wallPhase !== "question") return;
+
+    // ✅ countdown lock (prevents answering during pre-game countdown)
+    if (isCountdownRunning) return;
 
     setSelectedIndex(idx);
     setHasAnswered(true);
@@ -1079,7 +1152,12 @@ export default function TriviaUserInterfacePage() {
                 typeof currentQuestion.correct_index === "number" &&
                 idx === currentQuestion.correct_index;
 
-              const disabled = hasAnswered || locked || wallPhase !== "question";
+              // ✅ countdown lock added (only change here)
+              const disabled =
+                hasAnswered ||
+                locked ||
+                wallPhase !== "question" ||
+                isCountdownRunning;
 
               let bgBtn = "rgba(15,23,42,0.85)";
               let border = "1px solid rgba(148,163,184,0.4)";
@@ -1280,6 +1358,51 @@ export default function TriviaUserInterfacePage() {
                 }}
               >
                 THE ANSWER IS…
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ✅ PRE-GAME COUNTDOWN OVERLAY (LOCKED TO INACTIVE WALL) */}
+        {isCountdownRunning && (
+          <div
+            style={{
+              position: "absolute",
+              inset: 0,
+              background: "rgba(0,0,0,0.75)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              zIndex: 80,
+              padding: 20,
+              textAlign: "center",
+            }}
+          >
+            <div>
+              <div
+                style={{
+                  fontSize: "1.2rem",
+                  fontWeight: 900,
+                  letterSpacing: 1,
+                  opacity: 0.9,
+                  textTransform: "uppercase",
+                }}
+              >
+                GAME STARTING IN
+              </div>
+
+              <div
+                style={{
+                  fontSize: "clamp(4rem,10vw,7rem)",
+                  fontWeight: 1000,
+                  marginTop: 10,
+                  textShadow: "0 0 30px rgba(0,0,0,0.75)",
+                }}
+              >
+                {Math.floor(countdownRemaining / 60)}:
+                {Math.floor(countdownRemaining % 60)
+                  .toString()
+                  .padStart(2, "0")}
               </div>
             </div>
           </div>
