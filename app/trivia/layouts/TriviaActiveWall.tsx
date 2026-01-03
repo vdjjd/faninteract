@@ -31,6 +31,8 @@ type LeaderRow = {
   points: number;
 };
 
+// ✅ wall authority phases
+type WallPhase = "question" | "overlay" | "reveal" | "leaderboard" | "podium";
 type WallView = "question" | "leaderboard" | "podium";
 
 /* ---------------------------------------------------- */
@@ -84,9 +86,12 @@ const LEADER_UI = {
 const fallbackLogo = "/faninteractlogo.png";
 
 /* ---------------------------------------------------- */
-/* TIMER CONFIG (DEFAULT/FALLBACK)                      */
+/* PHASE DURATIONS (WALL AUTHORITY)                     */
 /* ---------------------------------------------------- */
-const QUESTION_DURATION_MS = 30000;
+const OVERLAY_MS = 5000;      // "THE ANSWER IS"
+const REVEAL_MS = 8000;       // show correct answer
+const LEADERBOARD_MS = 8000;  // leaderboard display
+
 // how often to update the bar on WALL (ms)
 const WALL_TIMER_STEP_MS = 30;
 
@@ -166,7 +171,6 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
     trivia?.host?.logo_url?.trim() ||
     fallbackLogo;
 
-  // ✅ NEW: use same background config as card/inactive wall
   const bg =
     trivia?.background_type === "image"
       ? `url(${trivia.background_value}) center/cover no-repeat`
@@ -189,6 +193,13 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
     null
   );
 
+  // ✅ session + wall authority
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [wallPhase, setWallPhase] = useState<WallPhase>("question");
+  const [wallPhaseStartedAt, setWallPhaseStartedAt] = useState<string | null>(
+    null
+  );
+
   const [progress, setProgress] = useState(1);
   const [locked, setLocked] = useState(false);
 
@@ -200,51 +211,143 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
   const [topRanks, setTopRanks] = useState<TopRankRow[]>([]);
   const topRanksRef = useRef<TopRankRow[]>([]);
 
-  // Full leaderboard rows (top 10)
   const [leaderRows, setLeaderRows] = useState<LeaderRow[]>([]);
   const leaderRowsRef = useRef<LeaderRow[]>([]);
   const [leaderLoading, setLeaderLoading] = useState(false);
 
-  // prevent duplicate transitions
-  const transitionLockRef = useRef(false);
-
   const timerSeconds: number = trivia?.timer_seconds ?? 30;
 
   /* -------------------------------------------------- */
-  /* FETCH CURRENT QUESTION (POLLING)                    */
+  /* ✅ SERVER CLOCK OFFSET                              */
+  /* -------------------------------------------------- */
+  const serverOffsetRef = useRef(0); // serverNowMs - deviceNowMs
+
+  async function syncServerOffset() {
+    // Prefer server_time(), fall back to trivia_server_time() if that’s what exists
+    const attempt = async (fn: string) => {
+      const { data, error } = await supabase.rpc(fn);
+      return { data, error };
+    };
+
+    let res = await attempt("server_time");
+    if (res.error) {
+      res = await attempt("trivia_server_time");
+    }
+
+    if (res.error || !res.data) {
+      console.warn("⚠️ server time rpc error:", res.error);
+      return;
+    }
+
+    const serverMs = new Date(res.data as any).getTime();
+    serverOffsetRef.current = serverMs - Date.now();
+  }
+
+  function nowServerMs() {
+    return Date.now() + serverOffsetRef.current;
+  }
+
+  useEffect(() => {
+    syncServerOffset();
+    const id = window.setInterval(syncServerOffset, 15000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  /* -------------------------------------------------- */
+  /* ✅ Phase writer (idempotent + guarded)               */
+  /* -------------------------------------------------- */
+  const phaseWriteLockRef = useRef(false);
+
+  async function setWallPhaseAuthoritative(
+    next: WallPhase,
+    expectedPrev?: WallPhase
+  ) {
+    if (!sessionId) return;
+    if (phaseWriteLockRef.current) return;
+
+    phaseWriteLockRef.current = true;
+    try {
+      // Prefer RPC if you have it (server-side now())
+      const { error: rpcErr } = await supabase.rpc("trivia_set_wall_phase", {
+        p_session_id: sessionId,
+        p_phase: next,
+        p_expected_prev: expectedPrev ?? null,
+      });
+
+      if (!rpcErr) return;
+
+      // Fallback: direct guarded update (uses client-estimated server time)
+      const iso = new Date(nowServerMs()).toISOString();
+      let q = supabase
+        .from("trivia_sessions")
+        .update({
+          wall_phase: next,
+          wall_phase_started_at: iso,
+        })
+        .eq("id", sessionId);
+
+      if (expectedPrev) q = q.eq("wall_phase", expectedPrev);
+
+      const { error: updErr } = await q;
+      if (updErr) console.warn("⚠️ wall_phase update fallback error:", updErr);
+    } finally {
+      phaseWriteLockRef.current = false;
+    }
+  }
+
+  /* -------------------------------------------------- */
+  /* ✅ Poll session: current_question + phase authority  */
   /* -------------------------------------------------- */
   useEffect(() => {
     if (!trivia?.id) return;
 
     let alive = true;
 
-    async function fetchCurrentQuestion() {
+    async function pollSession() {
       const { data: session, error: sessionErr } = await supabase
         .from("trivia_sessions")
-        .select("current_question, question_started_at")
+        .select(
+          "id,status,current_question,question_started_at,wall_phase,wall_phase_started_at"
+        )
         .eq("trivia_card_id", trivia.id)
-        .eq("status", "running")
+        .neq("status", "finished")
+        .order("created_at", { ascending: false })
+        .limit(1)
         .maybeSingle();
 
       if (sessionErr) {
-        console.error("❌ trivia_sessions fetch error:", sessionErr);
+        console.error("❌ trivia_sessions poll error:", sessionErr);
         return;
       }
 
-      if (!session || !session.current_question) {
-        if (alive) {
-          setQuestion(null);
-          setCurrentQuestionNumber(null);
-          setTotalQuestions(null);
-          setQuestionStartedAt(null);
-        }
+      if (!session?.id || session.status !== "running" || !session.current_question) {
+        if (!alive) return;
+        setSessionId(null);
+        setWallPhase("question");
+        setWallPhaseStartedAt(null);
+        setQuestion(null);
+        setCurrentQuestionNumber(null);
+        setTotalQuestions(null);
+        setQuestionStartedAt(null);
         return;
       }
 
-      const index = Math.max(0, session.current_question - 1);
+      if (!alive) return;
+
+      setSessionId(session.id);
       setCurrentQuestionNumber(session.current_question);
       setQuestionStartedAt(session.question_started_at ?? null);
 
+      const safePhase = (session.wall_phase || "question") as WallPhase;
+      setWallPhase(safePhase);
+      setWallPhaseStartedAt(session.wall_phase_started_at ?? null);
+
+      // If phase is NULL in DB (old rows), initialize to question once.
+      if (!session.wall_phase) {
+        setWallPhaseAuthoritative("question", undefined);
+      }
+
+      // Load questions list (ordered)
       const { data: qs, error: qErr } = await supabase
         .from("trivia_questions")
         .select("*")
@@ -258,30 +361,194 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
       }
 
       if (!qs || qs.length === 0) {
-        if (alive) {
-          setQuestion(null);
-          setTotalQuestions(0);
-        }
+        setQuestion(null);
+        setTotalQuestions(0);
         return;
       }
 
-      const safeIndex = Math.min(index, qs.length - 1);
-      const current = qs[safeIndex];
+      setTotalQuestions(qs.length);
 
-      if (alive) {
-        setQuestion(current);
-        setTotalQuestions(qs.length);
-      }
+      const index = Math.max(0, session.current_question - 1);
+      const safeIndex = Math.min(index, qs.length - 1);
+      setQuestion(qs[safeIndex]);
     }
 
-    fetchCurrentQuestion();
-    const interval = setInterval(fetchCurrentQuestion, 1000);
+    pollSession();
+    const interval = setInterval(pollSession, 1000);
 
     return () => {
       alive = false;
       clearInterval(interval);
     };
   }, [trivia?.id]);
+
+  /* -------------------------------------------------- */
+  /* ✅ UI follows wall_phase ONLY                        */
+  /* -------------------------------------------------- */
+  useEffect(() => {
+    // view
+    if (wallPhase === "leaderboard") setView("leaderboard");
+    else if (wallPhase === "podium") setView("podium");
+    else setView("question");
+
+    // overlays
+    setShowAnswerOverlay(wallPhase === "overlay");
+    setRevealAnswer(wallPhase === "reveal");
+
+    // lock answering after question ends
+    setLocked(wallPhase !== "question");
+  }, [wallPhase]);
+
+  const isFinalQuestion =
+    totalQuestions != null && currentQuestionNumber != null
+      ? currentQuestionNumber >= totalQuestions
+      : false;
+
+  /* -------------------------------------------------- */
+  /* ✅ QUESTION TIMER (bar only) + phase trigger         */
+  /* wallPhase === 'question' is the only active timer    */
+  /* -------------------------------------------------- */
+  useEffect(() => {
+    let intervalId: number | null = null;
+
+    if (
+      !isRunning ||
+      !sessionId ||
+      currentQuestionNumber == null ||
+      !questionStartedAt ||
+      wallPhase !== "question"
+    ) {
+      // freeze bar if not in question phase
+      if (wallPhase !== "question") {
+        setProgress(0);
+        setLocked(true);
+      } else {
+        setProgress(1);
+        setLocked(false);
+      }
+      return () => {
+        if (intervalId != null) window.clearInterval(intervalId);
+      };
+    }
+
+    setLocked(false);
+    setProgress(1);
+
+    const durationMs =
+      typeof timerSeconds === "number" && timerSeconds > 0
+        ? timerSeconds * 1000
+        : 30000;
+
+    const startMs = new Date(questionStartedAt).getTime();
+
+    const update = async () => {
+      const now = nowServerMs();
+      const elapsed = now - startMs;
+      const remaining = Math.max(0, durationMs - elapsed);
+      const frac = remaining / durationMs;
+
+      setProgress(frac);
+
+      if (remaining <= 0) {
+        setLocked(true);
+        // ✅ advance wall authority to overlay ONCE (guarded)
+        await setWallPhaseAuthoritative("overlay", "question");
+        if (intervalId != null) {
+          window.clearInterval(intervalId);
+          intervalId = null;
+        }
+      }
+    };
+
+    update();
+    intervalId = window.setInterval(update, WALL_TIMER_STEP_MS);
+
+    return () => {
+      if (intervalId != null) window.clearInterval(intervalId);
+    };
+  }, [
+    isRunning,
+    sessionId,
+    currentQuestionNumber,
+    questionStartedAt,
+    timerSeconds,
+    wallPhase,
+  ]);
+
+  /* -------------------------------------------------- */
+  /* ✅ PHASE MACHINE (wall authority)                    */
+  /* overlay -> reveal -> leaderboard/podium -> advance   */
+  /* -------------------------------------------------- */
+  useEffect(() => {
+    if (!isRunning) return;
+    if (!sessionId) return;
+    if (!wallPhaseStartedAt) return;
+
+    let cancelled = false;
+
+    const tick = async () => {
+      if (cancelled) return;
+
+      const startedMs = new Date(wallPhaseStartedAt).getTime();
+      const elapsed = nowServerMs() - startedMs;
+
+      if (wallPhase === "overlay" && elapsed >= OVERLAY_MS) {
+        await setWallPhaseAuthoritative("reveal", "overlay");
+      }
+
+      if (wallPhase === "reveal" && elapsed >= REVEAL_MS) {
+        if (isFinalQuestion) {
+          await setWallPhaseAuthoritative("podium", "reveal");
+        } else {
+          await setWallPhaseAuthoritative("leaderboard", "reveal");
+        }
+      }
+
+      if (wallPhase === "leaderboard" && elapsed >= LEADERBOARD_MS) {
+        if (isFinalQuestion) {
+          await setWallPhaseAuthoritative("podium", "leaderboard");
+          return;
+        }
+
+        // ✅ advance question (server time) and set phase back to question
+        const { error: rpcErr } = await supabase.rpc("trivia_advance_question", {
+          p_trivia_card_id: trivia.id,
+        });
+
+        if (rpcErr) {
+          console.error("❌ trivia_advance_question RPC error:", rpcErr);
+
+          // Fallback: approximate with server-offset ISO
+          const iso = new Date(nowServerMs()).toISOString();
+          await supabase
+            .from("trivia_sessions")
+            .update({
+              current_question: (currentQuestionNumber ?? 0) + 1,
+              question_started_at: iso,
+              wall_phase: "question",
+              wall_phase_started_at: iso,
+            })
+            .eq("id", sessionId);
+        }
+      }
+    };
+
+    tick();
+    const id = window.setInterval(tick, 200);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [
+    isRunning,
+    sessionId,
+    wallPhase,
+    wallPhaseStartedAt,
+    isFinalQuestion,
+    trivia?.id,
+    currentQuestionNumber,
+  ]);
 
   /* -------------------------------------------------- */
   /* TOP 3 RANKINGS (AUTO UPDATE)                        */
@@ -400,7 +667,6 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
         })
         .sort((a: any, b: any) => b.points - a.points);
 
-      // if everybody is still on 0, don't show any "leaders" yet
       const maxPoints = rows.length ? Math.max(...rows.map((r) => r.points)) : 0;
       if (maxPoints <= 0) {
         if (!cancelled && topRanksRef.current.length) {
@@ -543,7 +809,6 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
         .sort((a: any, b: any) => b.points - a.points)
         .map((r: any, idx: number) => ({ ...r, rank: idx + 1 }));
 
-      // hide leaderboard if literally everyone is still on 0
       const hasPoints = built.some((r) => r.points > 0);
       const finalRows = hasPoints ? built : [];
 
@@ -563,175 +828,6 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
       window.clearInterval(id);
     };
   }, [trivia?.id, isRunning, view]);
-
-  /* -------------------------------------------------- */
-  /* TIMER — DB-SYNCED VIA setInterval (WALL ONLY)       */
-  /* -------------------------------------------------- */
-  useEffect(() => {
-    let intervalId: number | null = null;
-
-    if (
-      !isRunning ||
-      currentQuestionNumber == null ||
-      !questionStartedAt ||
-      view !== "question"
-    ) {
-      setProgress(1);
-      setLocked(false);
-      setShowAnswerOverlay(false);
-      setRevealAnswer(false);
-      return () => {
-        if (intervalId != null) window.clearInterval(intervalId);
-      };
-    }
-
-    // per-question reset
-    transitionLockRef.current = false;
-    setLocked(false);
-    setShowAnswerOverlay(false);
-    setRevealAnswer(false);
-    setProgress(1);
-
-    const durationMs =
-      typeof trivia?.timer_seconds === "number" && trivia.timer_seconds > 0
-        ? trivia.timer_seconds * 1000
-        : QUESTION_DURATION_MS;
-
-    const startMs = new Date(questionStartedAt).getTime();
-
-    const update = () => {
-      const now = Date.now();
-      const elapsed = now - startMs;
-      const remaining = Math.max(0, durationMs - elapsed);
-      const frac = remaining / durationMs;
-
-      setProgress(frac);
-
-      if (remaining <= 0) {
-        setLocked(true);
-        if (intervalId != null) {
-          window.clearInterval(intervalId);
-          intervalId = null;
-        }
-      }
-    };
-
-    // run once immediately
-    update();
-    intervalId = window.setInterval(update, WALL_TIMER_STEP_MS);
-
-    return () => {
-      if (intervalId != null) {
-        window.clearInterval(intervalId);
-      }
-    };
-  }, [
-    isRunning,
-    currentQuestionNumber,
-    questionStartedAt,
-    trivia?.timer_seconds,
-    view,
-  ]);
-
-  /* -------------------------------------------------- */
-  /* ANSWER REVEAL FLOW                                  */
-  /* -------------------------------------------------- */
-  useEffect(() => {
-    if (view !== "question") return;
-
-    if (!locked) {
-      setShowAnswerOverlay(false);
-      setRevealAnswer(false);
-      return;
-    }
-
-    setShowAnswerOverlay(true);
-    setRevealAnswer(false);
-
-    const timeoutId = window.setTimeout(() => {
-      setShowAnswerOverlay(false);
-      setRevealAnswer(true);
-    }, 5000);
-
-    return () => window.clearTimeout(timeoutId);
-  }, [locked, view]);
-
-  /* -------------------------------------------------- */
-  /* AFTER REVEAL → LEADERBOARD OR PODIUM                */
-  /* -------------------------------------------------- */
-  useEffect(() => {
-    if (view !== "question") return;
-    if (!revealAnswer) return;
-    if (!isRunning) return;
-    if (currentQuestionNumber == null) return;
-
-    if (transitionLockRef.current) return;
-    transitionLockRef.current = true;
-
-    // figure out if this is the final question
-    const isFinalQuestion =
-      totalQuestions != null && currentQuestionNumber != null
-        ? currentQuestionNumber >= totalQuestions
-        : false;
-
-    const toNextView = window.setTimeout(() => {
-      if (isFinalQuestion) {
-        // 🔥 FINAL QUESTION → PODIUM VIEW
-        setView("podium");
-      } else {
-        // normal questions → leaderboard view
-        setView("leaderboard");
-        setLeaderLoading(true);
-      }
-    }, 8000);
-
-    return () => window.clearTimeout(toNextView);
-  }, [revealAnswer, isRunning, currentQuestionNumber, totalQuestions, view]);
-
-  /* -------------------------------------------------- */
-  /* LEADERBOARD VIEW TIMER (8s) THEN ADVANCE QUESTION   */
-  /* -------------------------------------------------- */
-  useEffect(() => {
-    if (view !== "leaderboard") return;
-    if (!isRunning) return;
-    if (currentQuestionNumber == null) return;
-
-    const timeoutId = window.setTimeout(async () => {
-      try {
-        if (totalQuestions != null && currentQuestionNumber >= totalQuestions) {
-          // last question: stay on leaderboard (or podium if we used it)
-          return;
-        }
-
-        // ✅ PATCH: advance via RPC so question_started_at is SERVER "now()"
-        const { error: rpcErr } = await supabase.rpc(
-          "trivia_advance_question",
-          { p_trivia_card_id: trivia.id }
-        );
-
-        if (rpcErr) {
-          console.error("❌ trivia_advance_question RPC error:", rpcErr);
-
-          // Fallback (keeps game alive, but uses client time)
-          await supabase
-            .from("trivia_sessions")
-            .update({
-              current_question: currentQuestionNumber + 1,
-              question_started_at: new Date().toISOString(),
-            })
-            .eq("trivia_card_id", trivia.id)
-            .eq("status", "running");
-        }
-
-        setView("question");
-      } catch (err) {
-        console.error("❌ leaderboard advance error:", err);
-        setView("question");
-      }
-    }, 8000);
-
-    return () => window.clearTimeout(timeoutId);
-  }, [view, isRunning, currentQuestionNumber, totalQuestions, trivia?.id]);
 
   /* -------------------------------------------------- */
   /* AUTO-SCALE QUESTION TEXT TO ~2 LINES               */
@@ -809,11 +905,6 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
 
   const qrValue = `${origin}/trivia/${trivia?.id}/join`;
 
-  const isFinalQuestion =
-    totalQuestions != null && currentQuestionNumber != null
-      ? currentQuestionNumber >= totalQuestions
-      : false;
-
   return (
     <>
       <div
@@ -881,7 +972,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                   width: `${progress * 100}%`,
                   height: "100%",
                   background:
-                    revealAnswer || locked
+                    revealAnswer || locked || wallPhase !== "question"
                       ? "linear-gradient(to right,#ef4444,#dc2626)"
                       : "linear-gradient(to right,#4ade80,#22c55e)",
                   transition: "width 0.05s linear, background 0.2s ease",
@@ -1203,16 +1294,10 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
         )}
 
         {/* =======================
-            PODIUM VIEW (FINAL QUESTION)
+            PODIUM VIEW
         ======================= */}
         {view === "podium" && (
-          <div
-            style={{
-              width: "100vw",
-              height: "100vh",
-              position: "relative",
-            }}
-          >
+          <div style={{ width: "100vw", height: "100vh", position: "relative" }}>
             <TriviaPodum trivia={trivia} />
           </div>
         )}
@@ -1259,7 +1344,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
           </div>
         )}
 
-        {/* TOP 3 LEADERS (show only in question view, NOT on final question) */}
+        {/* TOP 3 LEADERS (question view only, NOT final question) */}
         {view === "question" && !isFinalQuestion && (
           <div
             style={{
@@ -1383,7 +1468,6 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
         )}
       </div>
 
-      {/* ✅ FIXED: standard style tag (no jsx/global props) */}
       <style>{`
         @keyframes fiAnswerGlow {
           0% {

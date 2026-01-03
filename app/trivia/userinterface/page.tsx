@@ -27,6 +27,10 @@ interface TriviaSession {
   current_round: number;
   current_question: number;
   question_started_at: string | null;
+
+  // ✅ wall authority
+  wall_phase?: string | null; // 'question'|'overlay'|'reveal'|'leaderboard'|'podium'
+  wall_phase_started_at?: string | null;
 }
 
 type UIView = "question" | "leaderboard";
@@ -95,19 +99,21 @@ export default function TriviaUserInterfacePage() {
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [hasAnswered, setHasAnswered] = useState(false);
 
-  // Timer + phases (lockstep with wall)
+  // Timer (question time only)
   const [progress, setProgress] = useState<number>(1); // 1 → 0
   const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
   const [locked, setLocked] = useState(false);
+
+  // Wall-authority phases (UI follows these)
   const [showAnswerOverlay, setShowAnswerOverlay] = useState(false);
   const [revealAnswer, setRevealAnswer] = useState(false);
 
-  // View: question vs leaderboard
+  // View: question vs leaderboard (also wall-authority)
   const [view, setView] = useState<UIView>("question");
   const [leaderRows, setLeaderRows] = useState<LeaderRow[]>([]);
   const [leaderLoading, setLeaderLoading] = useState(false);
 
-  // DB-anchored start time (same concept as wall)
+  // DB-anchored start time
   const [questionStartedAt, setQuestionStartedAt] = useState<string | null>(
     null
   );
@@ -115,12 +121,12 @@ export default function TriviaUserInterfacePage() {
   // interval id for timer
   const timerIntervalRef = useRef<number | null>(null);
 
-  // ✅ NEW: server-time offset to prevent drift
+  // ✅ server-time offset to prevent drift
   const [serverOffsetMs, setServerOffsetMs] = useState<number>(0);
 
   /* ---------------------------------------------------------
      ✅ Server clock sync (prevents drift)
-     Requires your SQL function: public.server_time()
+     Requires SQL: public.server_time()
   --------------------------------------------------------- */
   useEffect(() => {
     if (!gameId) return;
@@ -135,14 +141,13 @@ export default function TriviaUserInterfacePage() {
 
         if (cancelled) return;
         if (error || !data) {
-          // If RPC isn't available yet, we just fall back to local time.
           console.warn("⚠️ server_time RPC unavailable:", error);
           return;
         }
 
         const serverMs = new Date(data as any).getTime();
-        const rtt = t1 - t0; // round trip time
-        const estimatedNow = t1 - rtt / 2; // best guess of client time when server replied
+        const rtt = t1 - t0;
+        const estimatedNow = t1 - rtt / 2;
         const offset = serverMs - estimatedNow;
 
         setServerOffsetMs(offset);
@@ -152,7 +157,7 @@ export default function TriviaUserInterfacePage() {
     }
 
     syncServerTime();
-    const id = window.setInterval(syncServerTime, 30000); // refresh every 30s
+    const id = window.setInterval(syncServerTime, 30000);
 
     return () => {
       cancelled = true;
@@ -184,7 +189,7 @@ export default function TriviaUserInterfacePage() {
       setLoading(true);
       setLoadingMessage("Loading trivia game…");
 
-      // 1️⃣ Load trivia card (include host_id + background settings)
+      // 1️⃣ Load trivia card
       const { data: card, error: cardErr } = await supabase
         .from("trivia_cards")
         .select(
@@ -213,7 +218,7 @@ export default function TriviaUserInterfacePage() {
 
       setTrivia(card);
 
-      // 2️⃣ Host logo (branding_logo_url → logo_url → fallback)
+      // 2️⃣ Host logo
       let logo = "/faninteractlogo.png";
       if (card.host_id) {
         const { data: hostRow, error: hostErr } = await supabase
@@ -231,13 +236,13 @@ export default function TriviaUserInterfacePage() {
       }
       if (!cancelled) setHostLogoUrl(logo);
 
-      // 3️⃣ Latest session for this card (waiting or running)
+      // 3️⃣ Latest session for this card
       setLoadingMessage("Connecting to game session…");
 
       const { data: sessionRow, error: sessionErr } = await supabase
         .from("trivia_sessions")
         .select(
-          "id,status,current_round,current_question,question_started_at,created_at"
+          "id,status,current_round,current_question,question_started_at,wall_phase,wall_phase_started_at,created_at"
         )
         .eq("trivia_card_id", gameId)
         .neq("status", "finished")
@@ -278,7 +283,7 @@ export default function TriviaUserInterfacePage() {
 
       setPlayerId(playerRow.id);
 
-      // 5️⃣ Load active questions for the card (ordered)
+      // 5️⃣ Load active questions
       setLoadingMessage("Loading questions…");
 
       const { data: qs, error: qErr } = await supabase
@@ -312,7 +317,7 @@ export default function TriviaUserInterfacePage() {
   }, [gameId, profile?.id, router]);
 
   /* ---------------------------------------------------------
-     Poll trivia_sessions for current_question / status / start time
+     Poll trivia_sessions for current_question / status / wall_phase
   --------------------------------------------------------- */
   useEffect(() => {
     if (!gameId || !session?.id) return;
@@ -320,7 +325,9 @@ export default function TriviaUserInterfacePage() {
     const doPoll = async () => {
       const { data, error } = await supabase
         .from("trivia_sessions")
-        .select("id,status,current_round,current_question,question_started_at")
+        .select(
+          "id,status,current_round,current_question,question_started_at,wall_phase,wall_phase_started_at"
+        )
         .eq("id", session.id)
         .maybeSingle();
 
@@ -339,7 +346,6 @@ export default function TriviaUserInterfacePage() {
 
     doPoll();
     const id = window.setInterval(doPoll, 1000);
-
     return () => window.clearInterval(id);
   }, [session?.id, gameId]);
 
@@ -360,30 +366,62 @@ export default function TriviaUserInterfacePage() {
   const currentQuestion = questions[currentQuestionIndex] || null;
   const isRunning = session?.status === "running";
 
+  // ✅ Wall authority phase
+  const wallPhase = (session?.wall_phase || "question") as
+    | "question"
+    | "overlay"
+    | "reveal"
+    | "leaderboard"
+    | "podium";
+
   /* ---------------------------------------------------------
-     When question changes → reset state + go back to question view
+     ✅ Follow wall phase EXACTLY (no client phase timers)
+     ✅ PATCH: podium should behave like leaderboard for phones
+     ✅ PATCH: lock should also UNLOCK when phase returns to question
+  --------------------------------------------------------- */
+  useEffect(() => {
+    const isBoard = wallPhase === "leaderboard" || wallPhase === "podium";
+
+    // View is wall-driven
+    if (isBoard) {
+      setView("leaderboard");
+      setLeaderLoading(true);
+    } else {
+      setView("question");
+    }
+
+    // Overlay + reveal are wall-driven
+    setShowAnswerOverlay(wallPhase === "overlay");
+    setRevealAnswer(wallPhase === "reveal");
+
+    // ✅ IMPORTANT: lock/unlock follows wallPhase BOTH ways
+    setLocked(wallPhase !== "question");
+  }, [wallPhase]);
+
+  /* ---------------------------------------------------------
+     When question changes → reset local answer state
   --------------------------------------------------------- */
   useEffect(() => {
     if (!currentQuestion?.id) return;
-    setView("question");
+
     setLeaderRows([]);
     setLeaderLoading(false);
 
     setSelectedIndex(null);
     setHasAnswered(false);
-    setLocked(false);
-    setShowAnswerOverlay(false);
-    setRevealAnswer(false);
+
+    // Only unlock if wall says we're in question phase
+    setLocked(wallPhase !== "question");
     setProgress(1);
     setSecondsLeft(timerSeconds);
-  }, [currentQuestion?.id, timerSeconds]);
+  }, [currentQuestion?.id, timerSeconds, wallPhase]);
 
   /* ---------------------------------------------------------
-     TIMER: single source of truth = questionStartedAt
-     ✅ Uses serverOffsetMs to prevent drift
+     TIMER: source of truth = questionStartedAt
+     ✅ Uses serverOffsetMs
+     ✅ Stops updating bar when wall leaves 'question'
   --------------------------------------------------------- */
   useEffect(() => {
-    // clear any existing interval
     if (timerIntervalRef.current !== null) {
       window.clearInterval(timerIntervalRef.current);
       timerIntervalRef.current = null;
@@ -393,10 +431,16 @@ export default function TriviaUserInterfacePage() {
       !isRunning ||
       !currentQuestion ||
       !questionStartedAt ||
-      view !== "question"
+      wallPhase !== "question"
     ) {
-      setProgress(1);
-      setSecondsLeft(timerSeconds);
+      // freeze at 0 if wall is beyond question
+      if (wallPhase !== "question") {
+        setProgress(0);
+        setSecondsLeft(0);
+      } else {
+        setProgress(1);
+        setSecondsLeft(timerSeconds);
+      }
       return;
     }
 
@@ -404,7 +448,7 @@ export default function TriviaUserInterfacePage() {
     const startedMs = new Date(questionStartedAt).getTime();
 
     const updateFromDbTime = () => {
-      const now = Date.now() + serverOffsetMs; // ✅ synced time
+      const now = Date.now() + serverOffsetMs;
       const elapsed = now - startedMs;
       const remaining = Math.max(0, durationMs - elapsed);
       const frac = remaining / durationMs;
@@ -413,15 +457,12 @@ export default function TriviaUserInterfacePage() {
       const secs = Math.max(0, Math.ceil(remaining / 1000));
       setSecondsLeft(secs);
 
-      if (remaining <= 0) {
-        setLocked(true);
-      }
+      // ✅ lock answering at 0 even if wall phase update is delayed
+      if (remaining <= 0) setLocked(true);
     };
 
     updateFromDbTime();
-
-    const intervalId = window.setInterval(updateFromDbTime, 100);
-    timerIntervalRef.current = intervalId;
+    timerIntervalRef.current = window.setInterval(updateFromDbTime, 100);
 
     return () => {
       if (timerIntervalRef.current !== null) {
@@ -434,8 +475,8 @@ export default function TriviaUserInterfacePage() {
     currentQuestion?.id,
     questionStartedAt,
     timerSeconds,
-    view,
     serverOffsetMs,
+    wallPhase,
   ]);
 
   /* ---------------------------------------------------------
@@ -476,49 +517,12 @@ export default function TriviaUserInterfacePage() {
   }, [playerId, currentQuestion?.id]);
 
   /* ---------------------------------------------------------
-     Answer reveal flow (overlay → reveal)
-  --------------------------------------------------------- */
-  useEffect(() => {
-    if (!locked) {
-      setShowAnswerOverlay(false);
-      setRevealAnswer(false);
-      return;
-    }
-
-    setShowAnswerOverlay(true);
-    setRevealAnswer(false);
-    setView("question");
-
-    const overlayId = window.setTimeout(() => {
-      setShowAnswerOverlay(false);
-      setRevealAnswer(true);
-    }, 5000);
-
-    return () => window.clearTimeout(overlayId);
-  }, [locked]);
-
-  /* ---------------------------------------------------------
-     After reveal → switch to leaderboard view
-  --------------------------------------------------------- */
-  useEffect(() => {
-    if (!revealAnswer) return;
-    if (!isRunning) return;
-    if (!currentQuestion) return;
-
-    const toLeaderboard = window.setTimeout(() => {
-      setView("leaderboard");
-      setLeaderLoading(true);
-    }, 8000);
-
-    return () => window.clearTimeout(toLeaderboard);
-  }, [revealAnswer, isRunning, currentQuestion?.id]);
-
-  /* ---------------------------------------------------------
-     Load leaderboard (TOP 4) when view === 'leaderboard'
+     Load leaderboard (TOP 4) when wallPhase === 'leaderboard' or 'podium'
+     ✅ PATCH: include podium
   --------------------------------------------------------- */
   useEffect(() => {
     if (!session?.id) return;
-    if (view !== "leaderboard") return;
+    if (wallPhase !== "leaderboard" && wallPhase !== "podium") return;
 
     let cancelled = false;
 
@@ -616,16 +620,18 @@ export default function TriviaUserInterfacePage() {
       cancelled = true;
       window.clearInterval(id);
     };
-  }, [session?.id, view, leaderRows.length]);
+  }, [session?.id, wallPhase, leaderRows.length]);
 
   /* ---------------------------------------------------------
      Answer submission
      ✅ Uses serverOffsetMs so scoring is time-consistent too
+     ✅ Also blocks answering if wall moved off question
   --------------------------------------------------------- */
   async function handleSelectAnswer(idx: number) {
     if (!currentQuestion) return;
     if (!playerId) return;
     if (hasAnswered || locked) return;
+    if (wallPhase !== "question") return; // ✅ wall authority
 
     setSelectedIndex(idx);
     setHasAnswered(true);
@@ -647,9 +653,6 @@ export default function TriviaUserInterfacePage() {
     const points = isCorrect
       ? (() => {
           const nowMs = Date.now() + serverOffsetMs;
-
-          // If your scoring engine supports an optional nowMs, we pass it.
-          // If it doesn't, this still works at runtime; TS may complain in some setups.
           try {
             // @ts-ignore
             return computeTriviaPoints({
@@ -667,15 +670,6 @@ export default function TriviaUserInterfacePage() {
           }
         })()
       : 0;
-
-    console.log("🎯 Trivia scoring debug", {
-      isCorrect,
-      scoringMode,
-      timerSeconds,
-      questionStartedAt,
-      points,
-      serverOffsetMs,
-    });
 
     const { error: insertErr } = await supabase.from("trivia_answers").insert({
       player_id: playerId,
@@ -770,17 +764,19 @@ export default function TriviaUserInterfacePage() {
   }
 
   const pctWidth = Math.max(0, Math.min(100, progress * 100));
-  const rankLabels = ["1st", "2nd", "3rd", "4th"];
 
   let footerText = "";
-  if (view === "leaderboard") {
-    footerText = "Leaderboard — next question starting soon…";
-  } else if (!isRunning) {
+  if (!isRunning) {
     footerText = "Game is paused. Waiting for the host…";
-  } else if (locked && !revealAnswer) {
+  } else if (wallPhase === "leaderboard" || wallPhase === "podium") {
+    footerText =
+      wallPhase === "podium"
+        ? "Final results."
+        : "Leaderboard — next question starting soon…";
+  } else if (wallPhase === "overlay") {
     footerText = "Time is up. Revealing the correct answer…";
-  } else if (revealAnswer) {
-    footerText = "Here’s the correct answer. Get ready for the leaderboard…";
+  } else if (wallPhase === "reveal") {
+    footerText = "Here’s the correct answer. Waiting for leaderboard…";
   } else if (hasAnswered) {
     footerText = "Answer submitted. You can’t change it for this question.";
   } else {
@@ -865,7 +861,9 @@ export default function TriviaUserInterfacePage() {
               }}
             >
               {view === "leaderboard"
-                ? "Leaderboard"
+                ? wallPhase === "podium"
+                  ? "Final Results"
+                  : "Leaderboard"
                 : `Question ${currentQuestionIndex + 1} of ${questions.length}`}
             </div>
           </div>
@@ -895,7 +893,9 @@ export default function TriviaUserInterfacePage() {
             }}
           >
             {view === "leaderboard"
-              ? "Leaderboard — Top Players"
+              ? wallPhase === "podium"
+                ? "Final Results — Top Players"
+                : "Leaderboard — Top Players"
               : currentQuestion.question_text}
           </div>
         </div>
@@ -919,7 +919,7 @@ export default function TriviaUserInterfacePage() {
                 height: "100%",
                 width: `${pctWidth}%`,
                 background:
-                  locked || revealAnswer
+                  locked || revealAnswer || wallPhase !== "question"
                     ? "linear-gradient(90deg,#ef4444,#dc2626)"
                     : "linear-gradient(90deg,#22c55e,#16a34a,#15803d)",
                 transition: "width 0.1s linear, background 0.2s ease",
@@ -947,7 +947,7 @@ export default function TriviaUserInterfacePage() {
                 typeof currentQuestion.correct_index === "number" &&
                 idx === currentQuestion.correct_index;
 
-              const disabled = hasAnswered || locked;
+              const disabled = hasAnswered || locked || wallPhase !== "question";
 
               let bgBtn = "rgba(15,23,42,0.85)";
               let border = "1px solid rgba(148,163,184,0.4)";
@@ -1181,7 +1181,7 @@ export default function TriviaUserInterfacePage() {
           {footerText}
         </div>
 
-        {/* THE ANSWER IS OVERLAY */}
+        {/* THE ANSWER IS OVERLAY (wall authority) */}
         {showAnswerOverlay && (
           <div
             style={{
@@ -1226,7 +1226,6 @@ export default function TriviaUserInterfacePage() {
         )}
       </div>
 
-      {/* ✅ FIXED: standard style tag (no jsx/global props) */}
       <style>{`
         @keyframes fiCorrectPulse {
           0% {
