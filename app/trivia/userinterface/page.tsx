@@ -28,8 +28,7 @@ interface TriviaSession {
   current_question: number;
   question_started_at: string | null;
 
-  // ✅ wall authority (optional)
-  wall_phase?: string | null; // 'question'|'overlay'|'reveal'|'leaderboard'|'podium'
+  wall_phase?: string | null;
   wall_phase_started_at?: string | null;
 }
 
@@ -47,13 +46,13 @@ type HostRow = {
   master_id: string | null;
   branding_logo_url: string | null;
   logo_url: string | null;
-  injector_enabled: boolean | null;
+  injector_enabled: boolean | null; // GLOBAL gate
 };
 
 type SlideAd = {
   id: string;
   url: string;
-  type: "image" | "video";
+  type: "image" | "video" | string; // allow weird db values safely
   active: boolean | null;
   order_index: number;
   global_order_index: number | null;
@@ -119,16 +118,16 @@ export default function TriviaUserInterfacePage() {
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [hasAnswered, setHasAnswered] = useState(false);
 
-  // Timer (question time only)
-  const [progress, setProgress] = useState<number>(1); // 1 → 0
+  // Timer
+  const [progress, setProgress] = useState<number>(1);
   const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
   const [locked, setLocked] = useState(false);
 
-  // Wall-authority phases (UI follows these)
+  // Wall-authority phases
   const [showAnswerOverlay, setShowAnswerOverlay] = useState(false);
   const [revealAnswer, setRevealAnswer] = useState(false);
 
-  // View: question vs leaderboard (also wall-authority)
+  // View
   const [view, setView] = useState<UIView>("question");
   const [leaderRows, setLeaderRows] = useState<LeaderRow[]>([]);
   const [leaderLoading, setLeaderLoading] = useState(false);
@@ -138,23 +137,21 @@ export default function TriviaUserInterfacePage() {
     null
   );
 
-  // interval id for timer
   const timerIntervalRef = useRef<number | null>(null);
 
-  // ✅ server-time offset to prevent drift
+  // server-time offset
   const [serverOffsetMs, setServerOffsetMs] = useState<number>(0);
 
-  // ✅ NEW: ads (phone changes per-question)
+  // ads
   const [hostRow, setHostRow] = useState<HostRow | null>(null);
   const [ads, setAds] = useState<SlideAd[]>([]);
   const [adsLoading, setAdsLoading] = useState(false);
 
-  // ✅ NEW: poll trivia_cards.ads_enabled so toggling works mid-game
+  // ✅ per-game trivia switch (poll this)
   const [adsEnabled, setAdsEnabled] = useState<boolean>(false);
 
   /* ---------------------------------------------------------
-     ✅ Server clock sync (prevents drift)
-     Requires SQL: public.server_time()
+     Server clock sync
   --------------------------------------------------------- */
   useEffect(() => {
     if (!gameId) return;
@@ -206,7 +203,7 @@ export default function TriviaUserInterfacePage() {
   }, [router, gameId]);
 
   /* ---------------------------------------------------------
-     Initial load: trivia card, host, session, player row, questions
+     Initial load
   --------------------------------------------------------- */
   useEffect(() => {
     if (!gameId || !profile?.id) return;
@@ -217,7 +214,7 @@ export default function TriviaUserInterfacePage() {
       setLoading(true);
       setLoadingMessage("Loading trivia game…");
 
-      // 1️⃣ Load trivia card
+      // 1️⃣ Load trivia card (includes ads_enabled)
       const { data: card, error: cardErr } = await supabase
         .from("trivia_cards")
         .select(
@@ -267,7 +264,7 @@ export default function TriviaUserInterfacePage() {
       }
       if (!cancelled) setHostLogoUrl(logo);
 
-      // 3️⃣ Latest session for this card
+      // 3️⃣ Latest session
       setLoadingMessage("Connecting to game session…");
 
       const { data: sessionRow, error: sessionErr } = await supabase
@@ -293,7 +290,7 @@ export default function TriviaUserInterfacePage() {
       setSession(sessionRow as TriviaSession);
       setQuestionStartedAt(sessionRow.question_started_at ?? null);
 
-      // 4️⃣ Ensure we have this player row for the session
+      // 4️⃣ Ensure player row
       setLoadingMessage("Finding your player seat…");
 
       const { data: playerRow, error: playerErr } = await supabase
@@ -314,7 +311,7 @@ export default function TriviaUserInterfacePage() {
 
       setPlayerId(playerRow.id);
 
-      // 5️⃣ Load active questions
+      // 5️⃣ Load questions
       setLoadingMessage("Loading questions…");
 
       const { data: qs, error: qErr } = await supabase
@@ -348,12 +345,10 @@ export default function TriviaUserInterfacePage() {
   }, [gameId, profile?.id, router]);
 
   /* ---------------------------------------------------------
-     ✅ Poll trivia_cards.ads_enabled (every 5s)
-     so toggling works mid-game without refresh.
+     ✅ Poll trivia_cards.ads_enabled every 5 seconds (mid-game toggle)
   --------------------------------------------------------- */
   useEffect(() => {
     if (!gameId) return;
-
     let cancelled = false;
 
     const poll = async () => {
@@ -379,9 +374,9 @@ export default function TriviaUserInterfacePage() {
   }, [gameId]);
 
   /* ---------------------------------------------------------
-     ✅ Load Slide Ads once we have hostRow
-     (master + host merged like AdsManagerModal)
-     Re-fetch when adsEnabled changes
+     ✅ Load Slide Ads when allowed (GLOBAL + TRIVIA)
+     IMPORTANT: NO type filter here so Trivia sees ALL ads.
+     Trivia ignores injector "show every X" / duration rules.
   --------------------------------------------------------- */
   useEffect(() => {
     if (!hostRow?.id) return;
@@ -392,7 +387,7 @@ export default function TriviaUserInterfacePage() {
       try {
         setAdsLoading(true);
 
-        // If system injector disabled OR trivia ads disabled => clear ads
+        // Global system gate + per-trivia gate
         if (!hostRow.injector_enabled || !adsEnabled) {
           if (!cancelled) setAds([]);
           return;
@@ -406,8 +401,7 @@ export default function TriviaUserInterfacePage() {
           .select(
             "id,url,type,active,order_index,global_order_index,duration_seconds,host_profile_id,master_id"
           )
-          .eq("active", true)
-          .eq("type", "image");
+          .eq("active", true);
 
         if (masterId) {
           query = query
@@ -428,7 +422,11 @@ export default function TriviaUserInterfacePage() {
           return;
         }
 
-        if (!cancelled) setAds((data as SlideAd[]) || []);
+        const cleaned = ((data as SlideAd[]) || []).filter(
+          (a) => typeof a?.url === "string" && a.url.trim().length > 0
+        );
+
+        if (!cancelled) setAds(cleaned);
       } finally {
         if (!cancelled) setAdsLoading(false);
       }
@@ -474,7 +472,7 @@ export default function TriviaUserInterfacePage() {
   }, [session?.id, gameId]);
 
   /* ---------------------------------------------------------
-     Derived current question (1-based index)
+     Derived current question
   --------------------------------------------------------- */
   const timerSeconds: number = trivia?.timer_seconds ?? 30;
   const scoringMode: string = trivia?.scoring_mode ?? "100s";
@@ -490,7 +488,6 @@ export default function TriviaUserInterfacePage() {
   const currentQuestion = questions[currentQuestionIndex] || null;
   const isRunning = session?.status === "running";
 
-  // ✅ Wall authority phase
   const wallPhase = (session?.wall_phase || "question") as
     | "question"
     | "overlay"
@@ -499,17 +496,20 @@ export default function TriviaUserInterfacePage() {
     | "podium";
 
   /* ---------------------------------------------------------
-     ✅ Phone ad changes per question number
+     ✅ Ad changes per question (NOT time-based)
+     Ignores injector "show every X submissions / duration"
   --------------------------------------------------------- */
   const currentAd: SlideAd | null = useMemo(() => {
+    if (!adsEnabled) return null;
     if (!ads || ads.length === 0) return null;
+
     const qNum = session?.current_question ?? 1;
     const idx = ((qNum - 1) % ads.length + ads.length) % ads.length;
     return ads[idx] || null;
-  }, [ads, session?.current_question]);
+  }, [adsEnabled, ads, session?.current_question]);
 
   /* ---------------------------------------------------------
-     ✅ Follow wall phase EXACTLY (no client phase timers)
+     Follow wall phase
   --------------------------------------------------------- */
   useEffect(() => {
     if (wallPhase === "leaderboard") {
@@ -540,12 +540,10 @@ export default function TriviaUserInterfacePage() {
     setLocked(wallPhase !== "question");
     setProgress(1);
     setSecondsLeft(timerSeconds);
-  }, [currentQuestion?.id, timerSeconds]); // keep minimal deps
+  }, [currentQuestion?.id, timerSeconds]);
 
   /* ---------------------------------------------------------
-     TIMER: single source of truth = questionStartedAt
-     ✅ Uses serverOffsetMs
-     ✅ Stops updating bar when wall leaves 'question'
+     TIMER: source of truth = questionStartedAt
   --------------------------------------------------------- */
   useEffect(() => {
     if (timerIntervalRef.current !== null) {
@@ -604,7 +602,7 @@ export default function TriviaUserInterfacePage() {
   ]);
 
   /* ---------------------------------------------------------
-     If user refreshes mid-question, reflect existing answer
+     If refresh mid-question, reflect existing answer
   --------------------------------------------------------- */
   useEffect(() => {
     if (!playerId || !currentQuestion?.id) return;
@@ -911,6 +909,10 @@ export default function TriviaUserInterfacePage() {
       ? trivia.background_brightness
       : 100;
 
+  const isVideo =
+    typeof currentAd?.type === "string" &&
+    currentAd.type.toLowerCase().includes("video");
+
   return (
     <>
       <div
@@ -925,14 +927,8 @@ export default function TriviaUserInterfacePage() {
           position: "relative",
         }}
       >
-        {/* HEADER ROW (LOGO + TITLE) */}
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            marginBottom: 12,
-          }}
-        >
+        {/* HEADER ROW */}
+        <div style={{ display: "flex", alignItems: "center", marginBottom: 12 }}>
           <div
             style={{
               width: 44,
@@ -962,22 +958,10 @@ export default function TriviaUserInterfacePage() {
           </div>
 
           <div style={{ display: "flex", flexDirection: "column" }}>
-            <div
-              style={{
-                fontSize: "0.95rem",
-                fontWeight: 700,
-                letterSpacing: 0.3,
-              }}
-            >
+            <div style={{ fontSize: "0.95rem", fontWeight: 700, letterSpacing: 0.3 }}>
               {trivia?.public_name || "Trivia Game"}
             </div>
-            <div
-              style={{
-                fontSize: "0.75rem",
-                opacity: 0.75,
-                marginTop: 2,
-              }}
-            >
+            <div style={{ fontSize: "0.75rem", opacity: 0.75, marginTop: 2 }}>
               {view === "leaderboard"
                 ? "Leaderboard"
                 : `Question ${currentQuestionIndex + 1} of ${questions.length}`}
@@ -985,7 +969,7 @@ export default function TriviaUserInterfacePage() {
           </div>
         </div>
 
-        {/* QUESTION / LEADERBOARD TITLE BOX */}
+        {/* QUESTION BOX */}
         <div
           style={{
             padding: 18,
@@ -1014,7 +998,7 @@ export default function TriviaUserInterfacePage() {
           </div>
         </div>
 
-        {/* TIMER BAR — ONLY ON QUESTION VIEW */}
+        {/* TIMER */}
         {view === "question" && (
           <div
             style={{
@@ -1042,7 +1026,7 @@ export default function TriviaUserInterfacePage() {
           </div>
         )}
 
-        {/* ANSWER BUTTONS / LEADERBOARD CARDS */}
+        {/* ANSWERS */}
         <div
           style={{
             display: "grid",
@@ -1057,7 +1041,7 @@ export default function TriviaUserInterfacePage() {
           {view === "question" &&
             currentQuestion.options.map((opt: string, idx: number) => {
               const chosen = selectedIndex === idx;
-              const isCorrect =
+              const isCorrectChoice =
                 typeof currentQuestion.correct_index === "number" &&
                 idx === currentQuestion.correct_index;
 
@@ -1068,7 +1052,7 @@ export default function TriviaUserInterfacePage() {
               let opacityBtn = 1;
               let boxShadow = "none";
 
-              const gotItRightPulse = revealAnswer && chosen && isCorrect;
+              const gotItRightPulse = revealAnswer && chosen && isCorrectChoice;
 
               if (!revealAnswer && chosen) {
                 bgBtn = "linear-gradient(90deg,#22c55e,#15803d)";
@@ -1077,13 +1061,13 @@ export default function TriviaUserInterfacePage() {
               }
 
               if (revealAnswer) {
-                if (isCorrect) {
+                if (isCorrectChoice) {
                   bgBtn = "linear-gradient(90deg,#22c55e,#16a34a)";
                   border = "2px solid rgba(74,222,128,1)";
                   boxShadow = gotItRightPulse
                     ? "0 0 26px rgba(74,222,128,1)"
                     : "0 0 20px rgba(74,222,128,0.9)";
-                } else if (chosen && !isCorrect) {
+                } else if (chosen && !isCorrectChoice) {
                   bgBtn = "linear-gradient(90deg,#ef4444,#b91c1c)";
                   border = "2px solid rgba(248,113,113,1)";
                   boxShadow = "0 0 16px rgba(248,113,113,0.9)";
@@ -1153,115 +1137,6 @@ export default function TriviaUserInterfacePage() {
                 </button>
               );
             })}
-
-          {view === "leaderboard" &&
-            ["1st", "2nd", "3rd", "4th"].map((label, idx) => {
-              const row = leaderRows[idx];
-              const isFirst = idx === 0;
-
-              return (
-                <button
-                  key={idx}
-                  disabled
-                  style={{
-                    width: "100%",
-                    padding: "6px 12px",
-                    borderRadius: 20,
-                    background: "rgba(15,23,42,0.85)",
-                    border: isFirst
-                      ? "2px solid rgba(74,222,128,0.9)"
-                      : "1px solid rgba(148,163,184,0.4)",
-                    opacity: row ? 1 : 0.5,
-                    color: "#fff",
-                    textAlign: "left",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 15,
-                    fontSize: "0.95rem",
-                    fontWeight: 700,
-                    minHeight: 72,
-                    boxShadow: isFirst
-                      ? "0 0 18px rgba(74,222,128,0.7)"
-                      : "none",
-                  }}
-                >
-                  <span
-                    style={{
-                      position: "relative",
-                      width: 60,
-                      height: 60,
-                      borderRadius: "999px",
-                      border: row?.selfieUrl
-                        ? "1px solid rgba(226,232,240,0.8)"
-                        : "1px dashed rgba(226,232,240,0.8)",
-                      overflow: "hidden",
-                      background: "rgba(15,23,42,0.7)",
-                      flexShrink: 0,
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                    }}
-                  >
-                    {row?.selfieUrl ? (
-                      <img
-                        src={row.selfieUrl}
-                        alt={row.name}
-                        style={{
-                          width: "100%",
-                          height: "100%",
-                          objectFit: "cover",
-                          display: "block",
-                        }}
-                      />
-                    ) : (
-                      <span
-                        style={{
-                          fontSize: "1.4rem",
-                          fontWeight: 900,
-                          opacity: 0.9,
-                        }}
-                      >
-                        {row?.name?.[0]?.toUpperCase() || "?"}
-                      </span>
-                    )}
-
-                    {row && (
-                      <span
-                        style={{
-                          position: "absolute",
-                          bottom: -6,
-                          left: "50%",
-                          transform: "translateX(-50%)",
-                          padding: "2px 8px",
-                          borderRadius: 999,
-                          background: "rgba(15,23,42,0.95)",
-                          border: "1px solid rgba(226,232,240,0.9)",
-                          fontSize: "0.7rem",
-                          fontWeight: 800,
-                        }}
-                      >
-                        {label}
-                      </span>
-                    )}
-                  </span>
-
-                  <span
-                    style={{
-                      flex: 1,
-                      lineHeight: 1.3,
-                      wordWrap: "break-word",
-                      whiteSpace: "normal",
-                    }}
-                  >
-                    {leaderLoading && !row
-                      ? "Loading..."
-                      : row
-                      ? `${row.name} — ${row.points} pts`
-                      : "—"}
-                  </span>
-                </button>
-              );
-            })}
         </div>
 
         {/* ✅ AD SLOT (CHANGES PER QUESTION) */}
@@ -1272,7 +1147,7 @@ export default function TriviaUserInterfacePage() {
             borderRadius: 16,
             border: "1px solid rgba(148,163,184,0.35)",
             background: "rgba(15,23,42,0.65)",
-            height: 160, // ✅ fixed height for perfect fit
+            height: 160,
             overflow: "hidden",
             display: "flex",
             alignItems: "center",
@@ -1285,29 +1160,42 @@ export default function TriviaUserInterfacePage() {
               Loading ad…
             </div>
           ) : !adsEnabled ? (
-            <div style={{ fontSize: "0.95rem", opacity: 0.95, padding: 16 }}>
-              {/* ads disabled */}
-            </div>
+            <div style={{ fontSize: "0.95rem", opacity: 0.95, padding: 16 }} />
           ) : currentAd?.url ? (
-            <img
-              src={currentAd.url}
-              alt="Sponsored"
-              style={{
-                width: "100%",
-                height: "100%",
-                maxHeight: 160,
-                objectFit: "contain", // ✅ NO CROPPING
-                objectPosition: "center",
-                display: "block",
-              }}
-            />
+            isVideo ? (
+              <video
+                src={currentAd.url}
+                muted
+                playsInline
+                autoPlay
+                loop
+                style={{
+                  width: "100%",
+                  height: "100%",
+                  objectFit: "contain",
+                  objectPosition: "center",
+                  display: "block",
+                }}
+              />
+            ) : (
+              <img
+                src={currentAd.url}
+                alt="Sponsored"
+                style={{
+                  width: "100%",
+                  height: "100%",
+                  objectFit: "contain",
+                  objectPosition: "center",
+                  display: "block",
+                }}
+              />
+            )
           ) : (
             <div style={{ fontSize: "0.95rem", opacity: 0.95, padding: 16 }}>
               AD SLOT
             </div>
           )}
 
-          {/* optional tiny label */}
           {adsEnabled && currentAd?.url && (
             <div
               style={{
@@ -1328,7 +1216,7 @@ export default function TriviaUserInterfacePage() {
           )}
         </div>
 
-        {/* FOOTER STATUS */}
+        {/* FOOTER */}
         <div
           style={{
             textAlign: "center",
@@ -1340,7 +1228,7 @@ export default function TriviaUserInterfacePage() {
           {footerText}
         </div>
 
-        {/* THE ANSWER IS OVERLAY (wall authority) */}
+        {/* OVERLAY */}
         {showAnswerOverlay && (
           <div
             style={{
@@ -1353,13 +1241,7 @@ export default function TriviaUserInterfacePage() {
               zIndex: 50,
             }}
           >
-            <div
-              style={{
-                textAlign: "center",
-                textTransform: "uppercase",
-                letterSpacing: "0.08em",
-              }}
-            >
+            <div style={{ textAlign: "center", textTransform: "uppercase", letterSpacing: "0.08em" }}>
               <div
                 style={{
                   fontFamily:
