@@ -144,15 +144,10 @@ export default function TriviaUserInterfacePage() {
   // ✅ server-time offset to prevent drift
   const [serverOffsetMs, setServerOffsetMs] = useState<number>(0);
 
-  // ✅ Ads
+  // ✅ NEW: ads (phone changes per-question)
   const [hostRow, setHostRow] = useState<HostRow | null>(null);
   const [ads, setAds] = useState<SlideAd[]>([]);
   const [adsLoading, setAdsLoading] = useState(false);
-
-  // ✅ trivia_cards injector flag (polled mid-game)
-  const [cardInjectorEnabled, setCardInjectorEnabled] = useState<boolean | null>(
-    null
-  );
 
   /* ---------------------------------------------------------
      ✅ Server clock sync (prevents drift)
@@ -219,7 +214,7 @@ export default function TriviaUserInterfacePage() {
       setLoading(true);
       setLoadingMessage("Loading trivia game…");
 
-      // 1️⃣ Load trivia card (+ injector_enabled)
+      // 1️⃣ Load trivia card
       const { data: card, error: cardErr } = await supabase
         .from("trivia_cards")
         .select(
@@ -231,8 +226,7 @@ export default function TriviaUserInterfacePage() {
           host_id,
           background_type,
           background_value,
-          background_brightness,
-          injector_enabled
+          background_brightness
         `
         )
         .eq("id", gameId)
@@ -248,11 +242,6 @@ export default function TriviaUserInterfacePage() {
       }
 
       setTrivia(card);
-
-      // seed card injector flag
-      setCardInjectorEnabled(
-        typeof card.injector_enabled === "boolean" ? card.injector_enabled : null
-      );
 
       // 2️⃣ Host row (logo + master_id + injector_enabled)
       let logo = "/faninteractlogo.png";
@@ -354,90 +343,9 @@ export default function TriviaUserInterfacePage() {
   }, [gameId, profile?.id, router]);
 
   /* ---------------------------------------------------------
-     ✅ Poll hosts.injector_enabled mid-game
-  --------------------------------------------------------- */
-  useEffect(() => {
-    if (!hostRow?.id) return;
-
-    let cancelled = false;
-
-    async function pollHostInjector() {
-      const { data, error } = await supabase
-        .from("hosts")
-        .select("id,injector_enabled,master_id,branding_logo_url,logo_url")
-        .eq("id", hostRow.id)
-        .maybeSingle();
-
-      if (cancelled) return;
-      if (error || !data) return;
-
-      setHostRow((prev) =>
-        prev
-          ? {
-              ...prev,
-              injector_enabled: data.injector_enabled,
-              master_id: data.master_id ?? prev.master_id,
-              branding_logo_url: data.branding_logo_url ?? prev.branding_logo_url,
-              logo_url: data.logo_url ?? prev.logo_url,
-            }
-          : (data as HostRow)
-      );
-    }
-
-    pollHostInjector();
-    const id = window.setInterval(pollHostInjector, 2000);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(id);
-    };
-  }, [hostRow?.id]);
-
-  /* ---------------------------------------------------------
-     ✅ Poll trivia_cards.injector_enabled mid-game
-  --------------------------------------------------------- */
-  useEffect(() => {
-    if (!gameId) return;
-
-    let cancelled = false;
-
-    async function pollCardInjector() {
-      const { data, error } = await supabase
-        .from("trivia_cards")
-        .select("injector_enabled")
-        .eq("id", gameId)
-        .maybeSingle();
-
-      if (cancelled) return;
-      if (error || !data) return;
-
-      setCardInjectorEnabled(
-        typeof data.injector_enabled === "boolean" ? data.injector_enabled : null
-      );
-    }
-
-    pollCardInjector();
-    const id = window.setInterval(pollCardInjector, 2000);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(id);
-    };
-  }, [gameId]);
-
-  /* ---------------------------------------------------------
-     ✅ Ads enabled (single source of truth)
-     - host.injector_enabled MUST be true
-     - trivia_cards.injector_enabled: if null => treat as true (backwards compat)
-  --------------------------------------------------------- */
-  const adsEnabled = useMemo(() => {
-    const hostOk = Boolean(hostRow?.injector_enabled);
-    const cardOk = cardInjectorEnabled === null ? true : Boolean(cardInjectorEnabled);
-    return hostOk && cardOk;
-  }, [hostRow?.injector_enabled, cardInjectorEnabled]);
-
-  /* ---------------------------------------------------------
-     ✅ Load Slide Ads (re-run when adsEnabled flips)
+     ✅ Load Slide Ads once we have hostRow
+     (master + host merged like AdsManagerModal)
+     Phone behavior: change ad per question
   --------------------------------------------------------- */
   useEffect(() => {
     if (!hostRow?.id) return;
@@ -448,7 +356,8 @@ export default function TriviaUserInterfacePage() {
       try {
         setAdsLoading(true);
 
-        if (!adsEnabled) {
+        // If injector disabled, just clear ads.
+        if (!hostRow.injector_enabled) {
           if (!cancelled) setAds([]);
           return;
         }
@@ -493,7 +402,7 @@ export default function TriviaUserInterfacePage() {
     return () => {
       cancelled = true;
     };
-  }, [hostRow?.id, hostRow?.master_id, adsEnabled]);
+  }, [hostRow?.id, hostRow?.master_id, hostRow?.injector_enabled]);
 
   /* ---------------------------------------------------------
      Poll trivia_sessions for current_question / status / wall_phase
@@ -1335,11 +1244,7 @@ export default function TriviaUserInterfacePage() {
             position: "relative",
           }}
         >
-          {!adsEnabled ? (
-            <div style={{ fontSize: "0.95rem", opacity: 0.95, padding: 16 }}>
-              ADS OFF
-            </div>
-          ) : adsLoading ? (
+          {adsLoading ? (
             <div style={{ fontSize: "0.95rem", opacity: 0.9, padding: 16 }}>
               Loading ad…
             </div>
@@ -1360,7 +1265,8 @@ export default function TriviaUserInterfacePage() {
             </div>
           )}
 
-          {adsEnabled && currentAd?.url && (
+          {/* optional tiny label */}
+          {currentAd?.url && (
             <div
               style={{
                 position: "absolute",
