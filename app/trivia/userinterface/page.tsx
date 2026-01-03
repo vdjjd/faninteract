@@ -48,9 +48,6 @@ type HostRow = {
   branding_logo_url: string | null;
   logo_url: string | null;
   injector_enabled: boolean | null;
-
-  // ✅ NEW: trivia ad slot toggle
-  trivia_ads_enabled?: boolean | null;
 };
 
 type SlideAd = {
@@ -147,18 +144,10 @@ export default function TriviaUserInterfacePage() {
   // ✅ server-time offset to prevent drift
   const [serverOffsetMs, setServerOffsetMs] = useState<number>(0);
 
-  // ✅ Ads
+  // ✅ NEW: ads (phone changes per-question)
   const [hostRow, setHostRow] = useState<HostRow | null>(null);
   const [ads, setAds] = useState<SlideAd[]>([]);
   const [adsLoading, setAdsLoading] = useState(false);
-
-  // ✅ Fade ad on change + keep last displayed ad
-  const [displayAd, setDisplayAd] = useState<SlideAd | null>(null);
-  const [adOpacity, setAdOpacity] = useState<number>(1);
-  const adFadeTimerRef = useRef<number | null>(null);
-
-  // ✅ Avoid re-setting identical ads list every poll
-  const lastAdsKeyRef = useRef<string>("");
 
   /* ---------------------------------------------------------
      ✅ Server clock sync (prevents drift)
@@ -254,14 +243,12 @@ export default function TriviaUserInterfacePage() {
 
       setTrivia(card);
 
-      // 2️⃣ Host row (logo + master_id + injector_enabled + trivia_ads_enabled)
+      // 2️⃣ Host row (logo + master_id + injector_enabled)
       let logo = "/faninteractlogo.png";
       if (card.host_id) {
         const { data: host, error: hostErr } = await supabase
           .from("hosts")
-          .select(
-            "id,master_id,branding_logo_url,logo_url,injector_enabled,trivia_ads_enabled"
-          )
+          .select("id,master_id,branding_logo_url,logo_url,injector_enabled")
           .eq("id", card.host_id)
           .maybeSingle();
 
@@ -356,160 +343,66 @@ export default function TriviaUserInterfacePage() {
   }, [gameId, profile?.id, router]);
 
   /* ---------------------------------------------------------
-     ✅ Poll hosts every 5s (keeps toggles + logo updated live)
-  --------------------------------------------------------- */
-  useEffect(() => {
-    const hostId = trivia?.host_id as string | null;
-    if (!hostId) return;
-
-    let cancelled = false;
-
-    const pollHost = async () => {
-      const { data: host, error } = await supabase
-        .from("hosts")
-        .select(
-          "id,master_id,branding_logo_url,logo_url,injector_enabled,trivia_ads_enabled"
-        )
-        .eq("id", hostId)
-        .maybeSingle();
-
-      if (cancelled) return;
-
-      if (error || !host) {
-        // don’t wipe hostRow on transient errors
-        return;
-      }
-
-      setHostRow(host as HostRow);
-
-      const logo =
-        host.branding_logo_url?.trim() ||
-        host.logo_url?.trim() ||
-        "/faninteractlogo.png";
-      setHostLogoUrl(logo);
-    };
-
-    pollHost();
-    const id = window.setInterval(pollHost, 5000);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(id);
-    };
-  }, [trivia?.host_id]);
-
-  /* ---------------------------------------------------------
-     ✅ Ad slot enable logic (both toggles must be true)
-  --------------------------------------------------------- */
-  const showAdSlot = useMemo(() => {
-    return Boolean(hostRow?.injector_enabled) && Boolean(hostRow?.trivia_ads_enabled);
-  }, [hostRow?.injector_enabled, hostRow?.trivia_ads_enabled]);
-
-  /* ---------------------------------------------------------
-     ✅ Fetch ads (used by initial load + polling)
-  --------------------------------------------------------- */
-  const fetchAds = async (host: HostRow) => {
-    if (!host?.id) return;
-
-    // slot disabled => clear
-    if (!showAdSlot) {
-      setAds([]);
-      return;
-    }
-
-    const hostId = host.id;
-    const masterId = host.master_id;
-
-    let query = supabase
-      .from("slide_ads")
-      .select(
-        "id,url,type,active,order_index,global_order_index,duration_seconds,host_profile_id,master_id"
-      )
-      .eq("active", true)
-      .eq("type", "image");
-
-    if (masterId) {
-      query = query
-        .or(`master_id.eq.${masterId},host_profile_id.eq.${hostId}`)
-        .order("global_order_index", { ascending: true })
-        .order("order_index", { ascending: true });
-    } else {
-      query = query
-        .eq("host_profile_id", hostId)
-        .order("order_index", { ascending: true });
-    }
-
-    const { data, error } = await query;
-
-    if (error) {
-      console.warn("⚠️ slide_ads fetch error (trivia phone):", error);
-      setAds([]);
-      return;
-    }
-
-    const next = (data as SlideAd[]) || [];
-
-    // only update if changed (prevents flicker)
-    const key = next.map((a) => `${a.id}:${a.url}`).join("|");
-    if (key !== lastAdsKeyRef.current) {
-      lastAdsKeyRef.current = key;
-      setAds(next);
-    }
-  };
-
-  /* ---------------------------------------------------------
-     ✅ Initial load ads once hostRow is present
+     ✅ Load Slide Ads once we have hostRow
+     (master + host merged like AdsManagerModal)
+     Phone behavior: change ad per question
   --------------------------------------------------------- */
   useEffect(() => {
     if (!hostRow?.id) return;
 
     let cancelled = false;
 
-    async function loadAdsOnce() {
+    async function loadAds() {
       try {
         setAdsLoading(true);
-        await fetchAds(hostRow);
+
+        // If injector disabled, just clear ads.
+        if (!hostRow.injector_enabled) {
+          if (!cancelled) setAds([]);
+          return;
+        }
+
+        const hostId = hostRow.id;
+        const masterId = hostRow.master_id;
+
+        let query = supabase
+          .from("slide_ads")
+          .select(
+            "id,url,type,active,order_index,global_order_index,duration_seconds,host_profile_id,master_id"
+          )
+          .eq("active", true)
+          .eq("type", "image");
+
+        if (masterId) {
+          query = query
+            .or(`master_id.eq.${masterId},host_profile_id.eq.${hostId}`)
+            .order("global_order_index", { ascending: true })
+            .order("order_index", { ascending: true });
+        } else {
+          query = query
+            .eq("host_profile_id", hostId)
+            .order("order_index", { ascending: true });
+        }
+
+        const { data, error } = await query;
+
+        if (error) {
+          console.warn("⚠️ slide_ads fetch error (trivia phone):", error);
+          if (!cancelled) setAds([]);
+          return;
+        }
+
+        if (!cancelled) setAds((data as SlideAd[]) || []);
       } finally {
         if (!cancelled) setAdsLoading(false);
       }
     }
 
-    loadAdsOnce();
+    loadAds();
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hostRow?.id, hostRow?.master_id, showAdSlot]);
-
-  /* ---------------------------------------------------------
-     ✅ Poll ads every 5s (keeps ads list updated live)
-  --------------------------------------------------------- */
-  useEffect(() => {
-    if (!hostRow?.id) return;
-
-    let cancelled = false;
-
-    const pollAds = async () => {
-      if (cancelled) return;
-      if (!showAdSlot) return;
-
-      try {
-        setAdsLoading(true);
-        await fetchAds(hostRow);
-      } finally {
-        if (!cancelled) setAdsLoading(false);
-      }
-    };
-
-    pollAds();
-    const id = window.setInterval(pollAds, 5000);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(id);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hostRow?.id, hostRow?.master_id, showAdSlot]);
+  }, [hostRow?.id, hostRow?.master_id, hostRow?.injector_enabled]);
 
   /* ---------------------------------------------------------
      Poll trivia_sessions for current_question / status / wall_phase
@@ -578,52 +471,6 @@ export default function TriviaUserInterfacePage() {
     const idx = ((qNum - 1) % ads.length + ads.length) % ads.length;
     return ads[idx] || null;
   }, [ads, session?.current_question]);
-
-  /* ---------------------------------------------------------
-     ✅ Smooth fade between ads (fade out -> swap -> fade in)
-  --------------------------------------------------------- */
-  useEffect(() => {
-    if (adFadeTimerRef.current) {
-      window.clearTimeout(adFadeTimerRef.current);
-      adFadeTimerRef.current = null;
-    }
-
-    if (!showAdSlot) {
-      setDisplayAd(null);
-      setAdOpacity(1);
-      return;
-    }
-
-    // while loading, keep whatever is currently displayed
-    if (adsLoading) return;
-
-    // first paint
-    if (!displayAd) {
-      setDisplayAd(currentAd);
-      setAdOpacity(1);
-      return;
-    }
-
-    // no change
-    if ((currentAd?.id || null) === (displayAd?.id || null)) return;
-
-    // fade out
-    setAdOpacity(0);
-
-    // swap then fade in
-    adFadeTimerRef.current = window.setTimeout(() => {
-      setDisplayAd(currentAd);
-      requestAnimationFrame(() => setAdOpacity(1));
-    }, 180);
-
-    return () => {
-      if (adFadeTimerRef.current) {
-        window.clearTimeout(adFadeTimerRef.current);
-        adFadeTimerRef.current = null;
-      }
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentAd?.id, showAdSlot, adsLoading]);
 
   /* ---------------------------------------------------------
      ✅ Follow wall phase EXACTLY (no client phase timers)
@@ -1381,71 +1228,63 @@ export default function TriviaUserInterfacePage() {
             })}
         </div>
 
-        {/* ✅ AD SLOT (ONLY WHEN ENABLED) */}
-        {showAdSlot && (
-          <div
-            style={{
-              marginBottom: 10,
-              padding: 0,
-              borderRadius: 16,
-              border: "1px solid rgba(148,163,184,0.35)",
-              background: "rgba(0,0,0,0.35)",
-              height: 160,
-              overflow: "hidden",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              position: "relative",
-            }}
-          >
-            {adsLoading ? (
-              <div style={{ fontSize: "0.95rem", opacity: 0.9, padding: 16 }}>
-                Loading ad…
-              </div>
-            ) : displayAd?.url ? (
-              <img
-                src={displayAd.url}
-                alt="Sponsored"
-                style={{
-                  width: "100%",
-                  height: "100%",
-                  objectFit: "contain", // ✅ no cropping
-                  objectPosition: "center",
-                  display: "block",
+        {/* ✅ AD SLOT (CHANGES PER QUESTION) */}
+        <div
+          style={{
+            marginBottom: 10,
+            padding: 0,
+            borderRadius: 16,
+            border: "1px solid rgba(148,163,184,0.35)",
+            background: "rgba(15,23,42,0.65)",
+            minHeight: 160,
+            overflow: "hidden",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            position: "relative",
+          }}
+        >
+          {adsLoading ? (
+            <div style={{ fontSize: "0.95rem", opacity: 0.9, padding: 16 }}>
+              Loading ad…
+            </div>
+          ) : currentAd?.url ? (
+            <img
+              src={currentAd.url}
+              alt="Sponsored"
+              style={{
+                width: "100%",
+                height: 160,
+                objectFit: "cover",
+                display: "block",
+              }}
+            />
+          ) : (
+            <div style={{ fontSize: "0.95rem", opacity: 0.95, padding: 16 }}>
+              AD SLOT
+            </div>
+          )}
 
-                  // ✅ fade
-                  opacity: adOpacity,
-                  transition: "opacity 220ms ease",
-                }}
-              />
-            ) : (
-              <div style={{ fontSize: "0.95rem", opacity: 0.9, padding: 16 }}>
-                No ads available.
-              </div>
-            )}
-
-            {!!displayAd?.url && (
-              <div
-                style={{
-                  position: "absolute",
-                  bottom: 8,
-                  right: 10,
-                  padding: "3px 8px",
-                  borderRadius: 999,
-                  background: "rgba(0,0,0,0.55)",
-                  border: "1px solid rgba(255,255,255,0.18)",
-                  fontSize: "0.7rem",
-                  fontWeight: 800,
-                  letterSpacing: 0.2,
-                  opacity: adOpacity,
-                  transition: "opacity 220ms ease",
-                }}
-              >
-                Sponsored
-              </div>
-            )}
-          </div>
-        )}
+          {/* optional tiny label */}
+          {currentAd?.url && (
+            <div
+              style={{
+                position: "absolute",
+                bottom: 8,
+                right: 10,
+                padding: "3px 8px",
+                borderRadius: 999,
+                background: "rgba(0,0,0,0.55)",
+                border: "1px solid rgba(255,255,255,0.18)",
+                fontSize: "0.7rem",
+                fontWeight: 800,
+                letterSpacing: 0.2,
+              }}
+            >
+              Sponsored
+            </div>
+          )}
+        </div>
 
         {/* FOOTER STATUS */}
         <div
