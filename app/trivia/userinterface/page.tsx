@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { getSupabaseClient } from "@/lib/supabaseClient";
 import { computeTriviaPoints } from "@/lib/trivia/triviaScoringEngine";
@@ -28,7 +28,7 @@ interface TriviaSession {
   current_question: number;
   question_started_at: string | null;
 
-  // ✅ wall authority
+  // ✅ wall authority (optional)
   wall_phase?: string | null; // 'question'|'overlay'|'reveal'|'leaderboard'|'podium'
   wall_phase_started_at?: string | null;
 }
@@ -40,6 +40,26 @@ type LeaderRow = {
   name: string;
   points: number;
   selfieUrl?: string | null;
+};
+
+type HostRow = {
+  id: string;
+  master_id: string | null;
+  branding_logo_url: string | null;
+  logo_url: string | null;
+  injector_enabled: boolean | null;
+};
+
+type SlideAd = {
+  id: string;
+  url: string;
+  type: "image" | "video";
+  active: boolean | null;
+  order_index: number;
+  global_order_index: number | null;
+  duration_seconds: number | null;
+  host_profile_id: string | null;
+  master_id: string | null;
 };
 
 function formatName(first?: string, last?: string) {
@@ -124,6 +144,11 @@ export default function TriviaUserInterfacePage() {
   // ✅ server-time offset to prevent drift
   const [serverOffsetMs, setServerOffsetMs] = useState<number>(0);
 
+  // ✅ NEW: ads (phone changes per-question)
+  const [hostRow, setHostRow] = useState<HostRow | null>(null);
+  const [ads, setAds] = useState<SlideAd[]>([]);
+  const [adsLoading, setAdsLoading] = useState(false);
+
   /* ---------------------------------------------------------
      ✅ Server clock sync (prevents drift)
      Requires SQL: public.server_time()
@@ -178,7 +203,7 @@ export default function TriviaUserInterfacePage() {
   }, [router, gameId]);
 
   /* ---------------------------------------------------------
-     Initial load: trivia card, host logo, session, player row, questions
+     Initial load: trivia card, host, session, player row, questions
   --------------------------------------------------------- */
   useEffect(() => {
     if (!gameId || !profile?.id) return;
@@ -218,19 +243,20 @@ export default function TriviaUserInterfacePage() {
 
       setTrivia(card);
 
-      // 2️⃣ Host logo
+      // 2️⃣ Host row (logo + master_id + injector_enabled)
       let logo = "/faninteractlogo.png";
       if (card.host_id) {
-        const { data: hostRow, error: hostErr } = await supabase
+        const { data: host, error: hostErr } = await supabase
           .from("hosts")
-          .select("branding_logo_url, logo_url")
+          .select("id,master_id,branding_logo_url,logo_url,injector_enabled")
           .eq("id", card.host_id)
           .maybeSingle();
 
-        if (!hostErr && hostRow) {
+        if (!hostErr && host) {
+          setHostRow(host as HostRow);
           logo =
-            hostRow.branding_logo_url?.trim() ||
-            hostRow.logo_url?.trim() ||
+            host.branding_logo_url?.trim() ||
+            host.logo_url?.trim() ||
             logo;
         }
       }
@@ -317,6 +343,68 @@ export default function TriviaUserInterfacePage() {
   }, [gameId, profile?.id, router]);
 
   /* ---------------------------------------------------------
+     ✅ Load Slide Ads once we have hostRow
+     (master + host merged like AdsManagerModal)
+     Phone behavior: change ad per question
+  --------------------------------------------------------- */
+  useEffect(() => {
+    if (!hostRow?.id) return;
+
+    let cancelled = false;
+
+    async function loadAds() {
+      try {
+        setAdsLoading(true);
+
+        // If injector disabled, just clear ads.
+        if (!hostRow.injector_enabled) {
+          if (!cancelled) setAds([]);
+          return;
+        }
+
+        const hostId = hostRow.id;
+        const masterId = hostRow.master_id;
+
+        let query = supabase
+          .from("slide_ads")
+          .select(
+            "id,url,type,active,order_index,global_order_index,duration_seconds,host_profile_id,master_id"
+          )
+          .eq("active", true)
+          .eq("type", "image");
+
+        if (masterId) {
+          query = query
+            .or(`master_id.eq.${masterId},host_profile_id.eq.${hostId}`)
+            .order("global_order_index", { ascending: true })
+            .order("order_index", { ascending: true });
+        } else {
+          query = query
+            .eq("host_profile_id", hostId)
+            .order("order_index", { ascending: true });
+        }
+
+        const { data, error } = await query;
+
+        if (error) {
+          console.warn("⚠️ slide_ads fetch error (trivia phone):", error);
+          if (!cancelled) setAds([]);
+          return;
+        }
+
+        if (!cancelled) setAds((data as SlideAd[]) || []);
+      } finally {
+        if (!cancelled) setAdsLoading(false);
+      }
+    }
+
+    loadAds();
+    return () => {
+      cancelled = true;
+    };
+  }, [hostRow?.id, hostRow?.master_id, hostRow?.injector_enabled]);
+
+  /* ---------------------------------------------------------
      Poll trivia_sessions for current_question / status / wall_phase
   --------------------------------------------------------- */
   useEffect(() => {
@@ -375,27 +463,30 @@ export default function TriviaUserInterfacePage() {
     | "podium";
 
   /* ---------------------------------------------------------
+     ✅ Phone ad changes per question number
+  --------------------------------------------------------- */
+  const currentAd: SlideAd | null = useMemo(() => {
+    if (!ads || ads.length === 0) return null;
+    const qNum = session?.current_question ?? 1;
+    const idx = ((qNum - 1) % ads.length + ads.length) % ads.length;
+    return ads[idx] || null;
+  }, [ads, session?.current_question]);
+
+  /* ---------------------------------------------------------
      ✅ Follow wall phase EXACTLY (no client phase timers)
-     ✅ PATCH: podium should behave like leaderboard for phones
-     ✅ PATCH: lock should also UNLOCK when phase returns to question
   --------------------------------------------------------- */
   useEffect(() => {
-    const isBoard = wallPhase === "leaderboard" || wallPhase === "podium";
-
-    // View is wall-driven
-    if (isBoard) {
+    if (wallPhase === "leaderboard") {
       setView("leaderboard");
       setLeaderLoading(true);
     } else {
       setView("question");
     }
 
-    // Overlay + reveal are wall-driven
     setShowAnswerOverlay(wallPhase === "overlay");
     setRevealAnswer(wallPhase === "reveal");
 
-    // ✅ IMPORTANT: lock/unlock follows wallPhase BOTH ways
-    setLocked(wallPhase !== "question");
+    if (wallPhase !== "question") setLocked(true);
   }, [wallPhase]);
 
   /* ---------------------------------------------------------
@@ -410,14 +501,13 @@ export default function TriviaUserInterfacePage() {
     setSelectedIndex(null);
     setHasAnswered(false);
 
-    // Only unlock if wall says we're in question phase
     setLocked(wallPhase !== "question");
     setProgress(1);
     setSecondsLeft(timerSeconds);
-  }, [currentQuestion?.id, timerSeconds, wallPhase]);
+  }, [currentQuestion?.id, timerSeconds]); // keep minimal deps
 
   /* ---------------------------------------------------------
-     TIMER: source of truth = questionStartedAt
+     TIMER: single source of truth = questionStartedAt
      ✅ Uses serverOffsetMs
      ✅ Stops updating bar when wall leaves 'question'
   --------------------------------------------------------- */
@@ -433,7 +523,6 @@ export default function TriviaUserInterfacePage() {
       !questionStartedAt ||
       wallPhase !== "question"
     ) {
-      // freeze at 0 if wall is beyond question
       if (wallPhase !== "question") {
         setProgress(0);
         setSecondsLeft(0);
@@ -457,7 +546,6 @@ export default function TriviaUserInterfacePage() {
       const secs = Math.max(0, Math.ceil(remaining / 1000));
       setSecondsLeft(secs);
 
-      // ✅ lock answering at 0 even if wall phase update is delayed
       if (remaining <= 0) setLocked(true);
     };
 
@@ -517,12 +605,11 @@ export default function TriviaUserInterfacePage() {
   }, [playerId, currentQuestion?.id]);
 
   /* ---------------------------------------------------------
-     Load leaderboard (TOP 4) when wallPhase === 'leaderboard' or 'podium'
-     ✅ PATCH: include podium
+     Load leaderboard (TOP 4) when wallPhase === 'leaderboard'
   --------------------------------------------------------- */
   useEffect(() => {
     if (!session?.id) return;
-    if (wallPhase !== "leaderboard" && wallPhase !== "podium") return;
+    if (wallPhase !== "leaderboard") return;
 
     let cancelled = false;
 
@@ -624,14 +711,12 @@ export default function TriviaUserInterfacePage() {
 
   /* ---------------------------------------------------------
      Answer submission
-     ✅ Uses serverOffsetMs so scoring is time-consistent too
-     ✅ Also blocks answering if wall moved off question
   --------------------------------------------------------- */
   async function handleSelectAnswer(idx: number) {
     if (!currentQuestion) return;
     if (!playerId) return;
     if (hasAnswered || locked) return;
-    if (wallPhase !== "question") return; // ✅ wall authority
+    if (wallPhase !== "question") return;
 
     setSelectedIndex(idx);
     setHasAnswered(true);
@@ -768,11 +853,8 @@ export default function TriviaUserInterfacePage() {
   let footerText = "";
   if (!isRunning) {
     footerText = "Game is paused. Waiting for the host…";
-  } else if (wallPhase === "leaderboard" || wallPhase === "podium") {
-    footerText =
-      wallPhase === "podium"
-        ? "Final results."
-        : "Leaderboard — next question starting soon…";
+  } else if (wallPhase === "leaderboard") {
+    footerText = "Leaderboard — next question starting soon…";
   } else if (wallPhase === "overlay") {
     footerText = "Time is up. Revealing the correct answer…";
   } else if (wallPhase === "reveal") {
@@ -861,9 +943,7 @@ export default function TriviaUserInterfacePage() {
               }}
             >
               {view === "leaderboard"
-                ? wallPhase === "podium"
-                  ? "Final Results"
-                  : "Leaderboard"
+                ? "Leaderboard"
                 : `Question ${currentQuestionIndex + 1} of ${questions.length}`}
             </div>
           </div>
@@ -893,9 +973,7 @@ export default function TriviaUserInterfacePage() {
             }}
           >
             {view === "leaderboard"
-              ? wallPhase === "podium"
-                ? "Final Results — Top Players"
-                : "Leaderboard — Top Players"
+              ? "Leaderboard — Top Players"
               : currentQuestion.question_text}
           </div>
         </div>
@@ -1150,23 +1228,62 @@ export default function TriviaUserInterfacePage() {
             })}
         </div>
 
-        {/* AD SLOT PLACEHOLDER */}
+        {/* ✅ AD SLOT (CHANGES PER QUESTION) */}
         <div
           style={{
             marginBottom: 10,
-            padding: 16,
+            padding: 0,
             borderRadius: 16,
-            border: "1px dashed rgba(148,163,184,0.6)",
-            background: "rgba(15,23,42,0.7)",
+            border: "1px solid rgba(148,163,184,0.35)",
+            background: "rgba(15,23,42,0.65)",
             minHeight: 160,
+            overflow: "hidden",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            fontSize: "0.95rem",
-            opacity: 0.95,
+            position: "relative",
           }}
         >
-          AD SLOT (from Ad Manager)
+          {adsLoading ? (
+            <div style={{ fontSize: "0.95rem", opacity: 0.9, padding: 16 }}>
+              Loading ad…
+            </div>
+          ) : currentAd?.url ? (
+            <img
+              src={currentAd.url}
+              alt="Sponsored"
+              style={{
+                width: "100%",
+                height: 160,
+                objectFit: "cover",
+                display: "block",
+              }}
+            />
+          ) : (
+            <div style={{ fontSize: "0.95rem", opacity: 0.95, padding: 16 }}>
+              AD SLOT
+            </div>
+          )}
+
+          {/* optional tiny label */}
+          {currentAd?.url && (
+            <div
+              style={{
+                position: "absolute",
+                bottom: 8,
+                right: 10,
+                padding: "3px 8px",
+                borderRadius: 999,
+                background: "rgba(0,0,0,0.55)",
+                border: "1px solid rgba(255,255,255,0.18)",
+                fontSize: "0.7rem",
+                fontWeight: 800,
+                letterSpacing: 0.2,
+              }}
+            >
+              Sponsored
+            </div>
+          )}
         </div>
 
         {/* FOOTER STATUS */}
