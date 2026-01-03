@@ -28,8 +28,7 @@ interface TriviaSession {
   current_question: number;
   question_started_at: string | null;
 
-  // ✅ wall authority (optional)
-  wall_phase?: string | null; // 'question'|'overlay'|'reveal'|'leaderboard'|'podium'
+  wall_phase?: string | null;
   wall_phase_started_at?: string | null;
 }
 
@@ -48,6 +47,20 @@ type HostRow = {
   branding_logo_url: string | null;
   logo_url: string | null;
   injector_enabled: boolean | null;
+};
+
+type TriviaCardRow = {
+  id: string;
+  public_name: string | null;
+  timer_seconds: number | null;
+  scoring_mode: string | null;
+  host_id: string | null;
+  background_type: string | null;
+  background_value: string | null;
+  background_brightness: number | null;
+
+  // ✅ you said you have this on trivia_cards too
+  injector_enabled?: boolean | null;
 };
 
 type SlideAd = {
@@ -107,7 +120,7 @@ export default function TriviaUserInterfacePage() {
   const gameId = searchParams.get("game"); // trivia_cards.id
 
   const [profile, setProfile] = useState<any>(null);
-  const [trivia, setTrivia] = useState<any>(null);
+  const [trivia, setTrivia] = useState<TriviaCardRow | null>(null);
   const [session, setSession] = useState<TriviaSession | null>(null);
   const [playerId, setPlayerId] = useState<string | null>(null);
   const [questions, setQuestions] = useState<any[]>([]);
@@ -144,14 +157,13 @@ export default function TriviaUserInterfacePage() {
   // ✅ server-time offset to prevent drift
   const [serverOffsetMs, setServerOffsetMs] = useState<number>(0);
 
-  // ✅ NEW: ads (phone changes per-question)
+  // ✅ Ads
   const [hostRow, setHostRow] = useState<HostRow | null>(null);
   const [ads, setAds] = useState<SlideAd[]>([]);
   const [adsLoading, setAdsLoading] = useState(false);
 
   /* ---------------------------------------------------------
-     ✅ Server clock sync (prevents drift)
-     Requires SQL: public.server_time()
+     ✅ Server clock sync
   --------------------------------------------------------- */
   useEffect(() => {
     if (!gameId) return;
@@ -214,7 +226,7 @@ export default function TriviaUserInterfacePage() {
       setLoading(true);
       setLoadingMessage("Loading trivia game…");
 
-      // 1️⃣ Load trivia card
+      // 1️⃣ Load trivia card (✅ includes injector_enabled)
       const { data: card, error: cardErr } = await supabase
         .from("trivia_cards")
         .select(
@@ -226,7 +238,8 @@ export default function TriviaUserInterfacePage() {
           host_id,
           background_type,
           background_value,
-          background_brightness
+          background_brightness,
+          injector_enabled
         `
         )
         .eq("id", gameId)
@@ -241,7 +254,7 @@ export default function TriviaUserInterfacePage() {
         return;
       }
 
-      setTrivia(card);
+      setTrivia(card as TriviaCardRow);
 
       // 2️⃣ Host row (logo + master_id + injector_enabled)
       let logo = "/faninteractlogo.png";
@@ -343,9 +356,75 @@ export default function TriviaUserInterfacePage() {
   }, [gameId, profile?.id, router]);
 
   /* ---------------------------------------------------------
-     ✅ Load Slide Ads once we have hostRow
-     (master + host merged like AdsManagerModal)
-     Phone behavior: change ad per question
+     ✅ Poll switch mid-game (hosts + trivia_cards)
+     - hosts.injector_enabled
+     - trivia_cards.injector_enabled
+  --------------------------------------------------------- */
+  useEffect(() => {
+    if (!trivia?.host_id || !gameId) return;
+
+    let cancelled = false;
+
+    async function pollToggles() {
+      // poll host
+      const { data: host, error: hostErr } = await supabase
+        .from("hosts")
+        .select("id,master_id,branding_logo_url,logo_url,injector_enabled")
+        .eq("id", trivia.host_id as string)
+        .maybeSingle();
+
+      if (!cancelled && !hostErr && host) {
+        setHostRow(host as HostRow);
+
+        // (optional) if you want live logo changes too:
+        const newLogo =
+          host.branding_logo_url?.trim() ||
+          host.logo_url?.trim() ||
+          "/faninteractlogo.png";
+        setHostLogoUrl(newLogo);
+      }
+
+      // poll trivia card switch
+      const { data: card, error: cardErr } = await supabase
+        .from("trivia_cards")
+        .select("id,injector_enabled")
+        .eq("id", gameId)
+        .maybeSingle();
+
+      if (!cancelled && !cardErr && card) {
+        setTrivia((prev) =>
+          prev ? ({ ...prev, injector_enabled: card.injector_enabled } as any) : prev
+        );
+      }
+    }
+
+    pollToggles();
+    const id = window.setInterval(pollToggles, 2000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [trivia?.host_id, gameId]);
+
+  /* ---------------------------------------------------------
+     ✅ adsEnabled = host switch AND trivia card switch
+     - if trivia switch is missing/null, treat as ON (backward compat)
+  --------------------------------------------------------- */
+  const adsEnabled = useMemo(() => {
+    const hostOn = Boolean(hostRow?.injector_enabled);
+
+    // if undefined/null -> default ON (so older cards still show ads)
+    const cardFlag =
+      trivia?.injector_enabled === undefined || trivia?.injector_enabled === null
+        ? true
+        : Boolean(trivia?.injector_enabled);
+
+    return hostOn && cardFlag;
+  }, [hostRow?.injector_enabled, trivia?.injector_enabled]);
+
+  /* ---------------------------------------------------------
+     ✅ Load Slide Ads whenever adsEnabled flips ON (or host changes)
   --------------------------------------------------------- */
   useEffect(() => {
     if (!hostRow?.id) return;
@@ -356,8 +435,8 @@ export default function TriviaUserInterfacePage() {
       try {
         setAdsLoading(true);
 
-        // If injector disabled, just clear ads.
-        if (!hostRow.injector_enabled) {
+        // If disabled mid-game, clear ads but KEEP the slot visible.
+        if (!adsEnabled) {
           if (!cancelled) setAds([]);
           return;
         }
@@ -402,7 +481,7 @@ export default function TriviaUserInterfacePage() {
     return () => {
       cancelled = true;
     };
-  }, [hostRow?.id, hostRow?.master_id, hostRow?.injector_enabled]);
+  }, [hostRow?.id, hostRow?.master_id, adsEnabled]);
 
   /* ---------------------------------------------------------
      Poll trivia_sessions for current_question / status / wall_phase
@@ -454,7 +533,6 @@ export default function TriviaUserInterfacePage() {
   const currentQuestion = questions[currentQuestionIndex] || null;
   const isRunning = session?.status === "running";
 
-  // ✅ Wall authority phase
   const wallPhase = (session?.wall_phase || "question") as
     | "question"
     | "overlay"
@@ -473,7 +551,7 @@ export default function TriviaUserInterfacePage() {
   }, [ads, session?.current_question]);
 
   /* ---------------------------------------------------------
-     ✅ Follow wall phase EXACTLY (no client phase timers)
+     ✅ Follow wall phase EXACTLY
   --------------------------------------------------------- */
   useEffect(() => {
     if (wallPhase === "leaderboard") {
@@ -504,12 +582,10 @@ export default function TriviaUserInterfacePage() {
     setLocked(wallPhase !== "question");
     setProgress(1);
     setSecondsLeft(timerSeconds);
-  }, [currentQuestion?.id, timerSeconds]); // keep minimal deps
+  }, [currentQuestion?.id, timerSeconds]);
 
   /* ---------------------------------------------------------
-     TIMER: single source of truth = questionStartedAt
-     ✅ Uses serverOffsetMs
-     ✅ Stops updating bar when wall leaves 'question'
+     TIMER: source of truth = questionStartedAt
   --------------------------------------------------------- */
   useEffect(() => {
     if (timerIntervalRef.current !== null) {
@@ -851,7 +927,7 @@ export default function TriviaUserInterfacePage() {
   const pctWidth = Math.max(0, Math.min(100, progress * 100));
 
   let footerText = "";
-  if (!isRunning) {
+  if (session?.status !== "running") {
     footerText = "Game is paused. Waiting for the host…";
   } else if (wallPhase === "leaderboard") {
     footerText = "Leaderboard — next question starting soon…";
@@ -1228,7 +1304,7 @@ export default function TriviaUserInterfacePage() {
             })}
         </div>
 
-        {/* ✅ AD SLOT (CHANGES PER QUESTION) */}
+        {/* ✅ AD SLOT (ALWAYS RENDERED — content responds mid-game) */}
         <div
           style={{
             marginBottom: 10,
@@ -1244,7 +1320,11 @@ export default function TriviaUserInterfacePage() {
             position: "relative",
           }}
         >
-          {adsLoading ? (
+          {!adsEnabled ? (
+            <div style={{ fontSize: "0.95rem", opacity: 0.95, padding: 16 }}>
+              ADS OFF
+            </div>
+          ) : adsLoading ? (
             <div style={{ fontSize: "0.95rem", opacity: 0.9, padding: 16 }}>
               Loading ad…
             </div>
@@ -1265,8 +1345,7 @@ export default function TriviaUserInterfacePage() {
             </div>
           )}
 
-          {/* optional tiny label */}
-          {currentAd?.url && (
+          {adsEnabled && currentAd?.url && (
             <div
               style={{
                 position: "absolute",
@@ -1298,7 +1377,7 @@ export default function TriviaUserInterfacePage() {
           {footerText}
         </div>
 
-        {/* THE ANSWER IS OVERLAY (wall authority) */}
+        {/* THE ANSWER IS OVERLAY */}
         {showAnswerOverlay && (
           <div
             style={{
