@@ -48,9 +48,6 @@ type HostRow = {
   branding_logo_url: string | null;
   logo_url: string | null;
   injector_enabled: boolean | null;
-
-  // ✅ if present in your DB, this will be polled mid-game
-  trivia_ads_enabled?: boolean | null;
 };
 
 type SlideAd = {
@@ -147,7 +144,7 @@ export default function TriviaUserInterfacePage() {
   // ✅ server-time offset to prevent drift
   const [serverOffsetMs, setServerOffsetMs] = useState<number>(0);
 
-  // ✅ Ads
+  // ✅ NEW: ads (phone changes per-question)
   const [hostRow, setHostRow] = useState<HostRow | null>(null);
   const [ads, setAds] = useState<SlideAd[]>([]);
   const [adsLoading, setAdsLoading] = useState(false);
@@ -246,14 +243,12 @@ export default function TriviaUserInterfacePage() {
 
       setTrivia(card);
 
-      // 2️⃣ Host row (logo + master_id + injector_enabled + trivia_ads_enabled)
+      // 2️⃣ Host row (logo + master_id + injector_enabled)
       let logo = "/faninteractlogo.png";
       if (card.host_id) {
         const { data: host, error: hostErr } = await supabase
           .from("hosts")
-          .select(
-            "id,master_id,branding_logo_url,logo_url,injector_enabled,trivia_ads_enabled"
-          )
+          .select("id,master_id,branding_logo_url,logo_url,injector_enabled")
           .eq("id", card.host_id)
           .maybeSingle();
 
@@ -348,59 +343,9 @@ export default function TriviaUserInterfacePage() {
   }, [gameId, profile?.id, router]);
 
   /* ---------------------------------------------------------
-     ✅ NEW: Poll host row every 5s so switch flips mid-game apply
-  --------------------------------------------------------- */
-  useEffect(() => {
-    if (!trivia?.host_id) return;
-
-    let cancelled = false;
-
-    async function pollHost() {
-      const { data, error } = await supabase
-        .from("hosts")
-        .select(
-          "id,master_id,branding_logo_url,logo_url,injector_enabled,trivia_ads_enabled"
-        )
-        .eq("id", trivia.host_id)
-        .maybeSingle();
-
-      if (cancelled) return;
-      if (error || !data) return;
-
-      setHostRow(data as HostRow);
-
-      // optional: reflect live logo changes too
-      const newLogo =
-        data.branding_logo_url?.trim() ||
-        data.logo_url?.trim() ||
-        "/faninteractlogo.png";
-      setHostLogoUrl(newLogo);
-    }
-
-    pollHost();
-    const id = window.setInterval(pollHost, 5000);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(id);
-    };
-  }, [trivia?.host_id]);
-
-  /* ---------------------------------------------------------
-     ✅ Ad slot ON/OFF logic (reacts mid-game)
-     - If trivia_ads_enabled missing/null, default to ON (backward compatible)
-  --------------------------------------------------------- */
-  const showAdSlot = useMemo(() => {
-    const adsToggle =
-      hostRow?.trivia_ads_enabled === undefined
-        ? true
-        : Boolean(hostRow?.trivia_ads_enabled);
-
-    return Boolean(hostRow?.injector_enabled) && adsToggle;
-  }, [hostRow?.injector_enabled, hostRow?.trivia_ads_enabled]);
-
-  /* ---------------------------------------------------------
-     ✅ Load Slide Ads once we have hostRow (and whenever showAdSlot flips)
+     ✅ Load Slide Ads once we have hostRow
+     (master + host merged like AdsManagerModal)
+     Phone behavior: change ad per question
   --------------------------------------------------------- */
   useEffect(() => {
     if (!hostRow?.id) return;
@@ -411,8 +356,8 @@ export default function TriviaUserInterfacePage() {
       try {
         setAdsLoading(true);
 
-        // If slot disabled, clear ads.
-        if (!showAdSlot) {
+        // If injector disabled, just clear ads.
+        if (!hostRow.injector_enabled) {
           if (!cancelled) setAds([]);
           return;
         }
@@ -457,7 +402,7 @@ export default function TriviaUserInterfacePage() {
     return () => {
       cancelled = true;
     };
-  }, [hostRow?.id, hostRow?.master_id, showAdSlot]);
+  }, [hostRow?.id, hostRow?.master_id, hostRow?.injector_enabled]);
 
   /* ---------------------------------------------------------
      Poll trivia_sessions for current_question / status / wall_phase
@@ -1283,64 +1228,63 @@ export default function TriviaUserInterfacePage() {
             })}
         </div>
 
-        {/* ✅ AD SLOT (ONLY WHEN ENABLED MID-GAME) */}
-        {showAdSlot && (
-          <div
-            style={{
-              marginBottom: 10,
-              padding: 0,
-              borderRadius: 16,
-              border: "1px solid rgba(148,163,184,0.35)",
-              background: "rgba(15,23,42,0.65)",
-              minHeight: 160,
-              overflow: "hidden",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              position: "relative",
-            }}
-          >
-            {adsLoading ? (
-              <div style={{ fontSize: "0.95rem", opacity: 0.9, padding: 16 }}>
-                Loading ad…
-              </div>
-            ) : currentAd?.url ? (
-              <img
-                src={currentAd.url}
-                alt="Sponsored"
-                style={{
-                  width: "100%",
-                  height: 160,
-                  objectFit: "cover",
-                  display: "block",
-                }}
-              />
-            ) : (
-              <div style={{ fontSize: "0.95rem", opacity: 0.95, padding: 16 }}>
-                AD SLOT
-              </div>
-            )}
+        {/* ✅ AD SLOT (CHANGES PER QUESTION) */}
+        <div
+          style={{
+            marginBottom: 10,
+            padding: 0,
+            borderRadius: 16,
+            border: "1px solid rgba(148,163,184,0.35)",
+            background: "rgba(15,23,42,0.65)",
+            minHeight: 160,
+            overflow: "hidden",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            position: "relative",
+          }}
+        >
+          {adsLoading ? (
+            <div style={{ fontSize: "0.95rem", opacity: 0.9, padding: 16 }}>
+              Loading ad…
+            </div>
+          ) : currentAd?.url ? (
+            <img
+              src={currentAd.url}
+              alt="Sponsored"
+              style={{
+                width: "100%",
+                height: 160,
+                objectFit: "cover",
+                display: "block",
+              }}
+            />
+          ) : (
+            <div style={{ fontSize: "0.95rem", opacity: 0.95, padding: 16 }}>
+              AD SLOT
+            </div>
+          )}
 
-            {currentAd?.url && (
-              <div
-                style={{
-                  position: "absolute",
-                  bottom: 8,
-                  right: 10,
-                  padding: "3px 8px",
-                  borderRadius: 999,
-                  background: "rgba(0,0,0,0.55)",
-                  border: "1px solid rgba(255,255,255,0.18)",
-                  fontSize: "0.7rem",
-                  fontWeight: 800,
-                  letterSpacing: 0.2,
-                }}
-              >
-                Sponsored
-              </div>
-            )}
-          </div>
-        )}
+          {/* optional tiny label */}
+          {currentAd?.url && (
+            <div
+              style={{
+                position: "absolute",
+                bottom: 8,
+                right: 10,
+                padding: "3px 8px",
+                borderRadius: 999,
+                background: "rgba(0,0,0,0.55)",
+                border: "1px solid rgba(255,255,255,0.18)",
+                fontSize: "0.7rem",
+                fontWeight: 800,
+                letterSpacing: 0.2,
+              }}
+            >
+              Sponsored
+            </div>
+          )}
+        </div>
 
         {/* FOOTER STATUS */}
         <div
