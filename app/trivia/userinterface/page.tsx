@@ -150,6 +150,10 @@ export default function TriviaUserInterfacePage() {
   // per-game trivia switch
   const [adsEnabled, setAdsEnabled] = useState<boolean>(false);
 
+  // ✅ LOCKED ad (prevents “jumping” mid-question)
+  const [lockedAd, setLockedAd] = useState<SlideAd | null>(null);
+  const lastQuestionNumRef = useRef<number | null>(null);
+
   /* ---------------------------------------------------------
      Server clock sync
   --------------------------------------------------------- */
@@ -375,7 +379,7 @@ export default function TriviaUserInterfacePage() {
 
   /* ---------------------------------------------------------
      Load Slide Ads when allowed (GLOBAL + TRIVIA)
-     ✅ Stable ordering to match Ad Manager exactly
+     ✅ Stable ordering to match Ad Manager
   --------------------------------------------------------- */
   useEffect(() => {
     if (!hostRow?.id) return;
@@ -403,7 +407,6 @@ export default function TriviaUserInterfacePage() {
           .eq("active", true);
 
         if (masterId) {
-          // ✅ EXACT: global_order_index ASC NULLS FIRST, then order_index ASC NULLS FIRST, then id
           query = query
             .or(`master_id.eq.${masterId},host_profile_id.eq.${hostId}`)
             .order("global_order_index", { ascending: true, nullsFirst: true })
@@ -428,11 +431,11 @@ export default function TriviaUserInterfacePage() {
           (a) => typeof a?.url === "string" && a.url.trim().length > 0
         );
 
-        // ✅ Safety net stable sort (matches above)
+        // extra-stable sort (same rules as query)
         cleaned.sort((a, b) => {
           const aGNull = a.global_order_index == null;
           const bGNull = b.global_order_index == null;
-          if (aGNull !== bGNull) return aGNull ? -1 : 1; // NULLS FIRST
+          if (aGNull !== bGNull) return aGNull ? -1 : 1;
           if (!aGNull && !bGNull) {
             const diff =
               (a.global_order_index as number) -
@@ -442,7 +445,7 @@ export default function TriviaUserInterfacePage() {
 
           const aONull = a.order_index == null;
           const bONull = b.order_index == null;
-          if (aONull !== bONull) return aONull ? -1 : 1; // NULLS FIRST
+          if (aONull !== bONull) return aONull ? -1 : 1;
           if (!aONull && !bONull) {
             const diff =
               (a.order_index as number) - (b.order_index as number);
@@ -527,17 +530,44 @@ export default function TriviaUserInterfacePage() {
     | "podium";
 
   /* ---------------------------------------------------------
-     Ad changes per question (NOT time-based)
-     ✅ Removes "Sponsored" pill completely
+     ✅ LOCK ad per question number (prevents jumping)
+     - Sets once per question
+     - If ads first load mid-question, it will lock once (and then never change)
   --------------------------------------------------------- */
-  const currentAd: SlideAd | null = useMemo(() => {
-    if (!adsEnabled) return null;
-    if (!ads || ads.length === 0) return null;
+  useEffect(() => {
+    if (!adsEnabled) {
+      setLockedAd(null);
+      lastQuestionNumRef.current = null;
+      return;
+    }
 
     const qNum = session?.current_question ?? 1;
-    const idx = ((qNum - 1) % ads.length + ads.length) % ads.length;
-    return ads[idx] || null;
-  }, [adsEnabled, ads, session?.current_question]);
+
+    // If question changed: pick the deterministic ad for that question
+    if (lastQuestionNumRef.current !== qNum) {
+      lastQuestionNumRef.current = qNum;
+
+      if (ads.length > 0) {
+        const idx = ((qNum - 1) % ads.length + ads.length) % ads.length;
+        setLockedAd(ads[idx] || null);
+      } else {
+        setLockedAd(null);
+      }
+      return;
+    }
+
+    // If question DIDN'T change, do not change the ad.
+    // BUT if we currently have no locked ad AND ads just arrived, lock it once.
+    if (!lockedAd && ads.length > 0) {
+      const idx = ((qNum - 1) % ads.length + ads.length) % ads.length;
+      setLockedAd(ads[idx] || null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [adsEnabled, session?.current_question, ads.length]);
+
+  const isVideo =
+    typeof lockedAd?.type === "string" &&
+    lockedAd.type.toLowerCase().includes("video");
 
   /* ---------------------------------------------------------
      Follow wall phase
@@ -939,10 +969,6 @@ export default function TriviaUserInterfacePage() {
       ? trivia.background_brightness
       : 100;
 
-  const isVideo =
-    typeof currentAd?.type === "string" &&
-    currentAd.type.toLowerCase().includes("video");
-
   return (
     <>
       <div
@@ -1169,7 +1195,7 @@ export default function TriviaUserInterfacePage() {
             })}
         </div>
 
-        {/* AD SLOT (per question only) */}
+        {/* AD SLOT (locked per question) */}
         <div
           style={{
             marginBottom: 10,
@@ -1189,10 +1215,10 @@ export default function TriviaUserInterfacePage() {
             <div style={{ fontSize: "0.95rem", opacity: 0.9, padding: 16 }}>
               Loading ad…
             </div>
-          ) : currentAd?.url ? (
+          ) : lockedAd?.url ? (
             isVideo ? (
               <video
-                src={currentAd.url}
+                src={lockedAd.url}
                 muted
                 playsInline
                 autoPlay
@@ -1207,7 +1233,7 @@ export default function TriviaUserInterfacePage() {
               />
             ) : (
               <img
-                src={currentAd.url}
+                src={lockedAd.url}
                 alt=""
                 style={{
                   width: "100%",
