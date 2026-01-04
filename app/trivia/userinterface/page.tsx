@@ -93,7 +93,7 @@ function pickSelfieUrl(guest: any): string | null {
   );
 }
 
-// ✅ prevent leaderboard flicker / pointless state churn
+// ✅ PATCH: prevent leaderboard flicker / pointless state churn
 function sameLeaderRows(a: LeaderRow[], b: LeaderRow[]) {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) {
@@ -170,12 +170,13 @@ export default function TriviaUserInterfacePage() {
   const [adLockedQuestion, setAdLockedQuestion] = useState<number>(1);
   const [lockedAdIndex, setLockedAdIndex] = useState<number>(0);
 
-  // leaderboard flicker guard
+  // ✅ PATCH: leaderboard flicker guard
   const lastLeaderRowsRef = useRef<LeaderRow[]>([]);
   const leaderScrollRef = useRef<HTMLDivElement | null>(null);
 
   /* ---------------------------------------------------------
-     COUNTDOWN TIMER (LOCKED TO INACTIVE WALL)
+     ✅ COUNTDOWN TIMER (LOCKED TO INACTIVE WALL)
+     (DO NOT CHANGE OTHER FLOW)
   --------------------------------------------------------- */
   const [countdownSeconds, setCountdownSeconds] = useState<number>(10);
   const [countdownActive, setCountdownActive] = useState<boolean>(false);
@@ -296,7 +297,7 @@ export default function TriviaUserInterfacePage() {
       setTrivia(card);
       setAdsEnabled(Boolean((card as any).ads_enabled));
 
-      // countdown state seed
+      // ✅ countdown state seed (locks to inactive wall)
       setCountdownSeconds(
         typeof (card as any).countdown_seconds === "number"
           ? (card as any).countdown_seconds
@@ -347,6 +348,7 @@ export default function TriviaUserInterfacePage() {
       setSession(sessionRow as TriviaSession);
       setQuestionStartedAt((sessionRow as any).question_started_at ?? null);
 
+      // seed ad lock to current question immediately
       const initialQ = Number((sessionRow as any)?.current_question ?? 1);
       setAdLockedQuestion(initialQ);
 
@@ -405,7 +407,7 @@ export default function TriviaUserInterfacePage() {
   }, [gameId, profile?.id, router]);
 
   /* ---------------------------------------------------------
-     Subscribe to trivia_cards countdown fields
+     ✅ Subscribe to trivia_cards countdown fields (LOCKS TO INACTIVE WALL)
   --------------------------------------------------------- */
   useEffect(() => {
     if (!gameId) return;
@@ -439,7 +441,7 @@ export default function TriviaUserInterfacePage() {
   }, [gameId]);
 
   /* ---------------------------------------------------------
-     Poll trivia_cards.ads_enabled every 5 seconds
+     Poll trivia_cards.ads_enabled every 5 seconds (mid-game toggle)
   --------------------------------------------------------- */
   useEffect(() => {
     if (!gameId) return;
@@ -556,6 +558,7 @@ export default function TriviaUserInterfacePage() {
 
       setQuestionStartedAt((data as any).question_started_at ?? null);
 
+      // ✅ lock ad ONLY when question number changes
       const q = Number((data as any)?.current_question ?? 1);
       setAdLockedQuestion((prevQ) => {
         if (q !== prevQ) return q;
@@ -612,6 +615,7 @@ export default function TriviaUserInterfacePage() {
     if (!adsEnabled) return;
     if (!ads || ads.length === 0) return;
 
+    // ad for question N is ads[(N-1) % ads.length]
     const nextIdx =
       ((adLockedQuestion - 1) % ads.length + ads.length) % ads.length;
 
@@ -620,6 +624,7 @@ export default function TriviaUserInterfacePage() {
 
   /* ---------------------------------------------------------
      Follow wall phase
+     ✅ PATCH: remove forced setLeaderLoading(true) to stop flicker
   --------------------------------------------------------- */
   useEffect(() => {
     if (wallPhase === "leaderboard") {
@@ -751,7 +756,12 @@ export default function TriviaUserInterfacePage() {
   }, [playerId, currentQuestion?.id]);
 
   /* ---------------------------------------------------------
-     Leaderboard loader
+     ✅ Leaderboard loader (ONLY players who have points)
+     PATCHES:
+     - filter to points > 0
+     - rank after filtering
+     - avoid flicker by only setting state when rows changed
+     - poll slower to reduce churn
   --------------------------------------------------------- */
   useEffect(() => {
     if (!session?.id) return;
@@ -827,6 +837,7 @@ export default function TriviaUserInterfacePage() {
         }
       }
 
+      // Build rows, then FILTER points > 0
       const built: LeaderRow[] = players
         .map((p: any) => {
           const guest = p.guest_id ? guestMap.get(p.guest_id) : undefined;
@@ -840,7 +851,7 @@ export default function TriviaUserInterfacePage() {
             selfieUrl: safeSelfie,
           };
         })
-        .filter((r) => r.points > 0)
+        .filter((r) => r.points > 0) // ✅ ONLY players with points
         .sort((a, b) => b.points - a.points)
         .map((r, idx) => ({ ...r, rank: idx + 1 }));
 
@@ -863,7 +874,9 @@ export default function TriviaUserInterfacePage() {
   }, [session?.id, wallPhase]);
 
   /* ---------------------------------------------------------
-     Auto-scroll leaderboard when long
+     ✅ Auto-scroll leaderboard down then back up (when list is long)
+     - only runs in leaderboard view
+     - pauses briefly at top/bottom
   --------------------------------------------------------- */
   useEffect(() => {
     if (view !== "leaderboard") return;
@@ -871,6 +884,7 @@ export default function TriviaUserInterfacePage() {
     const el = leaderScrollRef.current;
     if (!el) return;
 
+    // only bother if we can actually scroll
     const canScroll = el.scrollHeight - el.clientHeight > 8;
     if (!canScroll) return;
 
@@ -878,7 +892,7 @@ export default function TriviaUserInterfacePage() {
     let dir: 1 | -1 = 1;
     let pauseUntil = 0;
 
-    const stepPx = 1.2;
+    const stepPx = 1.2; // speed
     const tickMs = 22;
 
     const tick = () => {
@@ -890,6 +904,7 @@ export default function TriviaUserInterfacePage() {
       const max = el.scrollHeight - el.clientHeight;
       const next = el.scrollTop + dir * stepPx;
 
+      // bottom
       if (next >= max) {
         el.scrollTop = max;
         dir = -1;
@@ -897,6 +912,7 @@ export default function TriviaUserInterfacePage() {
         return;
       }
 
+      // top
       if (next <= 0) {
         el.scrollTop = 0;
         dir = 1;
@@ -924,6 +940,7 @@ export default function TriviaUserInterfacePage() {
     if (hasAnswered || locked) return;
     if (wallPhase !== "question") return;
 
+    // ✅ countdown lock (prevents answering during pre-game countdown)
     if (isCountdownRunning) return;
 
     setSelectedIndex(idx);
@@ -1213,7 +1230,6 @@ export default function TriviaUserInterfacePage() {
             minHeight: 0,
             overflowY: "auto",
             paddingRight: 2,
-            alignContent: "flex-start", // keep single row at top
           }}
         >
           {view === "leaderboard" && (
@@ -1352,6 +1368,7 @@ export default function TriviaUserInterfacePage() {
               let opacityBtn = 1;
               let boxShadow = "none";
 
+              // badge (A/B/C/D circle)
               let badgeBg = chosen
                 ? "rgba(15,23,42,0.2)"
                 : "rgba(15,23,42,0.7)";
@@ -1359,17 +1376,17 @@ export default function TriviaUserInterfacePage() {
 
               const gotItRightPulse = revealAnswer && chosen && isCorrectChoice;
 
-              // BEFORE reveal: just highlight your chosen answer
+              // BEFORE reveal: highlight chosen in green
               if (!revealAnswer && chosen) {
                 bgBtn = "linear-gradient(90deg,#22c55e,#15803d)";
                 border = "1px solid rgba(240,253,250,0.9)";
                 boxShadow = "0 0 12px rgba(74,222,128,0.6)";
               }
 
-              // AFTER reveal:
+              // AFTER reveal: correct -> green, chosen wrong -> red
               if (revealAnswer) {
                 if (isCorrectChoice) {
-                  // ✅ Correct answer = GREEN
+                  // ✅ correct answer is green
                   bgBtn = "linear-gradient(90deg,#22c55e,#16a34a)";
                   border = "2px solid rgba(74,222,128,1)";
                   boxShadow = gotItRightPulse
@@ -1379,15 +1396,15 @@ export default function TriviaUserInterfacePage() {
                   badgeBg = "rgba(22,163,74,0.2)";
                   badgeBorder = "2px solid rgba(74,222,128,1)";
                 } else if (chosen && !isCorrectChoice) {
-                  // ❌ Selected wrong answer = RED
+                  // ❌ user's wrong choice goes red
                   bgBtn = "linear-gradient(90deg,#ef4444,#b91c1c)";
                   border = "2px solid rgba(248,113,113,1)";
                   boxShadow = "0 0 16px rgba(248,113,113,0.9)";
 
-                  badgeBg = "rgba(127,29,29,0.85)";
+                  badgeBg = "rgba(127,29,29,0.8)";
                   badgeBorder = "2px solid rgba(248,113,113,1)";
                 } else {
-                  // All other unselected wrong options fade out
+                  // everything else fades
                   opacityBtn = 0.4;
                 }
               } else if (disabled && !chosen) {
@@ -1562,7 +1579,7 @@ export default function TriviaUserInterfacePage() {
           </div>
         )}
 
-        {/* PRE-GAME COUNTDOWN OVERLAY */}
+        {/* ✅ PRE-GAME COUNTDOWN OVERLAY (LOCKED TO INACTIVE WALL) */}
         {isCountdownRunning && (
           <div
             style={{
