@@ -3,7 +3,7 @@
 import { cn } from "@/lib/utils";
 import * as Tabs from "@radix-ui/react-tabs";
 import { supabase } from "@/lib/supabaseClient";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 type LeaderRow = { playerId: string; label: string; totalPoints: number };
 
@@ -56,8 +56,6 @@ function getTriviaCardBackground(trivia: any) {
     background: value || "#1b2638",
   };
 }
-
-type WallPhase = "question" | "overlay" | "reveal" | "leaderboard" | "podium";
 
 export default function TriviaCard({
   trivia,
@@ -144,7 +142,7 @@ export default function TriviaCard({
   );
 
   /* ------------------------------------------------------------
-     ✅ ACTIVE SESSION (we use this for the conductor)
+     ✅ ACTIVE SESSION (used only for counts/leaderboard)
   ------------------------------------------------------------ */
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
 
@@ -169,16 +167,6 @@ export default function TriviaCard({
 
   const playLockRef = useRef(false);
   const playTimeoutRef = useRef<number | null>(null);
-
-  /* ------------------------------------------------------------
-     ✅ BRUTE FORCE CONDUCTOR STATE (prevents skipping)
-  ------------------------------------------------------------ */
-  const conductorTickRef = useRef<number | null>(null);
-
-  // Durations between phases (tweak if you want)
-  const OVERLAY_MS = 900;      // "THE ANSWER IS..." screen
-  const REVEAL_MS = 2600;      // show correct answer
-  const LEADERBOARD_MS = 4200; // show leaderboard between questions
 
   /* ------------------------------------------------------------
      ACTIVE TAB
@@ -397,7 +385,7 @@ export default function TriviaCard({
   }, [trivia.id]);
 
   /* ------------------------------------------------------------
-     LEADERBOARD LOADER
+     LEADERBOARD LOADER (read-only)
  ------------------------------------------------------------ */
   async function loadLeaderboard(cancelledRef?: { current: boolean }) {
     if (!trivia?.id) return;
@@ -491,7 +479,7 @@ export default function TriviaCard({
   }
 
   /* ------------------------------------------------------------
-     LEADERBOARD AUTO-REFRESH
+     LEADERBOARD AUTO-REFRESH (still read-only)
  ------------------------------------------------------------ */
   useEffect(() => {
     if (activeTab !== "leaderboard") return;
@@ -654,46 +642,7 @@ export default function TriviaCard({
   }
 
   /* ------------------------------------------------------------
-     ✅ GUARDED SESSION UPDATE (atomic, prevents double-advance)
-  ------------------------------------------------------------ */
-  async function guardedSessionUpdate(args: {
-    sessionId: string;
-    expect: {
-      status?: string;
-      wall_phase?: WallPhase;
-      wall_phase_started_at?: string | null;
-      current_question?: number | null;
-    };
-    patch: any;
-  }): Promise<boolean> {
-    let q = supabase.from("trivia_sessions").update(args.patch).eq("id", args.sessionId);
-
-    if (typeof args.expect.status === "string") q = q.eq("status", args.expect.status);
-    if (typeof args.expect.wall_phase === "string") q = q.eq("wall_phase", args.expect.wall_phase);
-    if (typeof args.expect.wall_phase_started_at === "string")
-      q = q.eq("wall_phase_started_at", args.expect.wall_phase_started_at);
-    if (args.expect.wall_phase_started_at === null)
-      q = q.is("wall_phase_started_at", null);
-
-    if (typeof args.expect.current_question === "number")
-      q = q.eq("current_question", args.expect.current_question);
-    if (args.expect.current_question === null)
-      q = q.is("current_question", null);
-
-    const { data, error } = await q.select("id").limit(1);
-
-    if (error) {
-      console.error("❌ guardedSessionUpdate error:", error);
-      return false;
-    }
-
-    // if update affected 0 rows, guard prevented it (someone else already advanced)
-    return Array.isArray(data) && data.length > 0;
-  }
-
-  /* ------------------------------------------------------------
-     ▶️ PLAY TRIVIA
-     ✅ now seeds wall_phase + wall_phase_started_at too
+     ▶️ PLAY TRIVIA (ONLY: start game & seed first question)
  ------------------------------------------------------------ */
   async function handlePlayTrivia() {
     if (playLockRef.current) return;
@@ -787,6 +736,8 @@ export default function TriviaCard({
               status: "running",
               current_question: 1,
               question_started_at: startIso,
+              // wall_phase + phase timing are now driven by Active Wall,
+              // which will pick up from "question" as the default.
               wall_phase: "question",
               wall_phase_started_at: startIso,
             })
@@ -837,219 +788,6 @@ export default function TriviaCard({
     setCardStatus("finished");
     setCardCountdownActive(false);
   }
-
-  /* ------------------------------------------------------------
-     ✅ BRUTE FORCE AUTO CONDUCTOR (dashboard is the authority)
-     - prevents skipping by using guarded atomic updates
-     - even if multiple tabs try, only one wins each transition
-  ------------------------------------------------------------ */
-  useEffect(() => {
-    // only run in AUTO mode
-    if (playMode !== "auto") return;
-
-    // only run when game is actually running
-    if (cardStatus !== "running") return;
-    if (cardCountdownActive) return;
-    if (!activeSessionId) return;
-
-    let cancelled = false;
-
-    const tick = async () => {
-      if (cancelled) return;
-
-      const { data: session, error } = await supabase
-        .from("trivia_sessions")
-        .select(
-          "id,status,current_question,question_started_at,wall_phase,wall_phase_started_at"
-        )
-        .eq("id", activeSessionId)
-        .maybeSingle();
-
-      if (error || !session) return;
-      if (session.status !== "running") return;
-
-      const nowIso = new Date().toISOString();
-      const nowMs = Date.now();
-
-      const phase = (session.wall_phase || "question") as WallPhase;
-      const phaseStartedAt = session.wall_phase_started_at || session.question_started_at;
-      const phaseStartMs = phaseStartedAt ? new Date(phaseStartedAt).getTime() : nowMs;
-
-      const elapsed = Math.max(0, nowMs - phaseStartMs);
-      const qIndex = Number(session.current_question || 1);
-
-      // fetch active question count (cheap count query, once per tick is ok at 250ms? no)
-      // So: only refresh count occasionally.
-    };
-
-    // ✅ lightweight active question count cache (refresh every 5s)
-    const activeCountRef = { current: 1 };
-    let lastCountAt = 0;
-
-    const refreshActiveCount = async () => {
-      const now = Date.now();
-      if (now - lastCountAt < 5000) return;
-      lastCountAt = now;
-
-      const { count } = await supabase
-        .from("trivia_questions")
-        .select("*", { count: "exact", head: true })
-        .eq("trivia_card_id", trivia.id)
-        .eq("is_active", true);
-
-      activeCountRef.current = Math.max(1, Number(count || 1));
-    };
-
-    const conductorTick = async () => {
-      if (cancelled) return;
-
-      await refreshActiveCount();
-
-      const { data: session, error } = await supabase
-        .from("trivia_sessions")
-        .select(
-          "id,status,current_question,question_started_at,wall_phase,wall_phase_started_at"
-        )
-        .eq("id", activeSessionId)
-        .maybeSingle();
-
-      if (error || !session) return;
-      if (session.status !== "running") return;
-
-      const nowIso = new Date().toISOString();
-      const nowMs = Date.now();
-
-      const phase = (session.wall_phase || "question") as WallPhase;
-      const phaseStartedAt =
-        session.wall_phase_started_at || session.question_started_at || null;
-
-      const phaseStartMs = phaseStartedAt ? new Date(phaseStartedAt).getTime() : nowMs;
-      const elapsed = Math.max(0, nowMs - phaseStartMs);
-
-      const qIndex = Number(session.current_question || 1);
-      const totalQ = activeCountRef.current;
-
-      // hard clamp (never allow skipping beyond total)
-      const safeQ = Math.max(1, Math.min(totalQ, qIndex));
-
-      // Phase timing
-      const QUESTION_MS = Math.max(1, Number(timerSeconds || 30)) * 1000;
-
-      // Decide transition
-      if (phase === "question" && elapsed >= QUESTION_MS) {
-        // question -> overlay
-        await guardedSessionUpdate({
-          sessionId: activeSessionId,
-          expect: {
-            status: "running",
-            wall_phase: "question",
-            wall_phase_started_at: phaseStartedAt,
-            current_question: safeQ,
-          },
-          patch: {
-            wall_phase: "overlay",
-            wall_phase_started_at: nowIso,
-          },
-        });
-        return;
-      }
-
-      if (phase === "overlay" && elapsed >= OVERLAY_MS) {
-        // overlay -> reveal
-        await guardedSessionUpdate({
-          sessionId: activeSessionId,
-          expect: {
-            status: "running",
-            wall_phase: "overlay",
-            wall_phase_started_at: phaseStartedAt,
-            current_question: safeQ,
-          },
-          patch: {
-            wall_phase: "reveal",
-            wall_phase_started_at: nowIso,
-          },
-        });
-        return;
-      }
-
-      if (phase === "reveal" && elapsed >= REVEAL_MS) {
-        // reveal -> leaderboard
-        await guardedSessionUpdate({
-          sessionId: activeSessionId,
-          expect: {
-            status: "running",
-            wall_phase: "reveal",
-            wall_phase_started_at: phaseStartedAt,
-            current_question: safeQ,
-          },
-          patch: {
-            wall_phase: "leaderboard",
-            wall_phase_started_at: nowIso,
-          },
-        });
-        return;
-      }
-
-      if (phase === "leaderboard" && elapsed >= LEADERBOARD_MS) {
-        // leaderboard -> next question (strict +1)
-        const nextQ = safeQ + 1;
-
-        if (nextQ > totalQ) {
-          // end game
-          await guardedSessionUpdate({
-            sessionId: activeSessionId,
-            expect: {
-              status: "running",
-              wall_phase: "leaderboard",
-              wall_phase_started_at: phaseStartedAt,
-              current_question: safeQ,
-            },
-            patch: {
-              status: "finished",
-              wall_phase: "podium",
-              wall_phase_started_at: nowIso,
-            },
-          });
-
-          await supabase
-            .from("trivia_cards")
-            .update({ status: "finished" })
-            .eq("id", trivia.id);
-
-          return;
-        }
-
-        // next question
-        await guardedSessionUpdate({
-          sessionId: activeSessionId,
-          expect: {
-            status: "running",
-            wall_phase: "leaderboard",
-            wall_phase_started_at: phaseStartedAt,
-            current_question: safeQ,
-          },
-          patch: {
-            current_question: nextQ,
-            question_started_at: nowIso,
-            wall_phase: "question",
-            wall_phase_started_at: nowIso,
-          },
-        });
-        return;
-      }
-    };
-
-    // run fast, but transitions are guarded so no double-advancing
-    conductorTickRef.current = window.setInterval(conductorTick, 250);
-
-    return () => {
-      cancelled = true;
-      if (conductorTickRef.current) {
-        window.clearInterval(conductorTickRef.current);
-        conductorTickRef.current = null;
-      }
-    };
-  }, [playMode, cardStatus, cardCountdownActive, activeSessionId, timerSeconds, trivia.id]);
 
   /* ------------------------------------------------------------
      PAGINATION DERIVED VALUES
@@ -1254,9 +992,9 @@ export default function TriviaCard({
           </div>
 
           <div className="mt-3 text-[11px] opacity-70">
-            Auto Conductor:{" "}
+            Auto Flow Mode:{" "}
             {playMode === "auto" && cardStatus === "running" && !cardCountdownActive
-              ? "ON (dashboard driving phases)"
+              ? "ON (Active Wall driving phases)"
               : "OFF"}
           </div>
         </Tabs.Content>
@@ -1566,7 +1304,7 @@ export default function TriviaCard({
             <div>
               <p className={cn("text-sm", "font-semibold")}>Game Flow Mode</p>
               <p className={cn("text-xs", "opacity-70")}>
-                Auto = dashboard advances phases/questions. Manual = you advance with space bar (if you have that wired).
+                Auto = Active Wall advances phases/questions. Manual = reserved for future manual controls.
               </p>
             </div>
             <select
@@ -1584,8 +1322,8 @@ export default function TriviaCard({
                 "focus:border-blue-400"
               )}
             >
-              <option value="auto">Auto (dashboard conductor)</option>
-              <option value="manual">Manual</option>
+              <option value="auto">Auto (Active Wall conductor)</option>
+              <option value="manual">Manual (future)</option>
             </select>
           </div>
 
@@ -1679,3 +1417,4 @@ export default function TriviaCard({
     </div>
   );
 }
+
