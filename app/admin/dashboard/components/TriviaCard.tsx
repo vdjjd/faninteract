@@ -381,7 +381,6 @@ export default function TriviaCard({
       isMounted = false;
       clearInterval(id);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [trivia.id]);
 
   /* ------------------------------------------------------------
@@ -643,27 +642,54 @@ export default function TriviaCard({
 
   /* ------------------------------------------------------------
      ▶️ PLAY TRIVIA (ONLY: start game & seed first question)
- ------------------------------------------------------------ */
+     ✅ PATCHED: use Supabase server_time for ALL timestamps
+  ------------------------------------------------------------ */
   async function handlePlayTrivia() {
     if (playLockRef.current) return;
     if (cardCountdownActive || cardStatus === "running") return;
 
     playLockRef.current = true;
 
+    // Small helper to get a server-based ISO timestamp (with fallback)
+    const getServerIsoNow = async (): Promise<string> => {
+      try {
+        // Try primary server_time RPC
+        let { data, error } = await supabase.rpc("server_time");
+        if (error || !data) {
+          // Optional: fallback to an alternate rpc if you have one
+          const fallback = await supabase.rpc("trivia_server_time");
+          data = fallback.data;
+          error = fallback.error;
+        }
+
+        if (!error && data) {
+          return new Date(data as any).toISOString();
+        }
+      } catch {
+        // ignore, fall through to local time
+      }
+      // Last-resort fallback to local time so it never explodes
+      return new Date().toISOString();
+    };
+
     try {
+      // 1) Make sure there are active questions
       const { count: qCount, error: qCountErr } = await supabase
         .from("trivia_questions")
         .select("*", { count: "exact", head: true })
         .eq("trivia_card_id", trivia.id)
         .eq("is_active", true);
 
-      if (qCountErr) console.warn("⚠️ trivia_questions count error:", qCountErr);
+      if (qCountErr) {
+        console.warn("⚠️ trivia_questions count error:", qCountErr);
+      }
 
       if (!qCount || qCount < 1) {
         alert("This trivia has no ACTIVE questions yet.");
         return;
       }
 
+      // 2) Find latest non-finished session (same as before)
       const { data: session, error: sessionErr } = await supabase
         .from("trivia_sessions")
         .select("id,status,created_at")
@@ -681,12 +707,15 @@ export default function TriviaCard({
 
       setActiveSessionId(session.id);
 
+      // 3) Require at least one approved player (same as before)
       const { data: players, error: playersErr } = await supabase
         .from("trivia_players")
         .select("id,status")
         .eq("session_id", session.id);
 
-      if (playersErr) console.error("❌ trivia_players check error:", playersErr);
+      if (playersErr) {
+        console.error("❌ trivia_players check error:", playersErr);
+      }
 
       const hasApproved =
         (players || []).some((p) => p.status === "approved") || false;
@@ -696,13 +725,14 @@ export default function TriviaCard({
         return;
       }
 
-      const nowIso = new Date().toISOString();
+      // 4) SERVER-SYNCED countdown start time
+      const countdownStartIso = await getServerIsoNow();
 
       await supabase
         .from("trivia_cards")
         .update({
           countdown_active: true,
-          countdown_started_at: nowIso,
+          countdown_started_at: countdownStartIso,
           status: "waiting",
           countdown_seconds: countdownSeconds,
         })
@@ -711,6 +741,7 @@ export default function TriviaCard({
       setCardCountdownActive(true);
       setCardStatus("waiting");
 
+      // Clear any old timers
       if (playTimeoutRef.current) {
         window.clearTimeout(playTimeoutRef.current);
         playTimeoutRef.current = null;
@@ -718,8 +749,10 @@ export default function TriviaCard({
 
       const ms = Math.max(1, countdownSeconds) * 1000;
 
+      // 5) AFTER countdown → SERVER-SYNCED question start time
       playTimeoutRef.current = window.setTimeout(async () => {
         try {
+          // Mark card as running + turn off countdown
           await supabase
             .from("trivia_cards")
             .update({
@@ -728,18 +761,17 @@ export default function TriviaCard({
             })
             .eq("id", trivia.id);
 
-          const startIso = new Date().toISOString();
+          // Use server time again for Q1
+          const questionStartIso = await getServerIsoNow();
 
           const { error: sessionUpdateErr } = await supabase
             .from("trivia_sessions")
             .update({
               status: "running",
               current_question: 1,
-              question_started_at: startIso,
-              // wall_phase + phase timing are now driven by Active Wall,
-              // which will pick up from "question" as the default.
+              question_started_at: questionStartIso,
               wall_phase: "question",
-              wall_phase_started_at: startIso,
+              wall_phase_started_at: questionStartIso,
             })
             .eq("id", session.id);
 
@@ -755,6 +787,7 @@ export default function TriviaCard({
         }
       }, ms);
     } finally {
+      // If we bailed out BEFORE starting countdown, unlock the button
       if (!cardCountdownActive && cardStatus !== "waiting") {
         playLockRef.current = false;
       }
@@ -1417,4 +1450,3 @@ export default function TriviaCard({
     </div>
   );
 }
-
