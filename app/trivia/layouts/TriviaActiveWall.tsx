@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { QRCodeCanvas } from "qrcode.react";
 import { getSupabaseClient } from "@/lib/supabaseClient";
 import TriviaPodum from "@/app/trivia/layouts/triviapodum";
@@ -344,14 +344,46 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
   }
 
   /* -------------------------------------------------- */
-  /* ✅ HARD STOP: prevent multi-advance in this wall     */
+  /* ✅ CRITICAL FIX: Atomic, guarded “advance question”  */
+  /* prevents Q1→Q3 / Q3→Q8 when ads/injector causes      */
+  /* remounts, duplicate timers, or multiple clients.     */
   /* -------------------------------------------------- */
-  const advanceOnceRef = useRef<string | null>(null);
+  const advanceWriteLockRef = useRef(false);
 
-  useEffect(() => {
-    // allow advancing again when leaving leaderboard
-    if (wallPhase !== "leaderboard") advanceOnceRef.current = null;
-  }, [wallPhase]);
+  async function advanceQuestionAuthoritative() {
+    if (!sessionId) return;
+    if (currentQuestionNumber == null) return;
+    if (advanceWriteLockRef.current) return;
+
+    advanceWriteLockRef.current = true;
+    try {
+      const iso = new Date(nowServerMs()).toISOString();
+
+      // ✅ Only one client can win: must still be on leaderboard and on same current_question
+      const { data: updated, error: updErr } = await supabase
+        .from("trivia_sessions")
+        .update({
+          current_question: currentQuestionNumber + 1,
+          question_started_at: iso,
+          wall_phase: "question",
+          wall_phase_started_at: iso,
+        })
+        .eq("id", sessionId)
+        .eq("wall_phase", "leaderboard")
+        .eq("current_question", currentQuestionNumber)
+        .select("id");
+
+      if (updErr) {
+        console.error("❌ advanceQuestionAuthoritative update error:", updErr);
+        return;
+      }
+
+      // If no row updated, someone else already advanced (GOOD)
+      if (!updated || updated.length === 0) return;
+    } finally {
+      advanceWriteLockRef.current = false;
+    }
+  }
 
   /* -------------------------------------------------- */
   /* ✅ Poll session: current_question + phase authority  */
@@ -364,9 +396,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
     async function pollSession() {
       const { data: session, error: sessionErr } = await supabase
         .from("trivia_sessions")
-        .select(
-          "id,status,current_question,question_started_at,wall_phase,wall_phase_started_at"
-        )
+        .select("id,status,current_question,question_started_at,wall_phase,wall_phase_started_at")
         .eq("trivia_card_id", trivia.id)
         .neq("status", "finished")
         .order("created_at", { ascending: false })
@@ -405,7 +435,6 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
         setWallPhaseAuthoritative("question", undefined);
       }
 
-      // ✅ Fetch questions WITHOUT relying on round_number/created_at mixing in SQL
       const { data: qsRaw, error: qErr } = await supabase
         .from("trivia_questions")
         .select("*")
@@ -426,7 +455,6 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
 
       setTotalQuestions(qs.length);
 
-      // ✅ Pick consistently with the chosen ordering mode
       const picked = pickQuestionForCurrent(qs, session.current_question, mode);
       setQuestion(picked);
     }
@@ -444,16 +472,12 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
   /* ✅ UI follows wall_phase ONLY                        */
   /* -------------------------------------------------- */
   useEffect(() => {
-    // view
     if (wallPhase === "leaderboard") setView("leaderboard");
     else if (wallPhase === "podium") setView("podium");
     else setView("question");
 
-    // overlays
     setShowAnswerOverlay(wallPhase === "overlay");
     setRevealAnswer(wallPhase === "reveal");
-
-    // lock answering after question ends
     setLocked(wallPhase !== "question");
   }, [wallPhase]);
 
@@ -464,7 +488,6 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
 
   /* -------------------------------------------------- */
   /* ✅ QUESTION TIMER (bar only) + phase trigger         */
-  /* wallPhase === 'question' is the only active timer    */
   /* -------------------------------------------------- */
   useEffect(() => {
     let intervalId: number | null = null;
@@ -476,7 +499,6 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
       !questionStartedAt ||
       wallPhase !== "question"
     ) {
-      // freeze bar if not in question phase
       if (wallPhase !== "question") {
         setProgress(0);
         setLocked(true);
@@ -493,9 +515,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
     setProgress(1);
 
     const durationMs =
-      typeof timerSeconds === "number" && timerSeconds > 0
-        ? timerSeconds * 1000
-        : 30000;
+      typeof timerSeconds === "number" && timerSeconds > 0 ? timerSeconds * 1000 : 30000;
 
     const startMs = new Date(questionStartedAt).getTime();
 
@@ -509,7 +529,6 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
 
       if (remaining <= 0) {
         setLocked(true);
-        // ✅ advance wall authority to overlay ONCE (guarded)
         await setWallPhaseAuthoritative("overlay", "question");
         if (intervalId != null) {
           window.clearInterval(intervalId);
@@ -529,7 +548,10 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
   /* -------------------------------------------------- */
   /* ✅ PHASE MACHINE (wall authority)                    */
   /* overlay -> reveal -> leaderboard/podium -> advance   */
+  /* with overlap protection + atomic advance             */
   /* -------------------------------------------------- */
+  const phaseTickLockRef = useRef(false);
+
   useEffect(() => {
     if (!isRunning) return;
     if (!sessionId) return;
@@ -540,56 +562,40 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
     const tick = async () => {
       if (cancelled) return;
 
-      const startedMs = new Date(wallPhaseStartedAt).getTime();
-      const elapsed = nowServerMs() - startedMs;
+      // ✅ Prevent overlapping async ticks
+      if (phaseTickLockRef.current) return;
+      phaseTickLockRef.current = true;
 
-      if (wallPhase === "overlay" && elapsed >= OVERLAY_MS) {
-        await setWallPhaseAuthoritative("reveal", "overlay");
-      }
+      try {
+        const startedMs = new Date(wallPhaseStartedAt).getTime();
+        const elapsed = nowServerMs() - startedMs;
 
-      if (wallPhase === "reveal" && elapsed >= REVEAL_MS) {
-        if (isFinalQuestion) {
-          await setWallPhaseAuthoritative("podium", "reveal");
-        } else {
-          await setWallPhaseAuthoritative("leaderboard", "reveal");
-        }
-      }
-
-      if (wallPhase === "leaderboard" && elapsed >= LEADERBOARD_MS) {
-        if (isFinalQuestion) {
-          await setWallPhaseAuthoritative("podium", "leaderboard");
+        if (wallPhase === "overlay" && elapsed >= OVERLAY_MS) {
+          await setWallPhaseAuthoritative("reveal", "overlay");
           return;
         }
 
-        // ✅ once-per-leaderboard-instance guard (prevents rapid re-entry in same tab)
-        const phaseKey = `${sessionId}|leaderboard|${wallPhaseStartedAt}|q=${currentQuestionNumber}`;
-        if (advanceOnceRef.current === phaseKey) return;
-        advanceOnceRef.current = phaseKey;
-
-        // ✅ ATOMIC GUARDED ADVANCE (prevents multi-tab / multi-writer jumps)
-        const iso = new Date(nowServerMs()).toISOString();
-
-        const { data: advanced, error: advErr } = await supabase
-          .from("trivia_sessions")
-          .update({
-            current_question: (currentQuestionNumber ?? 0) + 1,
-            question_started_at: iso,
-            wall_phase: "question",
-            wall_phase_started_at: iso,
-          })
-          .eq("id", sessionId)
-          .eq("wall_phase", "leaderboard")
-          .eq("wall_phase_started_at", wallPhaseStartedAt)
-          .eq("current_question", currentQuestionNumber)
-          .select("id,current_question")
-          .maybeSingle();
-
-        if (advErr) {
-          console.warn("⚠️ guarded advance error:", advErr);
+        if (wallPhase === "reveal" && elapsed >= REVEAL_MS) {
+          if (isFinalQuestion) {
+            await setWallPhaseAuthoritative("podium", "reveal");
+          } else {
+            await setWallPhaseAuthoritative("leaderboard", "reveal");
+          }
+          return;
         }
 
-        // If `advanced` is null, someone else advanced first — that's fine.
-        // This prevents double-advances from jumping multiple questions.
+        if (wallPhase === "leaderboard" && elapsed >= LEADERBOARD_MS) {
+          if (isFinalQuestion) {
+            await setWallPhaseAuthoritative("podium", "leaderboard");
+            return;
+          }
+
+          // ✅ CRITICAL: atomic, guarded update prevents skipping
+          await advanceQuestionAuthoritative();
+          return;
+        }
+      } finally {
+        phaseTickLockRef.current = false;
       }
     };
 
@@ -600,15 +606,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
       cancelled = true;
       window.clearInterval(id);
     };
-  }, [
-    isRunning,
-    sessionId,
-    wallPhase,
-    wallPhaseStartedAt,
-    isFinalQuestion,
-    trivia?.id,
-    currentQuestionNumber,
-  ]);
+  }, [isRunning, sessionId, wallPhase, wallPhaseStartedAt, isFinalQuestion, currentQuestionNumber]);
 
   /* -------------------------------------------------- */
   /* TOP 3 RANKINGS (AUTO UPDATE)                        */
@@ -693,9 +691,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
       if (guestIds.length > 0) {
         const { data: guests, error: guestsErr } = await supabase
           .from("guest_profiles")
-          .select(
-            "id,first_name,last_name,photo_url,selfie_url,avatar_url,image_url,profile_photo_url"
-          )
+          .select("id,first_name,last_name,photo_url,selfie_url,avatar_url,image_url,profile_photo_url")
           .in("id", guestIds);
 
         if (guestsErr) {
@@ -830,9 +826,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
       if (guestIds.length > 0) {
         const { data: guests, error: guestsErr } = await supabase
           .from("guest_profiles")
-          .select(
-            "id,first_name,last_name,photo_url,selfie_url,avatar_url,image_url,profile_photo_url"
-          )
+          .select("id,first_name,last_name,photo_url,selfie_url,avatar_url,image_url,profile_photo_url")
           .in("id", guestIds);
 
         if (guestsErr) {
@@ -952,9 +946,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
     "rgba(253, 224, 71, 0.9)",
   ];
 
-  const origin =
-    typeof window !== "undefined" ? window.location.origin : "https://faninteract.vercel.app";
-
+  const origin = typeof window !== "undefined" ? window.location.origin : "https://faninteract.vercel.app";
   const qrValue = `${origin}/trivia/${trivia?.id}/join`;
 
   return (
@@ -1134,8 +1126,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                         "0 0 2px #000000, 0 0 6px #000000, 0 0 18px rgba(15,23,42,0.9), 0 0 36px rgba(15,23,42,0.9), 0 0 72px rgba(59,130,246,0.9)",
                       padding: "0.4em 0.9em",
                       borderRadius: 18,
-                      background:
-                        "radial-gradient(circle at 50% 50%, rgba(59,130,246,0.65), rgba(15,23,42,0.0))",
+                      background: "radial-gradient(circle at 50% 50%, rgba(59,130,246,0.65), rgba(15,23,42,0.0))",
                       boxShadow: "0 0 40px rgba(59,130,246,0.9), 0 0 90px rgba(59,130,246,0.85)",
                       display: "inline-block",
                       animation: "fiAnswerGlow 1.8s ease-in-out infinite alternate",
@@ -1214,7 +1205,6 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                         }}
                       >
                         <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
-                          {/* Avatar */}
                           <div
                             style={{
                               width: LEADER_UI.avatar,
@@ -1257,7 +1247,6 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                             )}
                           </div>
 
-                          {/* Name */}
                           <div
                             style={{
                               fontSize: "clamp(1.3rem,2.2vw,2.4rem)",
@@ -1272,7 +1261,6 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                           </div>
                         </div>
 
-                        {/* Points */}
                         <div style={{ fontSize: "clamp(1.6rem,2.6vw,3rem)", fontWeight: 900 }}>{r.points}</div>
                       </div>
                     );
