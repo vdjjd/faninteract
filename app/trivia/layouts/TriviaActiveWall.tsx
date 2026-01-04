@@ -1023,48 +1023,6 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
     };
   }, [trivia?.id, isActiveGame, view]);
 
-  /* -------------------------------------------------- */
-  /* ✅ READABLE AUTO-SCALE QUESTION TEXT (3 lines, higher min) */
-  /* -------------------------------------------------- */
-  useEffect(() => {
-    if (view !== "question") return;
-
-    const el = questionRef.current;
-    if (!el) return;
-    if (typeof window === "undefined") return;
-
-    const vmin = Math.min(window.innerWidth, window.innerHeight);
-
-    // Start BIG (wall-readable)
-    let size = Math.max(56, Math.min(120, vmin * 0.085));
-
-    el.style.fontSize = `${size}px`;
-    el.style.lineHeight = "1.12";
-    el.style.whiteSpace = "normal";
-
-    // Allow 3 lines, keep a higher minimum size
-    const maxLines = 3;
-    const minSize = 48;
-    const step = 2;
-
-    const fit = () => {
-      const node = questionRef.current;
-      if (!node) return;
-
-      const lineHeightPx = size * 1.12;
-      const maxHeight = lineHeightPx * maxLines + 6;
-
-      if (node.scrollHeight > maxHeight && size > minSize) {
-        size -= step;
-        node.style.fontSize = `${size}px`;
-        node.style.lineHeight = "1.12";
-        requestAnimationFrame(fit);
-      }
-    };
-
-    requestAnimationFrame(fit);
-  }, [question?.question_text, view]);
-
   const options: string[] = Array.isArray(question?.options) ? question.options : [];
 
   const baseBgColors = [
@@ -1148,7 +1106,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
             inset: 0,
             pointerEvents: "none",
             zIndex: 2,
-            opacity: 0.10,
+            opacity: 0.1,
             backgroundImage: `
               repeating-linear-gradient(
                 0deg,
@@ -1236,7 +1194,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
             </div>
           )}
 
-          {/* ✅ View transitions (no layout change) */}
+          {/* ✅ View transitions */}
           <AnimatePresence mode="wait">
             <motion.div
               key={view}
@@ -1294,170 +1252,189 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                       }}
                     />
 
-                    {/* QUESTION */}
+                    {/* ✅ MAIN CONTENT: question + timer + answers in a column */}
                     <div
-                      ref={questionRef}
                       style={{
                         position: "relative",
                         zIndex: 2,
-                        fontWeight: 900,
-                        lineHeight: 1.12,
-                        textAlign: "center",
-                        maxWidth: "90%",
-                        margin: "0 auto 3vh auto",
-                        textShadow: "0 10px 40px rgba(0,0,0,0.65)",
-
-                        // ✅ keeps the question block stable and readable (no box size change)
-                        minHeight: "16vh",
+                        height: "100%",
                         display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
+                        flexDirection: "column",
                       }}
                     >
-                      {question?.question_text
-                        ? question.question_text
-                        : "Waiting for game to start"}
-                    </div>
-
-                    {/* TIMER BAR */}
-                    <div
-                      style={{
-                        position: "relative",
-                        zIndex: 2,
-                        width: "100%",
-                        height: 20,
-                        background: "rgba(255,255,255,0.15)",
-                        borderRadius: 999,
-                        overflow: "hidden",
-                        marginBottom: "4vh",
-                        boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.10)",
-                      }}
-                    >
+                      {/* QUESTION AREA = all space above timer bar */}
                       <div
                         style={{
-                          width: `${progress * 100}%`,
-                          height: "100%",
-                          background:
-                            revealAnswer || locked || wallPhase !== "question"
-                              ? "linear-gradient(to right,#ef4444,#dc2626)"
-                              : "linear-gradient(to right,#4ade80,#22c55e)",
-                          position: "relative",
+                          flex: 1,
+                          maxWidth: "92%",
+                          margin: "0 auto",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                        }}
+                      >
+                        <div
+                          ref={questionRef}
+                          style={{
+                            width: "100%",
+                            fontWeight: 900,
+                            textAlign: "center",
+                            wordBreak: "break-word",
+                            overflowWrap: "anywhere",
+                            textShadow: "0 10px 40px rgba(0,0,0,0.65)",
+                            fontSize: "clamp(2.4rem,3.5vw,4.5rem)",
+                            lineHeight: 1.12,
+                          }}
+                        >
+                          {question?.question_text
+                            ? question.question_text
+                            : "Waiting for game to start"}
+                        </div>
+                      </div>
+
+                      {/* TIMER BAR – sits right above buttons */}
+                      <div
+                        style={{
+                          width: "100%",
+                          height: 20,
+                          background: "rgba(255,255,255,0.15)",
+                          borderRadius: 999,
                           overflow: "hidden",
-                          transition: isPaused
-                            ? "none"
-                            : "width 0.05s linear, background 0.2s ease",
+                          marginTop: "1.5vh",
+                          marginBottom: "1.8vh",
+                          boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.10)",
                         }}
                       >
-                        {/* ✅ Timer shine (disabled when paused / locked / reveal) */}
-                        {!isPaused &&
-                          wallPhase === "question" &&
-                          !revealAnswer &&
-                          !locked && <div className="fi-timer-shine" />}
+                        <div
+                          style={{
+                            width: `${progress * 100}%`,
+                            height: "100%",
+                            background:
+                              revealAnswer || locked || wallPhase !== "question"
+                                ? "linear-gradient(to right,#ef4444,#dc2626)"
+                                : "linear-gradient(to right,#4ade80,#22c55e)",
+                            position: "relative",
+                            overflow: "hidden",
+                            transition: isPaused
+                              ? "none"
+                              : "width 0.05s linear, background 0.2s ease",
+                          }}
+                        >
+                          {!isPaused &&
+                            wallPhase === "question" &&
+                            !revealAnswer &&
+                            !locked && <div className="fi-timer-shine" />}
+                        </div>
                       </div>
-                    </div>
 
-                    {/* ANSWERS */}
-                    <div
-                      style={{
-                        position: "absolute",
-                        zIndex: 2,
-                        bottom: "21vh",
-                        left: "4vw",
-                        right: "4vw",
-                        display: "grid",
-                        gridTemplateColumns: "1fr 1fr",
-                        gap: "2.5vh",
-                      }}
-                    >
-                      {options.length > 0
-                        ? options.map((opt, idx) => {
-                            const isCorrect = idx === question?.correct_index;
-
-                            let bgc = baseBgColors[idx] ?? "rgba(255,255,255,0.12)";
-                            let border =
-                              baseBorders[idx] ?? "1px solid rgba(255,255,255,0.18)";
-                            let opacity = 1;
-                            let boxShadow = "none";
-                            let transform = "scale(1)";
-                            let animation: string | undefined;
-
-                            if (revealAnswer) {
-                              if (isCorrect) {
-                                border = highlightBorders[idx] ?? border;
-                                boxShadow = `0 0 40px 8px ${
-                                  glowColors[idx] ?? "rgba(255,255,255,0.9)"
-                                }`;
-                                transform = "scale(1.04)";
-                                animation = "fiCorrectPulse 1.2s ease-in-out infinite";
-                              } else {
-                                opacity = 0.35;
-                              }
-                            }
-
-                            return (
-                              <div
-                                key={idx}
-                                style={{
-                                  padding: "2.4vh 2.6vw",
-                                  minHeight: "14vh",
-                                  display: "flex",
-                                  alignItems: "center",
-                                  justifyContent: "center",
-                                  borderRadius: 18,
-                                  background: bgc,
-                                  border,
-                                  fontSize: "clamp(1.6rem,2vw,2.4rem)",
-                                  fontWeight: 700,
-                                  textAlign: "center",
-                                  opacity,
-                                  boxShadow,
-                                  transform,
-                                  animation,
-                                  transition: isPaused
-                                    ? "none"
-                                    : "opacity 0.3s ease, border 0.3s ease, background 0.3s ease, box-shadow 0.4s ease, transform 0.4s ease",
-                                  position: "relative",
-                                  overflow: "hidden",
-                                }}
-                              >
-                                {/* subtle inner highlight */}
-                                <div
-                                  style={{
-                                    position: "absolute",
-                                    inset: 0,
-                                    pointerEvents: "none",
-                                    background:
-                                      "linear-gradient(180deg, rgba(255,255,255,0.08), rgba(255,255,255,0.02) 55%, rgba(0,0,0,0.06) 100%)",
-                                    opacity: 0.75,
-                                  }}
-                                />
-                                <div style={{ position: "relative", zIndex: 2 }}>
-                                  {String.fromCharCode(65 + idx)}. {opt}
-                                </div>
-                              </div>
-                            );
-                          })
-                        : null}
-                    </div>
-
-                    {/* CURRENT RANKINGS LABEL (hidden on final question) */}
-                    {!isFinalQuestion && (
+                      {/* ANSWERS – directly under timer */}
                       <div
                         style={{
-                          position: "absolute",
-                          zIndex: 2,
-                          bottom: "13vh",
-                          left: "50%",
-                          transform: "translateX(-50%)",
-                          fontSize: "clamp(1.6rem,2vw,2.2rem)",
-                          fontWeight: 800,
-                          opacity: 0.85,
-                          textShadow: "0 10px 30px rgba(0,0,0,0.45)",
+                          width: "100%",
+                          display: "grid",
+                          gridTemplateColumns: "1fr 1fr",
+                          gap: "2.5vh",
                         }}
                       >
-                        Current Rankings
+                        {options.length > 0
+                          ? options.map((opt, idx) => {
+                              const isCorrect = idx === question?.correct_index;
+
+                              let bgc =
+                                baseBgColors[idx] ?? "rgba(255,255,255,0.12)";
+                              let border =
+                                baseBorders[idx] ??
+                                "1px solid rgba(255,255,255,0.18)";
+                              let opacity = 1;
+                              let boxShadow = "none";
+                              let transform = "scale(1)";
+                              let animation: string | undefined;
+
+                              if (revealAnswer) {
+                                if (isCorrect) {
+                                  border = highlightBorders[idx] ?? border;
+                                  boxShadow = `0 0 40px 8px ${
+                                    glowColors[idx] ??
+                                    "rgba(255,255,255,0.9)"
+                                  }`;
+                                  transform = "scale(1.04)";
+                                  animation =
+                                    "fiCorrectPulse 1.2s ease-in-out infinite";
+                                } else {
+                                  opacity = 0.35;
+                                }
+                              }
+
+                              return (
+                                <div
+                                  key={idx}
+                                  style={{
+                                    padding: "2.4vh 2.6vw",
+                                    minHeight: "14vh",
+                                    display: "flex",
+                                    alignItems: "center",
+                                    justifyContent: "center",
+                                    borderRadius: 18,
+                                    background: bgc,
+                                    border,
+                                    fontSize:
+                                      "clamp(1.6rem,2vw,2.4rem)",
+                                    fontWeight: 700,
+                                    textAlign: "center",
+                                    opacity,
+                                    boxShadow,
+                                    transform,
+                                    animation,
+                                    transition: isPaused
+                                      ? "none"
+                                      : "opacity 0.3s ease, border 0.3s ease, background 0.3s ease, box-shadow 0.4s ease, transform 0.4s ease",
+                                    position: "relative",
+                                    overflow: "hidden",
+                                  }}
+                                >
+                                  {/* subtle inner highlight */}
+                                  <div
+                                    style={{
+                                      position: "absolute",
+                                      inset: 0,
+                                      pointerEvents: "none",
+                                      background:
+                                        "linear-gradient(180deg, rgba(255,255,255,0.08), rgba(255,255,255,0.02) 55%, rgba(0,0,0,0.06) 100%)",
+                                      opacity: 0.75,
+                                    }}
+                                  />
+                                  <div
+                                    style={{
+                                      position: "relative",
+                                      zIndex: 2,
+                                    }}
+                                  >
+                                    {String.fromCharCode(65 + idx)}. {opt}
+                                  </div>
+                                </div>
+                              );
+                            })
+                          : null}
                       </div>
-                    )}
+
+                      {/* CURRENT RANKINGS LABEL (below buttons) */}
+                      {!isFinalQuestion && (
+                        <div
+                          style={{
+                            marginTop: "2.2vh",
+                            fontSize:
+                              "clamp(1.6rem,2vw,2.2rem)",
+                            fontWeight: 800,
+                            opacity: 0.85,
+                            textShadow:
+                              "0 10px 30px rgba(0,0,0,0.45)",
+                            textAlign: "center",
+                          }}
+                        >
+                          Current Rankings
+                        </div>
+                      )}
+                    </div>
 
                     {/* TINTED OVERLAY + "THE ANSWER IS" */}
                     {showAnswerOverlay && (
@@ -1483,7 +1460,8 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                             style={{
                               fontFamily:
                                 "'SF Pro Display', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
-                              fontSize: "clamp(3rem,5vw,5.5rem)",
+                              fontSize:
+                                "clamp(3rem,5vw,5.5rem)",
                               fontWeight: 900,
                               marginBottom: "1rem",
                               color: "#e5f1ff",
@@ -1496,7 +1474,8 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                               boxShadow:
                                 "0 0 40px rgba(59,130,246,0.9), 0 0 90px rgba(59,130,246,0.85)",
                               display: "inline-block",
-                              animation: "fiAnswerGlow 1.8s ease-in-out infinite alternate",
+                              animation:
+                                "fiAnswerGlow 1.8s ease-in-out infinite alternate",
                             }}
                           >
                             THE ANSWER IS
@@ -1627,7 +1606,8 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                                     alignItems: "center",
                                     justifyContent: "center",
                                     position: "relative",
-                                    boxShadow: "0 0 16px rgba(0,0,0,0.35)",
+                                    boxShadow:
+                                      "0 0 16px rgba(0,0,0,0.35)",
                                   }}
                                 >
                                   {r.selfieUrl ? (
@@ -1661,8 +1641,10 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                                         width: 30,
                                         height: 30,
                                         borderRadius: "50%",
-                                        background: "rgba(0,0,0,0.75)",
-                                        border: "1px solid rgba(255,255,255,0.25)",
+                                        background:
+                                          "rgba(0,0,0,0.75)",
+                                        border:
+                                          "1px solid rgba(255,255,255,0.25)",
                                         display: "flex",
                                         alignItems: "center",
                                         justifyContent: "center",
@@ -1676,13 +1658,15 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
 
                                 <div
                                   style={{
-                                    fontSize: "clamp(1.3rem,2.2vw,2.4rem)",
+                                    fontSize:
+                                      "clamp(1.3rem,2.2vw,2.4rem)",
                                     fontWeight: 900,
                                     whiteSpace: "nowrap",
                                     overflow: "hidden",
                                     textOverflow: "ellipsis",
                                     maxWidth: "65vw",
-                                    textShadow: "0 10px 30px rgba(0,0,0,0.55)",
+                                    textShadow:
+                                      "0 10px 30px rgba(0,0,0,0.55)",
                                   }}
                                 >
                                   {r.name}
@@ -1691,11 +1675,13 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
 
                               <div
                                 style={{
-                                  fontSize: "clamp(1.6rem,2.6vw,3rem)",
+                                  fontSize:
+                                    "clamp(1.6rem,2.6vw,3rem)",
                                   fontWeight: 900,
                                   position: "relative",
                                   zIndex: 2,
-                                  textShadow: "0 10px 30px rgba(0,0,0,0.55)",
+                                  textShadow:
+                                    "0 10px 30px rgba(0,0,0,0.55)",
                                 }}
                               >
                                 {r.points}
@@ -1713,14 +1699,20 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                   PODIUM VIEW
               ======================= */}
               {view === "podium" && (
-                <div style={{ width: "100vw", height: "100vh", position: "relative" }}>
+                <div
+                  style={{
+                    width: "100vw",
+                    height: "100vh",
+                    position: "relative",
+                  }}
+                >
                   <TriviaPodum trivia={trivia} />
                 </div>
               )}
             </motion.div>
           </AnimatePresence>
 
-          {/* ✅ QR CODE — hide during podium (unchanged per your request: no #7 QR upgrades) */}
+          {/* ✅ QR CODE — hide during podium */}
           {view !== "podium" && (
             <div
               style={{
@@ -1898,7 +1890,6 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
       </div>
 
       <style>{`
-        /* existing */
         @keyframes fiAnswerGlow {
           0% {
             transform: scale(1);
@@ -1912,7 +1903,6 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
           }
         }
 
-        /* ✅ Timer shine */
         .fi-timer-shine {
           position: absolute;
           top: 0;
@@ -1935,7 +1925,6 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
           }
         }
 
-        /* ✅ Correct answer pulse */
         @keyframes fiCorrectPulse {
           0% {
             transform: scale(1.04);
@@ -1951,7 +1940,6 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
           }
         }
 
-        /* ✅ Top-3 row sheen sweep */
         .fi-row-sheen {
           position: absolute;
           inset: 0;
@@ -1973,7 +1961,6 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
           100% { transform: translateX(120%); }
         }
 
-        /* ✅ #1 medal breathing glow */
         .fi-medal-breathe {
           animation: fiMedalBreathe 2.6s ease-in-out infinite;
         }
