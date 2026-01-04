@@ -598,6 +598,33 @@ export default function TriviaUserInterfacePage() {
     | "podium";
 
   /* ---------------------------------------------------------
+     ✅ Session over detection + close handler
+  --------------------------------------------------------- */
+  const isLastQuestion = currentQuestionIndex === questions.length - 1;
+
+  // Show after the LAST question when the wall reaches leaderboard/podium,
+  // OR when host marks session finished.
+  const isSessionOver =
+    session?.status === "finished" ||
+    wallPhase === "podium" ||
+    (isLastQuestion && wallPhase === "leaderboard");
+
+  function handleCloseTab() {
+    // Best-effort close (some browsers only allow this if the tab was opened by script)
+    try {
+      window.open("", "_self");
+      window.close();
+    } catch {}
+
+    // Fallback: if close is blocked, blank the page so it *feels* closed.
+    setTimeout(() => {
+      try {
+        window.location.href = "about:blank";
+      } catch {}
+    }, 50);
+  }
+
+  /* ---------------------------------------------------------
      Detect video
   --------------------------------------------------------- */
   const lockedAd: SlideAd | null = useMemo(() => {
@@ -959,6 +986,9 @@ export default function TriviaUserInterfacePage() {
 
     // ✅ countdown lock (prevents answering during pre-game countdown)
     if (isCountdownRunning) return;
+
+    // ✅ if session is over, ignore taps
+    if (isSessionOver) return;
 
     setSelectedIndex(idx);
     setHasAnswered(true);
@@ -1379,7 +1409,8 @@ export default function TriviaUserInterfacePage() {
                 hasAnswered ||
                 locked ||
                 wallPhase !== "question" ||
-                isCountdownRunning;
+                isCountdownRunning ||
+                isSessionOver;
 
               let bgBtn = "rgba(15,23,42,0.85)";
               let border = "1px solid rgba(148,163,184,0.4)";
@@ -1642,6 +1673,73 @@ export default function TriviaUserInterfacePage() {
           </div>
         )}
       </div>
+
+      {/* ✅ SESSION OVER OVERLAY (renders OUTSIDE filtered div so it stays truly tinted) */}
+      {isSessionOver && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.85)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 9999,
+            padding: 20,
+            textAlign: "center",
+          }}
+        >
+          <div
+            style={{
+              width: "100%",
+              maxWidth: 520,
+              background: "rgba(15,23,42,0.92)",
+              border: "1px solid rgba(148,163,184,0.35)",
+              borderRadius: 22,
+              padding: "22px 18px",
+              boxShadow: "0 0 40px rgba(0,0,0,0.55)",
+            }}
+          >
+            <div
+              style={{
+                fontSize: "1.25rem",
+                fontWeight: 1000,
+                letterSpacing: 1,
+                textTransform: "uppercase",
+                marginBottom: 10,
+              }}
+            >
+              This Trivia Session Is Over
+            </div>
+
+            <div style={{ opacity: 0.85, fontSize: "0.95rem" }}>
+              Thanks for playing!
+            </div>
+
+            <button
+              onClick={handleCloseTab}
+              style={{
+                marginTop: 16,
+                width: "100%",
+                padding: "12px 14px",
+                borderRadius: 16,
+                border: "1px solid rgba(148,163,184,0.45)",
+                background: "linear-gradient(90deg,#ef4444,#b91c1c)",
+                color: "#fff",
+                fontWeight: 900,
+                fontSize: "1rem",
+                cursor: "pointer",
+              }}
+            >
+              Close
+            </button>
+
+            <div style={{ marginTop: 10, fontSize: "0.75rem", opacity: 0.65 }}>
+              If your browser blocks tab closing, just close this tab manually.
+            </div>
+          </div>
+        </div>
+      )}
 
       <style>{`
         @keyframes fiCorrectPulse {
