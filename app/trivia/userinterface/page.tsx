@@ -109,6 +109,68 @@ function sameLeaderRows(a: LeaderRow[], b: LeaderRow[]) {
   return true;
 }
 
+/**
+ * ✅ FIX FOR “Q1 then jumps to Q3/Q8”
+ * Do NOT rely on SQL ordering when round_number/question_number are partially filled.
+ *
+ * Rule:
+ * - ONLY use question_number if every question has it
+ * - ELSE ONLY use round_number if every question has it
+ * - ELSE fall back to created_at (stable insertion order)
+ */
+type QuestionOrderMode = "question_number" | "round_number" | "created_at";
+
+function normalizeQuestions(qsRaw: any[]): { list: any[]; mode: QuestionOrderMode } {
+  const list = Array.isArray(qsRaw) ? [...qsRaw] : [];
+  if (!list.length) return { list: [], mode: "created_at" };
+
+  const hasAllQN = list.every(
+    (q) => typeof q?.question_number === "number" && Number.isFinite(q.question_number)
+  );
+  const hasAllRN = list.every(
+    (q) => typeof q?.round_number === "number" && Number.isFinite(q.round_number)
+  );
+
+  const mode: QuestionOrderMode = hasAllQN
+    ? "question_number"
+    : hasAllRN
+    ? "round_number"
+    : "created_at";
+
+  const time = (v: any) => {
+    const t = new Date(v || 0).getTime();
+    return Number.isFinite(t) ? t : 0;
+  };
+
+  list.sort((a, b) => {
+    if (mode === "question_number") return a.question_number - b.question_number;
+    if (mode === "round_number") return a.round_number - b.round_number;
+    return time(a?.created_at) - time(b?.created_at);
+  });
+
+  return { list, mode };
+}
+
+function pickQuestionForCurrent(
+  qs: any[],
+  currentQuestion: number,
+  mode: QuestionOrderMode
+): any | null {
+  if (!qs?.length || !currentQuestion || currentQuestion < 1) return null;
+
+  if (mode === "question_number") {
+    const hit = qs.find((q) => q?.question_number === currentQuestion);
+    if (hit) return hit;
+  }
+  if (mode === "round_number") {
+    const hit = qs.find((q) => q?.round_number === currentQuestion);
+    if (hit) return hit;
+  }
+
+  const idx = Math.max(0, Math.min(qs.length - 1, currentQuestion - 1));
+  return qs[idx] ?? null;
+}
+
 /* ---------------------------------------------------------
    Component
 --------------------------------------------------------- */
@@ -125,7 +187,10 @@ export default function TriviaUserInterfacePage() {
   const [trivia, setTrivia] = useState<any>(null);
   const [session, setSession] = useState<TriviaSession | null>(null);
   const [playerId, setPlayerId] = useState<string | null>(null);
+
   const [questions, setQuestions] = useState<any[]>([]);
+  const [questionOrderMode, setQuestionOrderMode] = useState<QuestionOrderMode>("created_at");
+
   const [hostLogoUrl, setHostLogoUrl] = useState<string | null>(null);
 
   const [loading, setLoading] = useState(true);
@@ -149,9 +214,7 @@ export default function TriviaUserInterfacePage() {
   const [leaderLoading, setLeaderLoading] = useState(false);
 
   // DB-anchored start time
-  const [questionStartedAt, setQuestionStartedAt] = useState<string | null>(
-    null
-  );
+  const [questionStartedAt, setQuestionStartedAt] = useState<string | null>(null);
 
   const timerIntervalRef = useRef<number | null>(null);
 
@@ -176,13 +239,10 @@ export default function TriviaUserInterfacePage() {
 
   /* ---------------------------------------------------------
      ✅ COUNTDOWN TIMER (LOCKED TO INACTIVE WALL)
-     (DO NOT CHANGE OTHER FLOW)
   --------------------------------------------------------- */
   const [countdownSeconds, setCountdownSeconds] = useState<number>(10);
   const [countdownActive, setCountdownActive] = useState<boolean>(false);
-  const [countdownStartedAt, setCountdownStartedAt] = useState<string | null>(
-    null
-  );
+  const [countdownStartedAt, setCountdownStartedAt] = useState<string | null>(null);
 
   const countdownRemaining = useMemo(() => {
     if (!countdownActive || !countdownStartedAt) return 0;
@@ -297,7 +357,7 @@ export default function TriviaUserInterfacePage() {
       setTrivia(card);
       setAdsEnabled(Boolean((card as any).ads_enabled));
 
-      // ✅ countdown state seed (locks to inactive wall)
+      // ✅ countdown state seed
       setCountdownSeconds(
         typeof (card as any).countdown_seconds === "number"
           ? (card as any).countdown_seconds
@@ -373,29 +433,30 @@ export default function TriviaUserInterfacePage() {
 
       setPlayerId((playerRow as any).id);
 
-      // 5) questions
+      // 5) questions (✅ no SQL ordering traps)
       setLoadingMessage("Loading questions…");
 
-      const { data: qs, error: qErr } = await supabase
+      const { data: qsRaw, error: qErr } = await supabase
         .from("trivia_questions")
         .select(
-          "id, round_number, question_text, options, correct_index, is_active"
+          "id, question_number, round_number, question_text, options, correct_index, is_active, created_at"
         )
         .eq("trivia_card_id", gameId)
-        .eq("is_active", true)
-        .order("round_number", { ascending: true })
-        .order("created_at", { ascending: true });
+        .eq("is_active", true);
 
       if (cancelled) return;
 
-      if (qErr || !qs) {
+      if (qErr || !qsRaw) {
         console.error("❌ trivia_questions fetch error (UI):", qErr);
         setLoadingMessage("No questions are available for this game.");
         setLoading(false);
         return;
       }
 
-      setQuestions(qs);
+      const { list, mode } = normalizeQuestions(qsRaw || []);
+      setQuestions(list);
+      setQuestionOrderMode(mode);
+
       setLoading(false);
     }
 
@@ -407,7 +468,7 @@ export default function TriviaUserInterfacePage() {
   }, [gameId, profile?.id, router]);
 
   /* ---------------------------------------------------------
-     ✅ Subscribe to trivia_cards countdown fields (LOCKS TO INACTIVE WALL)
+     Subscribe to trivia_cards countdown fields
   --------------------------------------------------------- */
   useEffect(() => {
     if (!gameId) return;
@@ -471,6 +532,7 @@ export default function TriviaUserInterfacePage() {
 
   /* ---------------------------------------------------------
      Load Slide Ads when allowed (GLOBAL + TRIVIA)
+     NOTE: This page NEVER writes to trivia_sessions. Ads are display-only.
   --------------------------------------------------------- */
   useEffect(() => {
     if (!hostRow?.id) return;
@@ -560,10 +622,7 @@ export default function TriviaUserInterfacePage() {
 
       // ✅ lock ad ONLY when question number changes
       const q = Number((data as any)?.current_question ?? 1);
-      setAdLockedQuestion((prevQ) => {
-        if (q !== prevQ) return q;
-        return prevQ;
-      });
+      setAdLockedQuestion((prevQ) => (q !== prevQ ? q : prevQ));
     };
 
     doPoll();
@@ -572,21 +631,19 @@ export default function TriviaUserInterfacePage() {
   }, [session?.id, gameId]);
 
   /* ---------------------------------------------------------
-     Derived current question
+     Derived current question (✅ safe ordering)
   --------------------------------------------------------- */
   const timerSeconds: number = trivia?.timer_seconds ?? 30;
   const scoringMode: string = trivia?.scoring_mode ?? "100s";
 
-  const currentQuestionIndex =
-    session?.current_question && questions.length > 0
-      ? Math.min(
-          questions.length - 1,
-          Math.max(0, (session.current_question || 1) - 1)
-        )
-      : 0;
-
-  const currentQuestion = questions[currentQuestionIndex] || null;
   const isRunning = session?.status === "running";
+  const currentQuestionNumber = Number(session?.current_question ?? 1);
+
+  const currentQuestion = useMemo(() => {
+    return pickQuestionForCurrent(questions, currentQuestionNumber, questionOrderMode);
+  }, [questions, currentQuestionNumber, questionOrderMode]);
+
+  const totalQuestions = questions.length;
 
   const wallPhase = (session?.wall_phase || "question") as
     | "question"
@@ -615,7 +672,6 @@ export default function TriviaUserInterfacePage() {
     if (!adsEnabled) return;
     if (!ads || ads.length === 0) return;
 
-    // ad for question N is ads[(N-1) % ads.length]
     const nextIdx =
       ((adLockedQuestion - 1) % ads.length + ads.length) % ads.length;
 
@@ -624,14 +680,10 @@ export default function TriviaUserInterfacePage() {
 
   /* ---------------------------------------------------------
      Follow wall phase
-     ✅ PATCH: remove forced setLeaderLoading(true) to stop flicker
   --------------------------------------------------------- */
   useEffect(() => {
-    if (wallPhase === "leaderboard") {
-      setView("leaderboard");
-    } else {
-      setView("question");
-    }
+    if (wallPhase === "leaderboard") setView("leaderboard");
+    else setView("question");
 
     setShowAnswerOverlay(wallPhase === "overlay");
     setRevealAnswer(wallPhase === "reveal");
@@ -757,11 +809,6 @@ export default function TriviaUserInterfacePage() {
 
   /* ---------------------------------------------------------
      ✅ Leaderboard loader (ONLY players who have points)
-     PATCHES:
-     - filter to points > 0
-     - rank after filtering
-     - avoid flicker by only setting state when rows changed
-     - poll slower to reduce churn
   --------------------------------------------------------- */
   useEffect(() => {
     if (!session?.id) return;
@@ -812,10 +859,7 @@ export default function TriviaUserInterfacePage() {
         );
       }
 
-      const guestMap = new Map<
-        string,
-        { name: string; selfieUrl: string | null }
-      >();
+      const guestMap = new Map<string, { name: string; selfieUrl: string | null }>();
 
       if (guestIds.length > 0) {
         const { data: guests, error: guestsErr } = await supabase
@@ -837,7 +881,6 @@ export default function TriviaUserInterfacePage() {
         }
       }
 
-      // Build rows, then FILTER points > 0
       const built: LeaderRow[] = players
         .map((p: any) => {
           const guest = p.guest_id ? guestMap.get(p.guest_id) : undefined;
@@ -851,7 +894,7 @@ export default function TriviaUserInterfacePage() {
             selfieUrl: safeSelfie,
           };
         })
-        .filter((r) => r.points > 0) // ✅ ONLY players with points
+        .filter((r) => r.points > 0)
         .sort((a, b) => b.points - a.points)
         .map((r, idx) => ({ ...r, rank: idx + 1 }));
 
@@ -874,9 +917,7 @@ export default function TriviaUserInterfacePage() {
   }, [session?.id, wallPhase]);
 
   /* ---------------------------------------------------------
-     ✅ Auto-scroll leaderboard down then back up (when list is long)
-     - only runs in leaderboard view
-     - pauses briefly at top/bottom
+     ✅ Auto-scroll leaderboard
   --------------------------------------------------------- */
   useEffect(() => {
     if (view !== "leaderboard") return;
@@ -884,7 +925,6 @@ export default function TriviaUserInterfacePage() {
     const el = leaderScrollRef.current;
     if (!el) return;
 
-    // only bother if we can actually scroll
     const canScroll = el.scrollHeight - el.clientHeight > 8;
     if (!canScroll) return;
 
@@ -892,7 +932,7 @@ export default function TriviaUserInterfacePage() {
     let dir: 1 | -1 = 1;
     let pauseUntil = 0;
 
-    const stepPx = 1.2; // speed
+    const stepPx = 1.2;
     const tickMs = 22;
 
     const tick = () => {
@@ -904,7 +944,6 @@ export default function TriviaUserInterfacePage() {
       const max = el.scrollHeight - el.clientHeight;
       const next = el.scrollTop + dir * stepPx;
 
-      // bottom
       if (next >= max) {
         el.scrollTop = max;
         dir = -1;
@@ -912,7 +951,6 @@ export default function TriviaUserInterfacePage() {
         return;
       }
 
-      // top
       if (next <= 0) {
         el.scrollTop = 0;
         dir = 1;
@@ -939,8 +977,6 @@ export default function TriviaUserInterfacePage() {
     if (!playerId) return;
     if (hasAnswered || locked) return;
     if (wallPhase !== "question") return;
-
-    // ✅ countdown lock (prevents answering during pre-game countdown)
     if (isCountdownRunning) return;
 
     setSelectedIndex(idx);
@@ -953,9 +989,7 @@ export default function TriviaUserInterfacePage() {
       .eq("question_id", currentQuestion.id)
       .maybeSingle();
 
-    if (existingErr) {
-      console.error("❌ trivia_answers existing check error:", existingErr);
-    }
+    if (existingErr) console.error("❌ trivia_answers existing check error:", existingErr);
     if (existing) return;
 
     const isCorrect = idx === currentQuestion.correct_index;
@@ -989,9 +1023,7 @@ export default function TriviaUserInterfacePage() {
       points,
     });
 
-    if (insertErr) {
-      console.error("❌ trivia_answers insert error:", insertErr);
-    }
+    if (insertErr) console.error("❌ trivia_answers insert error:", insertErr);
   }
 
   /* ---------------------------------------------------------
@@ -1157,7 +1189,7 @@ export default function TriviaUserInterfacePage() {
             <div style={{ fontSize: "0.75rem", opacity: 0.75, marginTop: 2 }}>
               {view === "leaderboard"
                 ? "Leaderboard"
-                : `Question ${currentQuestionIndex + 1} of ${questions.length}`}
+                : `Question ${Math.max(1, Math.min(totalQuestions, currentQuestionNumber))} of ${totalQuestions}`}
             </div>
           </div>
         </div>
@@ -1351,108 +1383,110 @@ export default function TriviaUserInterfacePage() {
           )}
 
           {view === "question" &&
-            currentQuestion.options.map((opt: string, idx: number) => {
-              const chosen = selectedIndex === idx;
-              const isCorrectChoice =
-                typeof currentQuestion.correct_index === "number" &&
-                idx === currentQuestion.correct_index;
+            (Array.isArray(currentQuestion.options) ? currentQuestion.options : []).map(
+              (opt: string, idx: number) => {
+                const chosen = selectedIndex === idx;
+                const isCorrectChoice =
+                  typeof currentQuestion.correct_index === "number" &&
+                  idx === currentQuestion.correct_index;
 
-              const disabled =
-                hasAnswered ||
-                locked ||
-                wallPhase !== "question" ||
-                isCountdownRunning;
+                const disabled =
+                  hasAnswered ||
+                  locked ||
+                  wallPhase !== "question" ||
+                  isCountdownRunning;
 
-              let bgBtn = "rgba(15,23,42,0.85)";
-              let border = "1px solid rgba(148,163,184,0.4)";
-              let opacityBtn = 1;
-              let boxShadow = "none";
+                let bgBtn = "rgba(15,23,42,0.85)";
+                let border = "1px solid rgba(148,163,184,0.4)";
+                let opacityBtn = 1;
+                let boxShadow = "none";
 
-              const gotItRightPulse = revealAnswer && chosen && isCorrectChoice;
+                const gotItRightPulse = revealAnswer && chosen && isCorrectChoice;
 
-              if (!revealAnswer && chosen) {
-                bgBtn = "linear-gradient(90deg,#22c55e,#15803d)";
-                border = "1px solid rgba(240,253,250,0.9)";
-                boxShadow = "0 0 12px rgba(74,222,128,0.6)";
-              }
-
-              if (revealAnswer) {
-                if (isCorrectChoice) {
-                  bgBtn = "linear-gradient(90deg,#22c55e,#16a34a)";
-                  border = "2px solid rgba(74,222,128,1)";
-                  boxShadow = gotItRightPulse
-                    ? "0 0 26px rgba(74,222,128,1)"
-                    : "0 0 20px rgba(74,222,128,0.9)";
-                } else if (chosen && !isCorrectChoice) {
-                  bgBtn = "linear-gradient(90deg,#ef4444,#b91c1c)";
-                  border = "2px solid rgba(248,113,113,1)";
-                  boxShadow = "0 0 16px rgba(248,113,113,0.9)";
-                } else {
-                  opacityBtn = 0.4;
+                if (!revealAnswer && chosen) {
+                  bgBtn = "linear-gradient(90deg,#22c55e,#15803d)";
+                  border = "1px solid rgba(240,253,250,0.9)";
+                  boxShadow = "0 0 12px rgba(74,222,128,0.6)";
                 }
-              } else if (disabled && !chosen) {
-                opacityBtn = 0.7;
-              }
 
-              return (
-                <button
-                  key={idx}
-                  onClick={() => handleSelectAnswer(idx)}
-                  disabled={disabled}
-                  style={{
-                    width: "100%",
-                    padding: "6px 12px",
-                    borderRadius: 20,
-                    background: bgBtn,
-                    border,
-                    opacity: opacityBtn,
-                    color: "#fff",
-                    textAlign: "left",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 15,
-                    fontSize: "0.95rem",
-                    fontWeight: chosen ? 700 : 500,
-                    minHeight: 72,
-                    boxShadow,
-                    transition:
-                      "opacity 0.25s ease, border 0.25s ease, background 0.25s ease, box-shadow 0.3s ease",
-                    animation: gotItRightPulse
-                      ? "fiCorrectPulse 1.25s ease-in-out infinite alternate"
-                      : "none",
-                  }}
-                >
-                  <span
+                if (revealAnswer) {
+                  if (isCorrectChoice) {
+                    bgBtn = "linear-gradient(90deg,#22c55e,#16a34a)";
+                    border = "2px solid rgba(74,222,128,1)";
+                    boxShadow = gotItRightPulse
+                      ? "0 0 26px rgba(74,222,128,1)"
+                      : "0 0 20px rgba(74,222,128,0.9)";
+                  } else if (chosen && !isCorrectChoice) {
+                    bgBtn = "linear-gradient(90deg,#ef4444,#b91c1c)";
+                    border = "2px solid rgba(248,113,113,1)";
+                    boxShadow = "0 0 16px rgba(248,113,113,0.9)";
+                  } else {
+                    opacityBtn = 0.4;
+                  }
+                } else if (disabled && !chosen) {
+                  opacityBtn = 0.7;
+                }
+
+                return (
+                  <button
+                    key={idx}
+                    onClick={() => handleSelectAnswer(idx)}
+                    disabled={disabled}
                     style={{
-                      width: 60,
-                      height: 60,
-                      borderRadius: "999px",
-                      border: "1px solid rgba(226,232,240,0.8)",
+                      width: "100%",
+                      padding: "6px 12px",
+                      borderRadius: 20,
+                      background: bgBtn,
+                      border,
+                      opacity: opacityBtn,
+                      color: "#fff",
+                      textAlign: "left",
                       display: "flex",
                       alignItems: "center",
-                      justifyContent: "center",
-                      fontSize: "2.0rem",
-                      background: chosen
-                        ? "rgba(15,23,42,0.2)"
-                        : "rgba(15,23,42,0.7)",
-                      flexShrink: 0,
+                      gap: 15,
+                      fontSize: "0.95rem",
+                      fontWeight: chosen ? 700 : 500,
+                      minHeight: 72,
+                      boxShadow,
+                      transition:
+                        "opacity 0.25s ease, border 0.25s ease, background 0.25s ease, box-shadow 0.3s ease",
+                      animation: gotItRightPulse
+                        ? "fiCorrectPulse 1.25s ease-in-out infinite alternate"
+                        : "none",
                     }}
                   >
-                    {String.fromCharCode(65 + idx)}
-                  </span>
-                  <span
-                    style={{
-                      flex: 1,
-                      lineHeight: 1.3,
-                      wordWrap: "break-word",
-                      whiteSpace: "normal",
-                    }}
-                  >
-                    {opt}
-                  </span>
-                </button>
-              );
-            })}
+                    <span
+                      style={{
+                        width: 60,
+                        height: 60,
+                        borderRadius: "999px",
+                        border: "1px solid rgba(226,232,240,0.8)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        fontSize: "2.0rem",
+                        background: chosen
+                          ? "rgba(15,23,42,0.2)"
+                          : "rgba(15,23,42,0.7)",
+                        flexShrink: 0,
+                      }}
+                    >
+                      {String.fromCharCode(65 + idx)}
+                    </span>
+                    <span
+                      style={{
+                        flex: 1,
+                        lineHeight: 1.3,
+                        wordWrap: "break-word",
+                        whiteSpace: "normal",
+                      }}
+                    >
+                      {opt}
+                    </span>
+                  </button>
+                );
+              }
+            )}
         </div>
 
         {/* AD SLOT */}
@@ -1564,7 +1598,7 @@ export default function TriviaUserInterfacePage() {
           </div>
         )}
 
-        {/* ✅ PRE-GAME COUNTDOWN OVERLAY (LOCKED TO INACTIVE WALL) */}
+        {/* ✅ PRE-GAME COUNTDOWN OVERLAY */}
         {isCountdownRunning && (
           <div
             style={{
