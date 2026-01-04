@@ -1230,6 +1230,8 @@ export default function TriviaUserInterfacePage() {
             minHeight: 0,
             overflowY: "auto",
             paddingRight: 2,
+            // ✅ ensure items are packed at the top, even if there's only 1 row
+            alignContent: "flex-start",
           }}
         >
           {view === "leaderboard" && (
@@ -1368,26 +1370,43 @@ export default function TriviaUserInterfacePage() {
               let opacityBtn = 1;
               let boxShadow = "none";
 
+              // badge (A/B/C/D circle)
+              let badgeBg = chosen
+                ? "rgba(15,23,42,0.2)"
+                : "rgba(15,23,42,0.7)";
+              let badgeBorder = "1px solid rgba(226,232,240,0.8)";
+
               const gotItRightPulse = revealAnswer && chosen && isCorrectChoice;
 
+              // BEFORE reveal: highlight chosen in green
               if (!revealAnswer && chosen) {
                 bgBtn = "linear-gradient(90deg,#22c55e,#15803d)";
                 border = "1px solid rgba(240,253,250,0.9)";
                 boxShadow = "0 0 12px rgba(74,222,128,0.6)";
               }
 
+              // AFTER reveal: correct -> green, chosen wrong -> red
               if (revealAnswer) {
                 if (isCorrectChoice) {
+                  // ✅ correct answer is green
                   bgBtn = "linear-gradient(90deg,#22c55e,#16a34a)";
                   border = "2px solid rgba(74,222,128,1)";
                   boxShadow = gotItRightPulse
                     ? "0 0 26px rgba(74,222,128,1)"
                     : "0 0 20px rgba(74,222,128,0.9)";
+
+                  badgeBg = "rgba(22,163,74,0.2)";
+                  badgeBorder = "2px solid rgba(74,222,128,1)";
                 } else if (chosen && !isCorrectChoice) {
+                  // ❌ user's wrong choice goes red
                   bgBtn = "linear-gradient(90deg,#ef4444,#b91c1c)";
                   border = "2px solid rgba(248,113,113,1)";
                   boxShadow = "0 0 16px rgba(248,113,113,0.9)";
+
+                  badgeBg = "rgba(127,29,29,0.8)";
+                  badgeBorder = "2px solid rgba(248,113,113,1)";
                 } else {
+                  // everything else fades
                   opacityBtn = 0.4;
                 }
               } else if (disabled && !chosen) {
@@ -1427,14 +1446,12 @@ export default function TriviaUserInterfacePage() {
                       width: 60,
                       height: 60,
                       borderRadius: "999px",
-                      border: "1px solid rgba(226,232,240,0.8)",
+                      border: badgeBorder,
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "center",
                       fontSize: "2.0rem",
-                      background: chosen
-                        ? "rgba(15,23,42,0.2)"
-                        : "rgba(15,23,42,0.7)",
+                      background: badgeBg,
                       flexShrink: 0,
                     }}
                   >
