@@ -176,7 +176,6 @@ export default function TriviaUserInterfacePage() {
 
   /* ---------------------------------------------------------
      ✅ COUNTDOWN TIMER (LOCKED TO INACTIVE WALL)
-     (DO NOT CHANGE OTHER FLOW)
   --------------------------------------------------------- */
   const [countdownSeconds, setCountdownSeconds] = useState<number>(10);
   const [countdownActive, setCountdownActive] = useState<boolean>(false);
@@ -624,7 +623,6 @@ export default function TriviaUserInterfacePage() {
 
   /* ---------------------------------------------------------
      Follow wall phase
-     ✅ PATCH: remove forced setLeaderLoading(true) to stop flicker
   --------------------------------------------------------- */
   useEffect(() => {
     if (wallPhase === "leaderboard") {
@@ -636,11 +634,17 @@ export default function TriviaUserInterfacePage() {
     setShowAnswerOverlay(wallPhase === "overlay");
     setRevealAnswer(wallPhase === "reveal");
 
-    if (wallPhase !== "question") setLocked(true);
+    // lock/unlock based on phase; timer can still hard-lock when it hits 0
+    if (wallPhase !== "question") {
+      setLocked(true);
+    } else {
+      setLocked(false);
+    }
   }, [wallPhase]);
 
   /* ---------------------------------------------------------
      When question changes → reset local answer state
+     (IMPORTANT: do NOT depend on wallPhase here, or we wipe selection on reveal)
   --------------------------------------------------------- */
   useEffect(() => {
     if (!currentQuestion?.id) return;
@@ -652,10 +656,9 @@ export default function TriviaUserInterfacePage() {
     setSelectedIndex(null);
     setHasAnswered(false);
 
-    setLocked(wallPhase !== "question");
     setProgress(1);
     setSecondsLeft(timerSeconds);
-  }, [currentQuestion?.id, timerSeconds, wallPhase]);
+  }, [currentQuestion?.id, timerSeconds]);
 
   /* ---------------------------------------------------------
      TIMER: source of truth = questionStartedAt
@@ -757,11 +760,6 @@ export default function TriviaUserInterfacePage() {
 
   /* ---------------------------------------------------------
      ✅ Leaderboard loader (ONLY players who have points)
-     PATCHES:
-     - filter to points > 0
-     - rank after filtering
-     - avoid flicker by only setting state when rows changed
-     - poll slower to reduce churn
   --------------------------------------------------------- */
   useEffect(() => {
     if (!session?.id) return;
@@ -875,8 +873,6 @@ export default function TriviaUserInterfacePage() {
 
   /* ---------------------------------------------------------
      ✅ Auto-scroll leaderboard down then back up (when list is long)
-     - only runs in leaderboard view
-     - pauses briefly at top/bottom
   --------------------------------------------------------- */
   useEffect(() => {
     if (view !== "leaderboard") return;
@@ -884,7 +880,6 @@ export default function TriviaUserInterfacePage() {
     const el = leaderScrollRef.current;
     if (!el) return;
 
-    // only bother if we can actually scroll
     const canScroll = el.scrollHeight - el.clientHeight > 8;
     if (!canScroll) return;
 
@@ -1230,6 +1225,7 @@ export default function TriviaUserInterfacePage() {
             minHeight: 0,
             overflowY: "auto",
             paddingRight: 2,
+            alignContent: "flex-start", // ✅ keep single row at top
           }}
         >
           {view === "leaderboard" && (
