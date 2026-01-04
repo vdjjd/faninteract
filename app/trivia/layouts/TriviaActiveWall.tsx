@@ -177,15 +177,7 @@ function sameLeaderRows(a: LeaderRow[], b: LeaderRow[]) {
 
 /**
  * ✅ FIX FOR “Q1 then jumps to Q4/Q8”
- * The old logic used round_number ordering when only SOME questions had round_number set.
- * That reorders the list and makes indexing look like skipping.
- *
- * New rule:
- * - ONLY use question_number if *every* question has it
- * - ELSE ONLY use round_number if *every* question has it
- * - ELSE fall back to created_at (stable insertion order)
- *
- * Then, selection matches that ordering mode.
+ * Ordering rules described below.
  */
 type QuestionOrderMode = "question_number" | "round_number" | "created_at";
 
@@ -231,7 +223,6 @@ function pickQuestionForCurrent(
 ): any | null {
   if (!qs?.length || !currentQuestion || currentQuestion < 1) return null;
 
-  // If current_question is meant to match a numbered field, only do that when mode proves it's safe.
   if (mode === "question_number") {
     const hit = qs.find((q) => q?.question_number === currentQuestion);
     if (hit) return hit;
@@ -241,7 +232,6 @@ function pickQuestionForCurrent(
     if (hit) return hit;
   }
 
-  // Otherwise treat as 1-based index into the ordered list.
   const idx = Math.max(0, Math.min(qs.length - 1, currentQuestion - 1));
   return qs[idx] ?? null;
 }
@@ -264,8 +254,45 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
 
   const brightness = trivia?.background_brightness ?? 100;
 
-  const isRunning =
-    trivia?.status === "running" && trivia?.countdown_active === false;
+  /* -------------------------------------------------- */
+  /* ✅ LIVE CARD STATUS (PAUSE/RESUME SUPPORT)          */
+  /* -------------------------------------------------- */
+  const [cardStatus, setCardStatus] = useState<string>(trivia?.status || "idle");
+  const [cardCountdownActive, setCardCountdownActive] = useState<boolean>(
+    !!trivia?.countdown_active
+  );
+
+  useEffect(() => {
+    setCardStatus(trivia?.status || "idle");
+    setCardCountdownActive(!!trivia?.countdown_active);
+  }, [trivia?.id, trivia?.status, trivia?.countdown_active]);
+
+  // Poll card status so the wall reacts instantly to Pause/Resume from dashboard
+  useEffect(() => {
+    if (!trivia?.id) return;
+    let alive = true;
+
+    const poll = async () => {
+      const { data, error } = await supabase
+        .from("trivia_cards")
+        .select("status,countdown_active")
+        .eq("id", trivia.id)
+        .maybeSingle();
+
+      if (!alive) return;
+      if (error || !data) return;
+
+      setCardStatus(data.status);
+      setCardCountdownActive(!!data.countdown_active);
+    };
+
+    poll();
+    const id = window.setInterval(poll, 1000);
+    return () => {
+      alive = false;
+      window.clearInterval(id);
+    };
+  }, [trivia?.id]);
 
   const [view, setView] = useState<WallView>("question");
 
@@ -279,6 +306,8 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
 
   // ✅ session + wall authority
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [sessionStatus, setSessionStatus] = useState<string | null>(null);
+
   const [wallPhase, setWallPhase] = useState<WallPhase>("question");
   const [wallPhaseStartedAt, setWallPhaseStartedAt] = useState<string | null>(null);
 
@@ -323,6 +352,10 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
           const next = payload?.new;
           if (!next) return;
           setPublicName(pickPublicName(next));
+          // also pick up status changes from realtime if they arrive
+          if (typeof next.status === "string") setCardStatus(next.status);
+          if (typeof next.countdown_active === "boolean")
+            setCardCountdownActive(!!next.countdown_active);
         }
       )
       .subscribe();
@@ -419,7 +452,6 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
     try {
       const iso = new Date(nowServerMs()).toISOString();
 
-      // ✅ Only one client can win: must still be on leaderboard and on same current_question
       const { data: updated, error: updErr } = await supabase
         .from("trivia_sessions")
         .update({
@@ -438,7 +470,6 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
         return;
       }
 
-      // If no row updated, someone else already advanced (GOOD)
       if (!updated || updated.length === 0) return;
     } finally {
       advanceWriteLockRef.current = false;
@@ -447,6 +478,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
 
   /* -------------------------------------------------- */
   /* ✅ Poll session: current_question + phase authority  */
+  /*    ✅ UPDATED: allow status = paused                 */
   /* -------------------------------------------------- */
   useEffect(() => {
     if (!trivia?.id) return;
@@ -470,13 +502,13 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
         return;
       }
 
-      if (
-        !session?.id ||
-        session.status !== "running" ||
-        !session.current_question
-      ) {
+      const okStatus =
+        session?.status === "running" || session?.status === "paused";
+
+      if (!session?.id || !okStatus || !session.current_question) {
         if (!alive) return;
         setSessionId(null);
+        setSessionStatus(null);
         setWallPhase("question");
         setWallPhaseStartedAt(null);
         setQuestion(null);
@@ -489,6 +521,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
       if (!alive) return;
 
       setSessionId(session.id);
+      setSessionStatus(session.status);
       setCurrentQuestionNumber(session.current_question);
       setQuestionStartedAt(session.question_started_at ?? null);
 
@@ -496,7 +529,6 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
       setWallPhase(safePhase);
       setWallPhaseStartedAt(session.wall_phase_started_at ?? null);
 
-      // If phase is NULL in DB (old rows), initialize to question once.
       if (!session.wall_phase) {
         setWallPhaseAuthoritative("question", undefined);
       }
@@ -535,6 +567,19 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
   }, [trivia?.id]);
 
   /* -------------------------------------------------- */
+  /* ✅ Derived runtime flags                             */
+  /* -------------------------------------------------- */
+  const isPaused = cardStatus === "paused" || sessionStatus === "paused";
+  const isActiveGame =
+    (cardStatus === "running" || cardStatus === "paused") &&
+    cardCountdownActive === false;
+
+  const isFinalQuestion =
+    totalQuestions != null && currentQuestionNumber != null
+      ? currentQuestionNumber >= totalQuestions
+      : false;
+
+  /* -------------------------------------------------- */
   /* ✅ UI follows wall_phase ONLY                        */
   /* -------------------------------------------------- */
   useEffect(() => {
@@ -544,23 +589,29 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
 
     setShowAnswerOverlay(wallPhase === "overlay");
     setRevealAnswer(wallPhase === "reveal");
-    setLocked(wallPhase !== "question");
-  }, [wallPhase]);
 
-  const isFinalQuestion =
-    totalQuestions != null && currentQuestionNumber != null
-      ? currentQuestionNumber >= totalQuestions
-      : false;
+    // If paused, lock the UI regardless of phase (prevents “green bar” vibe)
+    if (isPaused) setLocked(true);
+    else setLocked(wallPhase !== "question");
+  }, [wallPhase, isPaused]);
 
   /* -------------------------------------------------- */
   /* ✅ QUESTION TIMER (bar only) + phase trigger         */
-  /*  (8s extra on FIRST question only)                  */
+  /*    ✅ UPDATED: freezes on pause                      */
   /* -------------------------------------------------- */
   useEffect(() => {
     let intervalId: number | null = null;
 
+    // When paused, FREEZE progress in place (do not reset to 1/0)
+    if (isPaused) {
+      setLocked(true);
+      return () => {
+        if (intervalId != null) window.clearInterval(intervalId);
+      };
+    }
+
     if (
-      !isRunning ||
+      !isActiveGame ||
       !sessionId ||
       currentQuestionNumber == null ||
       !questionStartedAt ||
@@ -586,7 +637,6 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
         ? timerSeconds * 1000
         : 30000;
 
-    // ✅ Add grace time ONLY on Question 1
     const durationMs =
       baseDurationMs + (currentQuestionNumber === 1 ? FIRST_QUESTION_EXTRA_MS : 0);
 
@@ -617,7 +667,8 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
       if (intervalId != null) window.clearInterval(intervalId);
     };
   }, [
-    isRunning,
+    isActiveGame,
+    isPaused,
     sessionId,
     currentQuestionNumber,
     questionStartedAt,
@@ -627,11 +678,13 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
 
   /* -------------------------------------------------- */
   /* ✅ PHASE MACHINE (wall authority)                    */
+  /*    ✅ UPDATED: freezes on pause                      */
   /* -------------------------------------------------- */
   const phaseTickLockRef = useRef(false);
 
   useEffect(() => {
-    if (!isRunning) return;
+    if (!isActiveGame) return;
+    if (isPaused) return;
     if (!sessionId) return;
     if (!wallPhaseStartedAt) return;
 
@@ -640,7 +693,6 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
     const tick = async () => {
       if (cancelled) return;
 
-      // ✅ Prevent overlapping async ticks
       if (phaseTickLockRef.current) return;
       phaseTickLockRef.current = true;
 
@@ -668,7 +720,6 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
             return;
           }
 
-          // ✅ CRITICAL: atomic, guarded update prevents skipping
           await advanceQuestionAuthoritative();
           return;
         }
@@ -685,7 +736,8 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
       window.clearInterval(id);
     };
   }, [
-    isRunning,
+    isActiveGame,
+    isPaused,
     sessionId,
     wallPhase,
     wallPhaseStartedAt,
@@ -695,6 +747,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
 
   /* -------------------------------------------------- */
   /* TOP 3 RANKINGS (AUTO UPDATE)                        */
+  /* ✅ UPDATED: supports paused sessions                */
   /* -------------------------------------------------- */
   useEffect(() => {
     if (!trivia?.id) return;
@@ -702,7 +755,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
     let cancelled = false;
 
     async function loadTopRanks() {
-      if (!isRunning) {
+      if (!isActiveGame || !sessionId) {
         if (!cancelled && topRanksRef.current.length) {
           topRanksRef.current = [];
           setTopRanks([]);
@@ -714,7 +767,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
         .from("trivia_sessions")
         .select("id,status,created_at")
         .eq("trivia_card_id", trivia.id)
-        .eq("status", "running")
+        .in("status", ["running", "paused"])
         .order("created_at", { ascending: false })
         .limit(1)
         .maybeSingle();
@@ -840,14 +893,15 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
       cancelled = true;
       window.clearInterval(id);
     };
-  }, [trivia?.id, isRunning]);
+  }, [trivia?.id, isActiveGame, sessionId]);
 
   /* -------------------------------------------------- */
   /* FULL LEADERBOARD LOADER (ONLY USED IN VIEW=leaderboard) */
+  /* ✅ UPDATED: supports paused sessions                */
   /* -------------------------------------------------- */
   useEffect(() => {
     if (!trivia?.id) return;
-    if (!isRunning) return;
+    if (!isActiveGame) return;
     if (view !== "leaderboard") return;
 
     let cancelled = false;
@@ -859,7 +913,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
         .from("trivia_sessions")
         .select("id,status,created_at")
         .eq("trivia_card_id", trivia.id)
-        .neq("status", "finished")
+        .in("status", ["running", "paused"])
         .order("created_at", { ascending: false })
         .limit(1)
         .maybeSingle();
@@ -966,7 +1020,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
       cancelled = true;
       window.clearInterval(id);
     };
-  }, [trivia?.id, isRunning, view]);
+  }, [trivia?.id, isActiveGame, view]);
 
   /* -------------------------------------------------- */
   /* AUTO-SCALE QUESTION TEXT TO ~2 LINES               */
@@ -1086,6 +1140,41 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
           </div>
         </div>
 
+        {/* ✅ PAUSED OVERLAY (all views except podium) */}
+        {isPaused && view !== "podium" && (
+          <div
+            style={{
+              position: "absolute",
+              inset: 0,
+              background: "rgba(0,0,0,0.72)",
+              zIndex: 50,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              pointerEvents: "none",
+            }}
+          >
+            <div
+              style={{
+                color: "#fff",
+                fontWeight: 900,
+                letterSpacing: "0.08em",
+                textTransform: "uppercase",
+                fontSize: "clamp(2.8rem,5vw,6rem)",
+                textShadow:
+                  "0 0 2px #000, 0 0 10px rgba(0,0,0,0.85), 0 0 40px rgba(255,255,255,0.15)",
+                padding: "0.35em 0.7em",
+                borderRadius: 18,
+                background:
+                  "radial-gradient(circle at 50% 50%, rgba(255,255,255,0.10), rgba(255,255,255,0.00))",
+                border: "1px solid rgba(255,255,255,0.18)",
+              }}
+            >
+              Paused
+            </div>
+          </div>
+        )}
+
         {/* =======================
             QUESTION VIEW
         ======================= */}
@@ -1141,7 +1230,9 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                     revealAnswer || locked || wallPhase !== "question"
                       ? "linear-gradient(to right,#ef4444,#dc2626)"
                       : "linear-gradient(to right,#4ade80,#22c55e)",
-                  transition: "width 0.05s linear, background 0.2s ease",
+                  transition: isPaused
+                    ? "none"
+                    : "width 0.05s linear, background 0.2s ease",
                 }}
               />
             </div>
@@ -1199,8 +1290,9 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                           opacity,
                           boxShadow,
                           transform,
-                          transition:
-                            "opacity 0.3s ease, border 0.3s ease, background 0.3s ease, box-shadow 0.4s ease, transform 0.4s ease",
+                          transition: isPaused
+                            ? "none"
+                            : "opacity 0.3s ease, border 0.3s ease, background 0.3s ease, box-shadow 0.4s ease, transform 0.4s ease",
                         }}
                       >
                         {String.fromCharCode(65 + idx)}. {opt}

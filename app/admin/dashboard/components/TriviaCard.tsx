@@ -147,6 +147,11 @@ export default function TriviaCard({
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
 
   /* ------------------------------------------------------------
+     ✅ PAUSE STATE
+  ------------------------------------------------------------ */
+  const [pauseBusy, setPauseBusy] = useState(false);
+
+  /* ------------------------------------------------------------
      PARTICIPANTS / PENDING COUNTS
  ------------------------------------------------------------ */
   const [participantsCount, setParticipantsCount] = useState(0);
@@ -199,6 +204,24 @@ export default function TriviaCard({
     trivia?.status,
     trivia?.countdown_active,
   ]);
+
+  /* ------------------------------------------------------------
+     ✅ SERVER TIME HELPER (shared)
+  ------------------------------------------------------------ */
+  const getServerIsoNow = async (): Promise<string> => {
+    try {
+      let { data, error } = await supabase.rpc("server_time");
+      if (error || !data) {
+        const fallback = await supabase.rpc("trivia_server_time");
+        data = fallback.data;
+        error = fallback.error;
+      }
+      if (!error && data) return new Date(data as any).toISOString();
+    } catch {
+      // ignore
+    }
+    return new Date().toISOString();
+  };
 
   /* ------------------------------------------------------------
      Poll trivia_cards.status + countdown_active every 2s
@@ -641,36 +664,107 @@ export default function TriviaCard({
   }
 
   /* ------------------------------------------------------------
+     ✅ PAUSE / RESUME TRIVIA
+     Requirements:
+       - trivia_cards.status uses "paused"
+       - trivia_sessions.status uses "paused"
+       - trivia_sessions.paused_at column exists (timestamptz)
+ ------------------------------------------------------------ */
+  const canPause =
+    !cardCountdownActive &&
+    (cardStatus === "running" || cardStatus === "paused") &&
+    !!trivia?.id;
+
+  async function handleTogglePauseTrivia() {
+    if (!canPause) return;
+    if (pauseBusy) return;
+
+    setPauseBusy(true);
+    try {
+      // latest non-finished session (running or paused)
+      const { data: session, error: sessionErr } = await supabase
+        .from("trivia_sessions")
+        .select("id,status,paused_at,question_started_at,wall_phase_started_at")
+        .eq("trivia_card_id", trivia.id)
+        .neq("status", "finished")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (sessionErr || !session?.id) {
+        console.warn("⚠️ pause: no active session:", sessionErr);
+        return;
+      }
+
+      const nowIso = await getServerIsoNow();
+      const nowMs = new Date(nowIso).getTime();
+
+      // PAUSE
+      if (cardStatus === "running") {
+        await supabase
+          .from("trivia_cards")
+          .update({ status: "paused" })
+          .eq("id", trivia.id);
+
+        await supabase
+          .from("trivia_sessions")
+          .update({ status: "paused", paused_at: nowIso })
+          .eq("id", session.id);
+
+        setCardStatus("paused");
+        return;
+      }
+
+      // RESUME
+      if (cardStatus === "paused") {
+        const pausedAtIso = (session.paused_at ?? null) as string | null;
+
+        let nextQuestionStartedAt: string | null = session.question_started_at ?? null;
+        let nextWallPhaseStartedAt: string | null = session.wall_phase_started_at ?? null;
+
+        if (pausedAtIso) {
+          const pausedAtMs = new Date(pausedAtIso).getTime();
+          const deltaMs = Math.max(0, nowMs - pausedAtMs);
+
+          const shiftIso = (iso: string | null) =>
+            iso ? new Date(new Date(iso).getTime() + deltaMs).toISOString() : null;
+
+          nextQuestionStartedAt = shiftIso(nextQuestionStartedAt);
+          nextWallPhaseStartedAt = shiftIso(nextWallPhaseStartedAt);
+        }
+
+        await supabase
+          .from("trivia_cards")
+          .update({ status: "running" })
+          .eq("id", trivia.id);
+
+        await supabase
+          .from("trivia_sessions")
+          .update({
+            status: "running",
+            paused_at: null,
+            question_started_at: nextQuestionStartedAt,
+            wall_phase_started_at: nextWallPhaseStartedAt,
+          })
+          .eq("id", session.id);
+
+        setCardStatus("running");
+        return;
+      }
+    } finally {
+      setPauseBusy(false);
+    }
+  }
+
+  /* ------------------------------------------------------------
      ▶️ PLAY TRIVIA (ONLY: start game & seed first question)
-     ✅ PATCHED: use Supabase server_time for ALL timestamps
+     ✅ Uses Supabase server_time for ALL timestamps
   ------------------------------------------------------------ */
   async function handlePlayTrivia() {
     if (playLockRef.current) return;
-    if (cardCountdownActive || cardStatus === "running") return;
+    if (cardCountdownActive || cardStatus === "running" || cardStatus === "paused") return;
 
     playLockRef.current = true;
-
-    // Small helper to get a server-based ISO timestamp (with fallback)
-    const getServerIsoNow = async (): Promise<string> => {
-      try {
-        // Try primary server_time RPC
-        let { data, error } = await supabase.rpc("server_time");
-        if (error || !data) {
-          // Optional: fallback to an alternate rpc if you have one
-          const fallback = await supabase.rpc("trivia_server_time");
-          data = fallback.data;
-          error = fallback.error;
-        }
-
-        if (!error && data) {
-          return new Date(data as any).toISOString();
-        }
-      } catch {
-        // ignore, fall through to local time
-      }
-      // Last-resort fallback to local time so it never explodes
-      return new Date().toISOString();
-    };
 
     try {
       // 1) Make sure there are active questions
@@ -772,6 +866,7 @@ export default function TriviaCard({
               question_started_at: questionStartIso,
               wall_phase: "question",
               wall_phase_started_at: questionStartIso,
+              paused_at: null,
             })
             .eq("id", session.id);
 
@@ -814,7 +909,7 @@ export default function TriviaCard({
 
     await supabase
       .from("trivia_sessions")
-      .update({ status: "finished" })
+      .update({ status: "finished", paused_at: null })
       .eq("trivia_card_id", trivia.id)
       .neq("status", "finished");
 
@@ -832,7 +927,9 @@ export default function TriviaCard({
   const startIndex = safePage * PAGE_SIZE;
   const visibleQuestions = questions.slice(startIndex, startIndex + PAGE_SIZE);
 
-  const isActiveBorder = cardStatus === "running" || cardCountdownActive;
+  const isActiveBorder =
+    cardStatus === "running" || cardStatus === "paused" || cardCountdownActive;
+
   const cardBgStyle = getTriviaCardBackground(trivia);
 
   return (
@@ -898,6 +995,11 @@ export default function TriviaCard({
               <p className={cn("text-lg", "font-semibold")}>
                 {trivia.public_name}
               </p>
+              {(cardStatus === "paused" || cardStatus === "waiting") && (
+                <p className={cn("text-xs", "opacity-80", "mt-0.5")}>
+                  {cardStatus === "paused" ? "PAUSED" : "Starting soon…"}
+                </p>
+              )}
             </div>
             <div className="text-right">
               <p className={cn("text-sm", "opacity-70")}>Topic</p>
@@ -951,16 +1053,19 @@ export default function TriviaCard({
             <div className={cn("flex", "flex-col", "gap-2")}>
               <button
                 onClick={handlePlayTrivia}
+                disabled={cardStatus === "paused"}
                 className={cn(
                   "bg-green-600",
                   "hover:bg-green-700",
                   "py-2",
                   "rounded-lg",
-                  "font-semibold"
+                  "font-semibold",
+                  cardStatus === "paused" && "opacity-40 cursor-not-allowed"
                 )}
               >
                 ▶ Play
               </button>
+
               <button
                 onClick={handleStopTrivia}
                 className={cn(
@@ -972,6 +1077,22 @@ export default function TriviaCard({
                 )}
               >
                 ⏹ Stop
+              </button>
+
+              <button
+                onClick={handleTogglePauseTrivia}
+                disabled={!canPause || pauseBusy}
+                className={cn(
+                  "py-2",
+                  "rounded-lg",
+                  "font-semibold",
+                  cardStatus === "paused"
+                    ? "bg-amber-600 hover:bg-amber-700"
+                    : "bg-yellow-600 hover:bg-yellow-700",
+                  (!canPause || pauseBusy) && "opacity-40 cursor-not-allowed"
+                )}
+              >
+                {cardStatus === "paused" ? "▶ Resume" : "⏸ Pause"}
               </button>
             </div>
 

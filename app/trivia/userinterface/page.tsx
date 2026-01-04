@@ -158,6 +158,13 @@ export default function TriviaUserInterfacePage() {
 
   const timerIntervalRef = useRef<number | null>(null);
 
+  // ✅ holds the last computed timer state so "paused" can freeze without resetting
+  const timerSnapshotRef = useRef<{
+    progress: number;
+    secondsLeft: number;
+    remainingMs: number;
+  } | null>(null);
+
   // server-time offset
   const [serverOffsetMs, setServerOffsetMs] = useState<number>(0);
 
@@ -589,6 +596,7 @@ export default function TriviaUserInterfacePage() {
 
   const currentQuestion = questions[currentQuestionIndex] || null;
   const isRunning = session?.status === "running";
+  const isPaused = Boolean(session?.status) && session?.status !== "running";
 
   const wallPhase = (session?.wall_phase || "question") as
     | "question"
@@ -655,22 +663,17 @@ export default function TriviaUserInterfacePage() {
      Follow wall phase
   --------------------------------------------------------- */
   useEffect(() => {
-    if (wallPhase === "leaderboard") {
-      setView("leaderboard");
-    } else {
-      setView("question");
-    }
+    if (wallPhase === "leaderboard") setView("leaderboard");
+    else setView("question");
 
     setShowAnswerOverlay(wallPhase === "overlay");
     setRevealAnswer(wallPhase === "reveal");
 
-    // lock/unlock based on phase; timer can still hard-lock when it hits 0
-    if (wallPhase !== "question") {
-      setLocked(true);
-    } else {
-      setLocked(false);
-    }
-  }, [wallPhase]);
+    // ✅ lock when NOT in question phase OR paused OR countdown running OR session over
+    setLocked(
+      wallPhase !== "question" || isPaused || isCountdownRunning || isSessionOver
+    );
+  }, [wallPhase, isPaused, isCountdownRunning, isSessionOver]);
 
   /* ---------------------------------------------------------
      When question changes → reset local answer state
@@ -688,10 +691,16 @@ export default function TriviaUserInterfacePage() {
 
     setProgress(1);
     setSecondsLeft(timerSeconds);
+
+    // ✅ reset snapshot each new question
+    timerSnapshotRef.current = null;
   }, [currentQuestion?.id, timerSeconds]);
 
   /* ---------------------------------------------------------
      TIMER: source of truth = questionStartedAt
+     ✅ Pause/resume support:
+       - If paused (status !== running), compute once and freeze
+       - If running, tick normally
      (8s grace on FIRST question, same total timerSeconds)
   --------------------------------------------------------- */
   useEffect(() => {
@@ -701,19 +710,19 @@ export default function TriviaUserInterfacePage() {
       timerIntervalRef.current = null;
     }
 
-    if (
-      !isRunning ||
-      !currentQuestion ||
-      !questionStartedAt ||
-      wallPhase !== "question"
-    ) {
-      if (wallPhase !== "question") {
-        setProgress(0);
-        setSecondsLeft(0);
-      } else {
-        setProgress(1);
-        setSecondsLeft(timerSeconds);
-      }
+    // if we aren't in the question phase, timer is irrelevant
+    if (wallPhase !== "question") {
+      timerSnapshotRef.current = null;
+      setProgress(0);
+      setSecondsLeft(0);
+      return;
+    }
+
+    // no question loaded yet
+    if (!currentQuestion || !questionStartedAt) {
+      timerSnapshotRef.current = null;
+      setProgress(1);
+      setSecondsLeft(timerSeconds);
       return;
     }
 
@@ -721,32 +730,53 @@ export default function TriviaUserInterfacePage() {
     const startedMs = new Date(questionStartedAt).getTime();
     const isFirstQuestion = (session?.current_question ?? 0) === 1;
 
-    const tick = () => {
-      const now = Date.now() + serverOffsetMs;
-
-      let effectiveElapsed = now - startedMs;
+    const computeRemaining = (nowMs: number) => {
+      let effectiveElapsed = nowMs - startedMs;
 
       if (isFirstQuestion) {
         const delayEnd = startedMs + FIRST_QUESTION_EXTRA_MS;
 
-        if (now < delayEnd) {
-          // still inside 8s grace: bar stays full
-          effectiveElapsed = 0;
+        if (nowMs < delayEnd) {
+          effectiveElapsed = 0; // grace: bar stays full
         } else {
-          // subtract the 8s so the bar still gets full lifetime AFTER grace
-          effectiveElapsed = now - delayEnd;
+          effectiveElapsed = nowMs - delayEnd; // subtract grace
         }
       }
 
-      const remaining = Math.max(0, durationMs - effectiveElapsed);
-      const frac = remaining / durationMs;
+      const remainingMs = Math.max(0, durationMs - effectiveElapsed);
+      const frac = durationMs > 0 ? remainingMs / durationMs : 0;
 
-      setProgress(frac);
-      setSecondsLeft(Math.max(0, Math.ceil(remaining / 1000)));
+      return {
+        remainingMs,
+        progress: Math.max(0, Math.min(1, frac)),
+        secondsLeft: Math.max(0, Math.ceil(remainingMs / 1000)),
+      };
+    };
 
-      if (remaining <= 0) {
-        setLocked(true);
-      }
+    const apply = (snap: {
+      remainingMs: number;
+      progress: number;
+      secondsLeft: number;
+    }) => {
+      timerSnapshotRef.current = snap;
+      setProgress(snap.progress);
+      setSecondsLeft(snap.secondsLeft);
+
+      if (snap.remainingMs <= 0) setLocked(true);
+    };
+
+    // ✅ PAUSED: compute ONCE and freeze (no interval)
+    if (isPaused || !isRunning || isCountdownRunning || isSessionOver) {
+      const nowMs = Date.now() + serverOffsetMs;
+      apply(computeRemaining(nowMs));
+      setLocked(true);
+      return;
+    }
+
+    // ✅ RUNNING: live ticking interval
+    const tick = () => {
+      const nowMs = Date.now() + serverOffsetMs;
+      apply(computeRemaining(nowMs));
     };
 
     tick();
@@ -760,6 +790,9 @@ export default function TriviaUserInterfacePage() {
     };
   }, [
     isRunning,
+    isPaused,
+    isCountdownRunning,
+    isSessionOver,
     currentQuestion?.id,
     questionStartedAt,
     timerSeconds,
@@ -852,7 +885,8 @@ export default function TriviaUserInterfacePage() {
 
       const totals = new Map<string, number>();
       for (const a of answers || []) {
-        const pts = typeof (a as any).points === "number" ? (a as any).points : 0;
+        const pts =
+          typeof (a as any).points === "number" ? (a as any).points : 0;
         totals.set(
           (a as any).player_id,
           (totals.get((a as any).player_id) || 0) + pts
@@ -981,6 +1015,10 @@ export default function TriviaUserInterfacePage() {
   async function handleSelectAnswer(idx: number) {
     if (!currentQuestion) return;
     if (!playerId) return;
+
+    // ✅ pause lock
+    if (isPaused || !isRunning) return;
+
     if (hasAnswered || locked) return;
     if (wallPhase !== "question") return;
 
@@ -1410,7 +1448,8 @@ export default function TriviaUserInterfacePage() {
                 locked ||
                 wallPhase !== "question" ||
                 isCountdownRunning ||
-                isSessionOver;
+                isSessionOver ||
+                isPaused;
 
               let bgBtn = "rgba(15,23,42,0.85)";
               let border = "1px solid rgba(148,163,184,0.4)";
