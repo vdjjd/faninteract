@@ -1023,13 +1023,6 @@ export default function TriviaCard({
               </span>
             </button>
           </div>
-
-          <div className="mt-3 text-[11px] opacity-70">
-            Auto Flow Mode:{" "}
-            {playMode === "auto" && cardStatus === "running" && !cardCountdownActive
-              ? "ON (Active Wall driving phases)"
-              : "OFF"}
-          </div>
         </Tabs.Content>
 
         {/* ---------------- QUESTIONS ---------------- */}
