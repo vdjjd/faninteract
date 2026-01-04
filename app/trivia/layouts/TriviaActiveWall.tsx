@@ -1224,7 +1224,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                       borderRadius: 24,
                       position: "relative",
                       overflow: "hidden",
-                      padding: "1vh 4vw", // ⬅️ CHANGED (less top padding)
+                      padding: "1vh 4vw", // tightened top padding
                       color: "#fff",
                       boxShadow: "0 25px 90px rgba(0,0,0,0.35)",
                     }}
@@ -1252,11 +1252,11 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                         flexDirection: "column",
                       }}
                     >
-                      {/* QUESTION AREA – now pinned to top of glass */}
+                      {/* QUESTION AREA – pinned near top */}
                       <div
                         style={{
                           maxWidth: "92%",
-                          margin: "0 auto 1.8vh auto", // small gap before timer
+                          margin: "0 auto 1.8vh auto",
                           display: "flex",
                           alignItems: "flex-start",
                           justifyContent: "center",
@@ -1405,23 +1405,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                           : null}
                       </div>
 
-                      {/* CURRENT RANKINGS LABEL */}
-                      {!isFinalQuestion && (
-                        <div
-                          style={{
-                            marginTop: "2.2vh",
-                            fontSize:
-                              "clamp(1.6rem,2vw,2.2rem)",
-                            fontWeight: 800,
-                            opacity: 0.85,
-                            textShadow:
-                              "0 10px 30px rgba(0,0,0,0.45)",
-                            textAlign: "center",
-                          }}
-                        >
-                          Current Rankings
-                        </div>
-                      )}
+                      {/* ⬇️ "Current Rankings" label was here — removed on purpose */}
                     </div>
 
                     {/* ANSWER OVERLAY */}
