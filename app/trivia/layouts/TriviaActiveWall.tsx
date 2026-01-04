@@ -133,6 +133,17 @@ function pickSelfieUrl(guest: any): string | null {
   );
 }
 
+function pickPublicName(row: any): string {
+  const pn = String(row?.public_name || "").trim();
+  if (pn) return pn;
+
+  // backward compat if older data uses `title`
+  const t = String(row?.title || "").trim();
+  if (t) return t;
+
+  return "Trivia Game";
+}
+
 function sameTopRanks(a: TopRankRow[], b: TopRankRow[]) {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) {
@@ -178,12 +189,16 @@ function sameLeaderRows(a: LeaderRow[], b: LeaderRow[]) {
  */
 type QuestionOrderMode = "question_number" | "round_number" | "created_at";
 
-function normalizeQuestions(qsRaw: any[]): { list: any[]; mode: QuestionOrderMode } {
+function normalizeQuestions(qsRaw: any[]): {
+  list: any[];
+  mode: QuestionOrderMode;
+} {
   const list = Array.isArray(qsRaw) ? [...qsRaw] : [];
   if (!list.length) return { list: [], mode: "created_at" };
 
   const hasAllQN = list.every(
-    (q) => typeof q?.question_number === "number" && Number.isFinite(q.question_number)
+    (q) =>
+      typeof q?.question_number === "number" && Number.isFinite(q.question_number)
   );
   const hasAllRN = list.every(
     (q) => typeof q?.round_number === "number" && Number.isFinite(q.round_number)
@@ -209,7 +224,11 @@ function normalizeQuestions(qsRaw: any[]): { list: any[]; mode: QuestionOrderMod
   return { list, mode };
 }
 
-function pickQuestionForCurrent(qs: any[], currentQuestion: number, mode: QuestionOrderMode): any | null {
+function pickQuestionForCurrent(
+  qs: any[],
+  currentQuestion: number,
+  mode: QuestionOrderMode
+): any | null {
   if (!qs?.length || !currentQuestion || currentQuestion < 1) return null;
 
   // If current_question is meant to match a numbered field, only do that when mode proves it's safe.
@@ -240,16 +259,20 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
   const bg =
     trivia?.background_type === "image"
       ? `url(${trivia.background_value}) center/cover no-repeat`
-      : trivia?.background_value || "linear-gradient(to bottom right,#1b2735,#090a0f)";
+      : trivia?.background_value ||
+        "linear-gradient(to bottom right,#1b2735,#090a0f)";
 
   const brightness = trivia?.background_brightness ?? 100;
 
-  const isRunning = trivia?.status === "running" && trivia?.countdown_active === false;
+  const isRunning =
+    trivia?.status === "running" && trivia?.countdown_active === false;
 
   const [view, setView] = useState<WallView>("question");
 
   const [question, setQuestion] = useState<any>(null);
-  const [currentQuestionNumber, setCurrentQuestionNumber] = useState<number | null>(null);
+  const [currentQuestionNumber, setCurrentQuestionNumber] = useState<number | null>(
+    null
+  );
   const [totalQuestions, setTotalQuestions] = useState<number | null>(null);
 
   const [questionStartedAt, setQuestionStartedAt] = useState<string | null>(null);
@@ -275,6 +298,39 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
   const [leaderLoading, setLeaderLoading] = useState(false);
 
   const timerSeconds: number = trivia?.timer_seconds ?? 30;
+
+  // ✅ Title (PUBLIC NAME) + live updates
+  const [publicName, setPublicName] = useState<string>(() => pickPublicName(trivia));
+
+  useEffect(() => {
+    setPublicName(pickPublicName(trivia));
+  }, [trivia?.public_name, trivia?.title, trivia?.id]);
+
+  useEffect(() => {
+    if (!trivia?.id) return;
+
+    const ch = supabase
+      .channel(`active-wall-title-${trivia.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "trivia_cards",
+          filter: `id=eq.${trivia.id}`,
+        },
+        (payload: any) => {
+          const next = payload?.new;
+          if (!next) return;
+          setPublicName(pickPublicName(next));
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(ch);
+    };
+  }, [trivia?.id]);
 
   /* -------------------------------------------------- */
   /* ✅ SERVER CLOCK OFFSET                              */
@@ -314,7 +370,10 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
   /* -------------------------------------------------- */
   const phaseWriteLockRef = useRef(false);
 
-  async function setWallPhaseAuthoritative(next: WallPhase, expectedPrev?: WallPhase) {
+  async function setWallPhaseAuthoritative(
+    next: WallPhase,
+    expectedPrev?: WallPhase
+  ) {
     if (!sessionId) return;
     if (phaseWriteLockRef.current) return;
 
@@ -397,7 +456,9 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
     async function pollSession() {
       const { data: session, error: sessionErr } = await supabase
         .from("trivia_sessions")
-        .select("id,status,current_question,question_started_at,wall_phase,wall_phase_started_at")
+        .select(
+          "id,status,current_question,question_started_at,wall_phase,wall_phase_started_at"
+        )
         .eq("trivia_card_id", trivia.id)
         .neq("status", "finished")
         .order("created_at", { ascending: false })
@@ -409,7 +470,11 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
         return;
       }
 
-      if (!session?.id || session.status !== "running" || !session.current_question) {
+      if (
+        !session?.id ||
+        session.status !== "running" ||
+        !session.current_question
+      ) {
         if (!alive) return;
         setSessionId(null);
         setWallPhase("question");
@@ -517,12 +582,13 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
     setProgress(1);
 
     const baseDurationMs =
-      typeof timerSeconds === "number" && timerSeconds > 0 ? timerSeconds * 1000 : 30000;
+      typeof timerSeconds === "number" && timerSeconds > 0
+        ? timerSeconds * 1000
+        : 30000;
 
     // ✅ Add grace time ONLY on Question 1
     const durationMs =
-      baseDurationMs +
-      (currentQuestionNumber === 1 ? FIRST_QUESTION_EXTRA_MS : 0);
+      baseDurationMs + (currentQuestionNumber === 1 ? FIRST_QUESTION_EXTRA_MS : 0);
 
     const startMs = new Date(questionStartedAt).getTime();
 
@@ -618,7 +684,14 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
       cancelled = true;
       window.clearInterval(id);
     };
-  }, [isRunning, sessionId, wallPhase, wallPhaseStartedAt, isFinalQuestion, currentQuestionNumber]);
+  }, [
+    isRunning,
+    sessionId,
+    wallPhase,
+    wallPhaseStartedAt,
+    isFinalQuestion,
+    currentQuestionNumber,
+  ]);
 
   /* -------------------------------------------------- */
   /* TOP 3 RANKINGS (AUTO UPDATE)                        */
@@ -703,7 +776,9 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
       if (guestIds.length > 0) {
         const { data: guests, error: guestsErr } = await supabase
           .from("guest_profiles")
-          .select("id,first_name,last_name,photo_url,selfie_url,avatar_url,image_url,profile_photo_url")
+          .select(
+            "id,first_name,last_name,photo_url,selfie_url,avatar_url,image_url,profile_photo_url"
+          )
           .in("id", guestIds);
 
         if (guestsErr) {
@@ -838,7 +913,9 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
       if (guestIds.length > 0) {
         const { data: guests, error: guestsErr } = await supabase
           .from("guest_profiles")
-          .select("id,first_name,last_name,photo_url,selfie_url,avatar_url,image_url,profile_photo_url")
+          .select(
+            "id,first_name,last_name,photo_url,selfie_url,avatar_url,image_url,profile_photo_url"
+          )
           .in("id", guestIds);
 
         if (guestsErr) {
@@ -958,7 +1035,10 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
     "rgba(253, 224, 71, 0.9)",
   ];
 
-  const origin = typeof window !== "undefined" ? window.location.origin : "https://faninteract.vercel.app";
+  const origin =
+    typeof window !== "undefined"
+      ? window.location.origin
+      : "https://faninteract.vercel.app";
   const qrValue = `${origin}/trivia/${trivia?.id}/join`;
 
   return (
@@ -976,6 +1056,36 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
           position: "relative",
         }}
       >
+        {/* ✅ TOP TITLE (PUBLIC NAME) */}
+        <div
+          style={{
+            position: "absolute",
+            top: "2.5vh",
+            left: "50%",
+            transform: "translateX(-50%)",
+            zIndex: 30,
+            pointerEvents: "none",
+            textAlign: "center",
+          }}
+        >
+          <div
+            style={{
+              color: "#fff",
+              fontSize: "clamp(2.5rem,4vw,5rem)",
+              fontWeight: 900,
+              textShadow: `
+                2px 2px 2px #000,
+                -2px 2px 2px #000,
+                2px -2px 2px #000,
+                -2px -2px 2px #000
+              `,
+              lineHeight: 1,
+            }}
+          >
+            {publicName}
+          </div>
+        </div>
+
         {/* =======================
             QUESTION VIEW
         ======================= */}
@@ -1007,7 +1117,9 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                 margin: "0 auto 3vh auto",
               }}
             >
-              {question?.question_text ? question.question_text : "Waiting for game to start"}
+              {question?.question_text
+                ? question.question_text
+                : "Waiting for game to start"}
             </div>
 
             {/* TIMER BAR */}
@@ -1051,7 +1163,8 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                     const isCorrect = idx === question?.correct_index;
 
                     let bg = baseBgColors[idx] ?? "rgba(255,255,255,0.12)";
-                    let border = baseBorders[idx] ?? "1px solid rgba(255,255,255,0.18)";
+                    let border =
+                      baseBorders[idx] ?? "1px solid rgba(255,255,255,0.18)";
                     let opacity = 1;
                     let boxShadow = "none";
                     let transform = "scale(1)";
@@ -1059,7 +1172,9 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                     if (revealAnswer) {
                       if (isCorrect) {
                         border = highlightBorders[idx] ?? border;
-                        boxShadow = `0 0 40px 8px ${glowColors[idx] ?? "rgba(255,255,255,0.9)"}`;
+                        boxShadow = `0 0 40px 8px ${
+                          glowColors[idx] ?? "rgba(255,255,255,0.9)"
+                        }`;
                         transform = "scale(1.04)";
                       } else {
                         opacity = 0.35;
@@ -1125,7 +1240,13 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                   zIndex: 15,
                 }}
               >
-                <div style={{ textAlign: "center", textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                <div
+                  style={{
+                    textAlign: "center",
+                    textTransform: "uppercase",
+                    letterSpacing: "0.08em",
+                  }}
+                >
                   <div
                     style={{
                       fontFamily:
@@ -1138,10 +1259,13 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                         "0 0 2px #000000, 0 0 6px #000000, 0 0 18px rgba(15,23,42,0.9), 0 0 36px rgba(15,23,42,0.9), 0 0 72px rgba(59,130,246,0.9)",
                       padding: "0.4em 0.9em",
                       borderRadius: 18,
-                      background: "radial-gradient(circle at 50% 50%, rgba(59,130,246,0.65), rgba(15,23,42,0.0))",
-                      boxShadow: "0 0 40px rgba(59,130,246,0.9), 0 0 90px rgba(59,130,246,0.85)",
+                      background:
+                        "radial-gradient(circle at 50% 50%, rgba(59,130,246,0.65), rgba(15,23,42,0.0))",
+                      boxShadow:
+                        "0 0 40px rgba(59,130,246,0.9), 0 0 90px rgba(59,130,246,0.85)",
                       display: "inline-block",
-                      animation: "fiAnswerGlow 1.8s ease-in-out infinite alternate",
+                      animation:
+                        "fiAnswerGlow 1.8s ease-in-out infinite alternate",
                     }}
                   >
                     THE ANSWER IS
@@ -1190,14 +1314,26 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                 maxWidth: LEADER_UI.maxWidth,
               }}
             >
-              {leaderLoading && <div style={{ textAlign: "center", opacity: 0.75 }}>Loading leaderboard…</div>}
+              {leaderLoading && (
+                <div style={{ textAlign: "center", opacity: 0.75 }}>
+                  Loading leaderboard…
+                </div>
+              )}
 
               {!leaderLoading && leaderRows.length === 0 && (
-                <div style={{ textAlign: "center", opacity: 0.75 }}>No scores yet.</div>
+                <div style={{ textAlign: "center", opacity: 0.75 }}>
+                  No scores yet.
+                </div>
               )}
 
               {!leaderLoading && leaderRows.length > 0 && (
-                <div style={{ display: "flex", flexDirection: "column", gap: LEADER_UI.rowGap }}>
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: LEADER_UI.rowGap,
+                  }}
+                >
                   {leaderRows.slice(0, 10).map((r) => {
                     const isTop3 = r.rank <= 3;
 
@@ -1212,8 +1348,12 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                           borderRadius: 22,
                           padding: `0 ${LEADER_UI.rowPadX}px`,
                           background: "rgba(255,255,255,0.07)",
-                          border: isTop3 ? "2px solid rgba(190,242,100,0.55)" : "1px solid rgba(255,255,255,0.15)",
-                          boxShadow: isTop3 ? "0 0 28px rgba(190,242,100,0.22)" : "none",
+                          border: isTop3
+                            ? "2px solid rgba(190,242,100,0.55)"
+                            : "1px solid rgba(255,255,255,0.15)",
+                          boxShadow: isTop3
+                            ? "0 0 28px rgba(190,242,100,0.22)"
+                            : "none",
                         }}
                       >
                         <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
@@ -1224,7 +1364,9 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                               borderRadius: "50%",
                               overflow: "hidden",
                               background: "rgba(255,255,255,0.12)",
-                              border: r.selfieUrl ? "2px solid rgba(255,255,255,0.45)" : "2px dashed rgba(255,255,255,0.45)",
+                              border: r.selfieUrl
+                                ? "2px solid rgba(255,255,255,0.45)"
+                                : "2px dashed rgba(255,255,255,0.45)",
                               display: "flex",
                               alignItems: "center",
                               justifyContent: "center",
@@ -1232,9 +1374,19 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                             }}
                           >
                             {r.selfieUrl ? (
-                              <img src={r.selfieUrl} alt={r.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                              <img
+                                src={r.selfieUrl}
+                                alt={r.name}
+                                style={{
+                                  width: "100%",
+                                  height: "100%",
+                                  objectFit: "cover",
+                                }}
+                              />
                             ) : (
-                              <div style={{ fontWeight: 900, fontSize: "1.25rem", opacity: 0.9 }}>{r.rank}</div>
+                              <div style={{ fontWeight: 900, fontSize: "1.25rem", opacity: 0.9 }}>
+                                {r.rank}
+                              </div>
                             )}
 
                             {r.selfieUrl && (
@@ -1273,7 +1425,9 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                           </div>
                         </div>
 
-                        <div style={{ fontSize: "clamp(1.6rem,2.6vw,3rem)", fontWeight: 900 }}>{r.points}</div>
+                        <div style={{ fontSize: "clamp(1.6rem,2.6vw,3rem)", fontWeight: 900 }}>
+                          {r.points}
+                        </div>
                       </div>
                     );
                   })}
@@ -1308,7 +1462,14 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
               pointerEvents: "none",
             }}
           >
-            <p style={{ color: "#fff", fontWeight: 700, marginBottom: "0.6vh", fontSize: "clamp(1rem,1.4vw,1.4rem)" }}>
+            <p
+              style={{
+                color: "#fff",
+                fontWeight: 700,
+                marginBottom: "0.6vh",
+                fontSize: "clamp(1rem,1.4vw,1.4rem)",
+              }}
+            >
               Scan to Join
             </p>
 
@@ -1363,7 +1524,9 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                       borderRadius: "50%",
                       overflow: "hidden",
                       background: "rgba(255,255,255,0.12)",
-                      border: hasSelfie ? "2px solid rgba(255,255,255,0.45)" : "2px dashed rgba(255,255,255,0.45)",
+                      border: hasSelfie
+                        ? "2px solid rgba(255,255,255,0.45)"
+                        : "2px dashed rgba(255,255,255,0.45)",
                       boxShadow: hasSelfie ? "0 0 16px rgba(0,0,0,0.45)" : "none",
                     }}
                   >
@@ -1371,7 +1534,12 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                       <img
                         src={row!.selfieUrl as string}
                         alt={row!.name}
-                        style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+                        style={{
+                          width: "100%",
+                          height: "100%",
+                          objectFit: "cover",
+                          display: "block",
+                        }}
                       />
                     ) : null}
                   </div>

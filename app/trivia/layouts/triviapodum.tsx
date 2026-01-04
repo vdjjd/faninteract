@@ -64,6 +64,17 @@ function pickSelfieUrl(guest: any): string | null {
   );
 }
 
+function pickPublicName(row: any): string {
+  const pn = String(row?.public_name || "").trim();
+  if (pn) return pn;
+
+  // backward compat if older data uses `title`
+  const t = String(row?.title || "").trim();
+  if (t) return t;
+
+  return "Trivia Game";
+}
+
 /* ---------- STYLES (adapted from SingleHighlight look) ---------- */
 
 const STYLE: Record<string, React.CSSProperties> = {
@@ -150,6 +161,9 @@ export default function TriviaPodum({ trivia }: TriviaPodiumProps) {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [loading, setLoading] = useState(true);
 
+  // ✅ Public title (top title)
+  const [publicName, setPublicName] = useState<string>(() => pickPublicName(trivia));
+
   // 🎨 Background from trivia card
   const [bg, setBg] = useState<string>(FALLBACK_BG);
   const [brightness, setBrightness] = useState<number>(
@@ -161,11 +175,11 @@ export default function TriviaPodum({ trivia }: TriviaPodiumProps) {
     trivia?.host?.logo_url?.trim() ||
     fallbackLogo;
 
-  const title = trivia?.title || "Trivia Podium";
-
-  /* --- Apply background from trivia props --- */
+  /* --- Apply title + background from trivia props --- */
   useEffect(() => {
     if (!trivia) return;
+
+    setPublicName(pickPublicName(trivia));
 
     const value =
       trivia.background_type === "image"
@@ -179,6 +193,46 @@ export default function TriviaPodum({ trivia }: TriviaPodiumProps) {
         : 100
     );
   }, [trivia]);
+
+  // 🔁 Live updates from DB for title + background (optional but matches the other pages)
+  useEffect(() => {
+    if (!trivia?.id) return;
+
+    const ch = supabase
+      .channel(`podium-wall-trivia-${trivia.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "trivia_cards",
+          filter: `id=eq.${trivia.id}`,
+        },
+        (payload: any) => {
+          const next = payload?.new;
+          if (!next) return;
+
+          setPublicName(pickPublicName(next));
+
+          const value =
+            next.background_type === "image"
+              ? `url(${next.background_value}) center/cover no-repeat`
+              : next.background_value || FALLBACK_BG;
+
+          setBg(value);
+          setBrightness(
+            typeof next.background_brightness === "number"
+              ? next.background_brightness
+              : 100
+          );
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(ch);
+    };
+  }, [trivia?.id]);
 
   /* --- Load final leaderboard & build top 3 --- */
   useEffect(() => {
@@ -240,10 +294,7 @@ export default function TriviaPodum({ trivia }: TriviaPodiumProps) {
         }
 
         // Guest data for names/selfies
-        const guestMap = new Map<
-          string,
-          { name: string; selfieUrl: string | null }
-        >();
+        const guestMap = new Map<string, { name: string; selfieUrl: string | null }>();
 
         if (guestIds.length > 0) {
           const { data: guests, error: guestsErr } = await supabase
@@ -402,8 +453,35 @@ export default function TriviaPodum({ trivia }: TriviaPodiumProps) {
         position: "relative",
       }}
     >
-      {/* Title */}
-      <h1 style={STYLE.title}>{title}</h1>
+      {/* ✅ TOP TITLE (PUBLIC NAME) */}
+      <div
+        style={{
+          position: "absolute",
+          top: "2.5vh",
+          left: "50%",
+          transform: "translateX(-50%)",
+          zIndex: 30,
+          pointerEvents: "none",
+          textAlign: "center",
+        }}
+      >
+        <div
+          style={{
+            color: "#fff",
+            fontSize: "clamp(2.5rem,4vw,5rem)",
+            fontWeight: 900,
+            textShadow: `
+              2px 2px 2px #000,
+              -2px 2px 2px #000,
+              2px -2px 2px #000,
+              -2px -2px 2px #000
+            `,
+            lineHeight: 1,
+          }}
+        >
+          {publicName}
+        </div>
+      </div>
 
       {/* MAIN CARD */}
       <div
