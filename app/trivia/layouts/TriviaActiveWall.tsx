@@ -1024,7 +1024,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
   }, [trivia?.id, isActiveGame, view]);
 
   /* -------------------------------------------------- */
-  /* AUTO-SCALE QUESTION TEXT TO ~2 LINES               */
+  /* ✅ READABLE AUTO-SCALE QUESTION TEXT (3 lines, higher min) */
   /* -------------------------------------------------- */
   useEffect(() => {
     if (view !== "question") return;
@@ -1033,26 +1033,31 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
     if (!el) return;
     if (typeof window === "undefined") return;
 
-    let baseSize = Math.max(32, Math.min(88, window.innerWidth * 0.035));
-    let size = baseSize;
+    const vmin = Math.min(window.innerWidth, window.innerHeight);
+
+    // Start BIG (wall-readable)
+    let size = Math.max(56, Math.min(120, vmin * 0.085));
 
     el.style.fontSize = `${size}px`;
-    el.style.lineHeight = "1.15";
+    el.style.lineHeight = "1.12";
     el.style.whiteSpace = "normal";
 
-    const maxLines = 2;
+    // Allow 3 lines, keep a higher minimum size
+    const maxLines = 3;
+    const minSize = 48;
+    const step = 2;
 
     const fit = () => {
       const node = questionRef.current;
       if (!node) return;
 
-      const lineHeightPx = size * 1.15;
-      const maxHeight = lineHeightPx * maxLines + 4;
+      const lineHeightPx = size * 1.12;
+      const maxHeight = lineHeightPx * maxLines + 6;
 
-      if (node.scrollHeight > maxHeight && size > 24) {
-        size -= 2;
+      if (node.scrollHeight > maxHeight && size > minSize) {
+        size -= step;
         node.style.fontSize = `${size}px`;
-        node.style.lineHeight = "1.15";
+        node.style.lineHeight = "1.12";
         requestAnimationFrame(fit);
       }
     };
@@ -1296,11 +1301,17 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                         position: "relative",
                         zIndex: 2,
                         fontWeight: 900,
-                        lineHeight: 1.15,
+                        lineHeight: 1.12,
                         textAlign: "center",
                         maxWidth: "90%",
                         margin: "0 auto 3vh auto",
                         textShadow: "0 10px 40px rgba(0,0,0,0.65)",
+
+                        // ✅ keeps the question block stable and readable (no box size change)
+                        minHeight: "16vh",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
                       }}
                     >
                       {question?.question_text
