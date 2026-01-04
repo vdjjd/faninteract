@@ -6,6 +6,9 @@ import Cropper from "react-easy-crop";
 import imageCompression from "browser-image-compression";
 import { getSupabaseClient } from "@/lib/supabaseClient";
 
+/* ---------- TS FIX: alias Cropper as any ---------- */
+const EasyCrop = Cropper as any;
+
 /* ---------- Load stored guest profile ---------- */
 function getStoredGuestProfile() {
   if (typeof window === "undefined") return null;
@@ -88,7 +91,7 @@ export default function TriviaJoinPage() {
   const [croppedAreaPixels, setCroppedAreaPixels] = useState<any>(null);
 
   const [errorMsg, setErrorMsg] = useState("");
-  const fileRef = useRef<HTMLInputElement>(null);
+  const fileRef = useRef<HTMLInputElement | null>(null);
 
   /* -------------------------------------------------- */
   /* 1) LOAD PROFILE OR REDIRECT TO SIGNUP              */
@@ -250,7 +253,7 @@ export default function TriviaJoinPage() {
     }
   };
 
-  const handleFile = async (e: any) => {
+  const handleFile = async (e: React.ChangeEvent<HTMLInputElement> | any) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -311,7 +314,7 @@ export default function TriviaJoinPage() {
   /* -------------------------------------------------- */
   /* 3) JOIN TRIVIA -> INSERT trivia_players            */
   /* -------------------------------------------------- */
-  async function handleJoinTrivia(e: any) {
+  async function handleJoinTrivia(e: React.FormEvent) {
     e.preventDefault();
     setJoinError("");
     setErrorMsg("");
@@ -410,7 +413,9 @@ export default function TriviaJoinPage() {
       }
 
       const displayName =
-        `${profile.first_name || ""} ${profile.last_name ? profile.last_name : ""}`.trim() ||
+        `${profile.first_name || ""} ${
+          profile.last_name ? profile.last_name : ""
+        }`.trim() ||
         profile.nickname ||
         "Guest";
 
@@ -681,14 +686,14 @@ export default function TriviaJoinPage() {
           }}
         >
           {imageSrc ? (
-            <Cropper
+            <EasyCrop
               image={imageSrc}
               crop={crop}
               zoom={zoom}
               aspect={1}
               onCropChange={setCrop}
               onZoomChange={setZoom}
-              onCropComplete={(_, c) => setCroppedAreaPixels(c)}
+              onCropComplete={(_: any, c: any) => setCroppedAreaPixels(c)}
               style={{
                 containerStyle: {
                   touchAction: "none",

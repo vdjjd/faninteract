@@ -97,9 +97,14 @@ export default function ThankYouPage() {
     useState<"waiting" | "countdown" | "playing">("waiting");
   const [countdownStartedAtMs, setCountdownStartedAtMs] =
     useState<number | null>(null);
+  const [triviaCountdownSeconds, setTriviaCountdownSeconds] =
+    useState<number | null>(null);
 
   // For ticking countdown
   const [now, setNow] = useState<number>(() => Date.now());
+
+  // Server-time offset so phones + wall line up
+  const [serverOffsetMs, setServerOffsetMs] = useState<number>(0);
 
   /* ---------------------------------------------------------
      Load guest profile
@@ -131,7 +136,6 @@ export default function ThankYouPage() {
           ? "trivia_cards"
           : "fan_walls";
 
-      // Special-case trivia, because trivia_cards currently have no background_value
       const select =
         type === "basketball"
           ? `
@@ -266,8 +270,43 @@ export default function ThankYouPage() {
   }, [type, profile, gameId, supabase, router]);
 
   /* ---------------------------------------------------------
+     Trivia server-time sync (same approach as inactive wall)
+  --------------------------------------------------------- */
+  useEffect(() => {
+    if (type !== "trivia") return;
+    if (!gameId) return;
+
+    let cancelled = false;
+
+    async function syncServerTime() {
+      try {
+        const t0 = Date.now();
+        const { data, error } = await supabase.rpc("server_time");
+        const t1 = Date.now();
+
+        if (cancelled || error || !data) return;
+
+        const serverMs = new Date(data as any).getTime();
+        const rtt = t1 - t0;
+        const estimatedNow = t1 - rtt / 2;
+        setServerOffsetMs(serverMs - estimatedNow);
+      } catch {
+        // ignore
+      }
+    }
+
+    syncServerTime();
+    const id = setInterval(syncServerTime, 30000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [type, gameId, supabase]);
+
+  /* ---------------------------------------------------------
      Trivia: watch trivia_cards for countdown / running state
-     (Realtime + polling, using countdown_started_at)
+     (Realtime + polling, using countdown_started_at + countdown_seconds)
   --------------------------------------------------------- */
   useEffect(() => {
     if (type !== "trivia" || !gameId) return;
@@ -278,10 +317,17 @@ export default function ThankYouPage() {
       status: string;
       countdown_active: boolean;
       countdown_started_at?: string | null;
+      countdown_seconds?: number | null;
     }) {
+      const totalSeconds =
+        typeof card.countdown_seconds === "number" && card.countdown_seconds > 0
+          ? card.countdown_seconds
+          : 10; // sane fallback
+
       // Countdown ON
       if (card.countdown_active) {
         setTriviaPhase("countdown");
+        setTriviaCountdownSeconds(totalSeconds);
 
         if (card.countdown_started_at) {
           setCountdownStartedAtMs(
@@ -297,6 +343,8 @@ export default function ThankYouPage() {
       // Game RUNNING → go to trivia user interface
       if (card.status === "running") {
         setTriviaPhase("playing");
+        setCountdownStartedAtMs(null);
+        setTriviaCountdownSeconds(null);
         router.replace(`/trivia/userinterface?game=${gameId}`);
         return;
       }
@@ -304,12 +352,15 @@ export default function ThankYouPage() {
       // Any other state → waiting
       setTriviaPhase("waiting");
       setCountdownStartedAtMs(null);
+      setTriviaCountdownSeconds(null);
     }
 
     async function loadInitialCard() {
       const { data: card, error } = await supabase
         .from("trivia_cards")
-        .select("status,countdown_active,countdown_started_at")
+        .select(
+          "status,countdown_active,countdown_started_at,countdown_seconds"
+        )
         .eq("id", gameId as string)
         .maybeSingle();
 
@@ -348,7 +399,9 @@ export default function ThankYouPage() {
 
       const { data: card, error } = await supabase
         .from("trivia_cards")
-        .select("status,countdown_active,countdown_started_at")
+        .select(
+          "status,countdown_active,countdown_started_at,countdown_seconds"
+        )
         .eq("id", gameId as string)
         .maybeSingle();
 
@@ -435,16 +488,18 @@ export default function ThankYouPage() {
 
   /* ---------------------------------------------------------
      Trivia countdown full-screen (black) override
-     (single source of truth for timer)
+     Uses trivia_cards.countdown_seconds + server_time offset
   --------------------------------------------------------- */
   if (
     type === "trivia" &&
     triviaPhase === "countdown" &&
-    countdownStartedAtMs
+    countdownStartedAtMs &&
+    (triviaCountdownSeconds ?? 0) > 0
   ) {
-    // Fixed 10-second pre-game countdown (same as dashboard)
-    const elapsed = Math.floor((now - countdownStartedAtMs) / 1000);
-    const secondsLeft = Math.max(0, 10 - elapsed);
+    const total = triviaCountdownSeconds ?? 10;
+    const nowMs = now + serverOffsetMs;
+    const elapsed = Math.max(0, (nowMs - countdownStartedAtMs) / 1000);
+    const secondsLeft = Math.max(0, Math.floor(total - elapsed));
 
     return (
       <div
