@@ -95,6 +95,9 @@ const LEADERBOARD_MS = 8000; // leaderboard display
 // how often to update the bar on WALL (ms)
 const WALL_TIMER_STEP_MS = 30;
 
+/* ✅ EXTRA TIME FOR FIRST QUESTION ONLY (visual + lock) */
+const FIRST_QUESTION_EXTRA_MS = 8000;
+
 /* ---------------------------------------------------- */
 /* HELPERS                                              */
 /* ---------------------------------------------------- */
@@ -345,8 +348,6 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
 
   /* -------------------------------------------------- */
   /* ✅ CRITICAL FIX: Atomic, guarded “advance question”  */
-  /* prevents Q1→Q3 / Q3→Q8 when ads/injector causes      */
-  /* remounts, duplicate timers, or multiple clients.     */
   /* -------------------------------------------------- */
   const advanceWriteLockRef = useRef(false);
 
@@ -488,6 +489,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
 
   /* -------------------------------------------------- */
   /* ✅ QUESTION TIMER (bar only) + phase trigger         */
+  /*  (8s extra on FIRST question only)                  */
   /* -------------------------------------------------- */
   useEffect(() => {
     let intervalId: number | null = null;
@@ -514,8 +516,13 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
     setLocked(false);
     setProgress(1);
 
-    const durationMs =
+    const baseDurationMs =
       typeof timerSeconds === "number" && timerSeconds > 0 ? timerSeconds * 1000 : 30000;
+
+    // ✅ Add grace time ONLY on Question 1
+    const durationMs =
+      baseDurationMs +
+      (currentQuestionNumber === 1 ? FIRST_QUESTION_EXTRA_MS : 0);
 
     const startMs = new Date(questionStartedAt).getTime();
 
@@ -543,12 +550,17 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
     return () => {
       if (intervalId != null) window.clearInterval(intervalId);
     };
-  }, [isRunning, sessionId, currentQuestionNumber, questionStartedAt, timerSeconds, wallPhase]);
+  }, [
+    isRunning,
+    sessionId,
+    currentQuestionNumber,
+    questionStartedAt,
+    timerSeconds,
+    wallPhase,
+  ]);
 
   /* -------------------------------------------------- */
   /* ✅ PHASE MACHINE (wall authority)                    */
-  /* overlay -> reveal -> leaderboard/podium -> advance   */
-  /* with overlap protection + atomic advance             */
   /* -------------------------------------------------- */
   const phaseTickLockRef = useRef(false);
 

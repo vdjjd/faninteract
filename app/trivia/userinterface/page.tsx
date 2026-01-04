@@ -115,6 +115,9 @@ function sameLeaderRows(a: LeaderRow[], b: LeaderRow[]) {
 const FALLBACK_BG =
   "radial-gradient(circle at top,#1d4ed8 0,#020617 55%,#000 100%)";
 
+// ✅ Extra visual/lock grace period for FIRST question only (ms)
+const FIRST_QUESTION_EXTRA_MS = 8000;
+
 export default function TriviaUserInterfacePage() {
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -662,8 +665,10 @@ export default function TriviaUserInterfacePage() {
 
   /* ---------------------------------------------------------
      TIMER: source of truth = questionStartedAt
+     (8s grace on FIRST question, same total timerSeconds)
   --------------------------------------------------------- */
   useEffect(() => {
+    // clear any previous interval
     if (timerIntervalRef.current !== null) {
       window.clearInterval(timerIntervalRef.current);
       timerIntervalRef.current = null;
@@ -687,22 +692,38 @@ export default function TriviaUserInterfacePage() {
 
     const durationMs = (timerSeconds || 30) * 1000;
     const startedMs = new Date(questionStartedAt).getTime();
+    const isFirstQuestion = (session?.current_question ?? 0) === 1;
 
-    const updateFromDbTime = () => {
+    const tick = () => {
       const now = Date.now() + serverOffsetMs;
-      const elapsed = now - startedMs;
-      const remaining = Math.max(0, durationMs - elapsed);
+
+      let effectiveElapsed = now - startedMs;
+
+      if (isFirstQuestion) {
+        const delayEnd = startedMs + FIRST_QUESTION_EXTRA_MS;
+
+        if (now < delayEnd) {
+          // still inside 8s grace: bar stays full
+          effectiveElapsed = 0;
+        } else {
+          // subtract the 8s so the bar still gets full lifetime AFTER grace
+          effectiveElapsed = now - delayEnd;
+        }
+      }
+
+      const remaining = Math.max(0, durationMs - effectiveElapsed);
       const frac = remaining / durationMs;
 
       setProgress(frac);
-      const secs = Math.max(0, Math.ceil(remaining / 1000));
-      setSecondsLeft(secs);
+      setSecondsLeft(Math.max(0, Math.ceil(remaining / 1000)));
 
-      if (remaining <= 0) setLocked(true);
+      if (remaining <= 0) {
+        setLocked(true);
+      }
     };
 
-    updateFromDbTime();
-    timerIntervalRef.current = window.setInterval(updateFromDbTime, 100);
+    tick();
+    timerIntervalRef.current = window.setInterval(tick, 100);
 
     return () => {
       if (timerIntervalRef.current !== null) {
@@ -717,6 +738,7 @@ export default function TriviaUserInterfacePage() {
     timerSeconds,
     serverOffsetMs,
     wallPhase,
+    session?.current_question,
   ]);
 
   /* ---------------------------------------------------------
