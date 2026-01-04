@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { getSupabaseClient } from "@/lib/supabaseClient";
 
@@ -12,7 +12,7 @@ interface TriviaPodiumProps {
 
 type PodiumRow = {
   placeLabel: "1st" | "2nd" | "3rd";
-  rank: number;
+  rank: number; // numeric rank (1,2,3)
   playerId: string;
   guestId?: string | null;
   name: string;
@@ -23,7 +23,6 @@ type PodiumRow = {
 /* ---------- DISPLAY CONSTANTS ---------- */
 
 const STEP_DURATION_MS = 10000; // 10 seconds between 3rd → 2nd → 1st
-
 const fallbackLogo = "/faninteractlogo.png";
 const fallbackPhoto = "/fallback.png";
 const FALLBACK_BG = "linear-gradient(135deg,#1b2735,#090a0f)";
@@ -109,7 +108,7 @@ function getPodiumGlow(place?: "1st" | "2nd" | "3rd") {
   };
 }
 
-/* ---------- CONFETTI (tasteful burst) ---------- */
+/* ---------- CONFETTI (more + slower) ---------- */
 
 type ConfettiParticle = {
   id: string;
@@ -130,13 +129,13 @@ function makeConfetti(count: number): ConfettiParticle[] {
     arr.push({
       id: `${Date.now()}-${i}-${Math.random().toString(16).slice(2)}`,
       leftPct: Math.random() * 100,
-      size: 6 + Math.random() * 8,
-      delay: Math.random() * 0.25,
-      duration: 1.2 + Math.random() * 0.9,
-      drift: (Math.random() - 0.5) * 240,
-      rotate: (Math.random() - 0.5) * 720,
+      size: 6 + Math.random() * 10, // more variety
+      delay: Math.random() * 0.6, // more stagger
+      duration: 2.8 + Math.random() * 2.0, // ✅ slower (2.8–4.8s)
+      drift: (Math.random() - 0.5) * 380,
+      rotate: (Math.random() - 0.5) * 1080,
       color: colors[Math.floor(Math.random() * colors.length)],
-      opacity: 0.55 + Math.random() * 0.25,
+      opacity: 0.45 + Math.random() * 0.25, // softer since more pieces
     });
   }
   return arr;
@@ -252,7 +251,7 @@ export default function TriviaPodum({ trivia }: TriviaPodiumProps) {
     );
   }, [trivia]);
 
-  // live updates
+  /* --- Live updates for title + background --- */
   useEffect(() => {
     if (!trivia?.id) return;
 
@@ -391,18 +390,71 @@ export default function TriviaPodum({ trivia }: TriviaPodiumProps) {
           .sort((a: any, b: any) => b.points - a.points)
           .map((r: any, idx: number) => ({ ...r, rank: idx + 1 }));
 
+        if (!baseRows.length) {
+          if (!cancelled) setPodiumRows([]);
+          return;
+        }
+
         const top = baseRows.slice(0, 3);
         const podium: PodiumRow[] = [];
 
         if (top.length === 1) {
-          podium.push({ placeLabel: "1st", rank: 1, ...top[0] });
+          podium.push({
+            placeLabel: "1st",
+            rank: 1,
+            playerId: top[0].playerId,
+            guestId: top[0].guestId,
+            name: top[0].name,
+            selfieUrl: top[0].selfieUrl,
+            points: top[0].points,
+          });
         } else if (top.length === 2) {
-          podium.push({ placeLabel: "2nd", rank: 2, ...top[1] });
-          podium.push({ placeLabel: "1st", rank: 1, ...top[0] });
-        } else if (top.length === 3) {
-          podium.push({ placeLabel: "3rd", rank: 3, ...top[2] });
-          podium.push({ placeLabel: "2nd", rank: 2, ...top[1] });
-          podium.push({ placeLabel: "1st", rank: 1, ...top[0] });
+          podium.push({
+            placeLabel: "2nd",
+            rank: 2,
+            playerId: top[1].playerId,
+            guestId: top[1].guestId,
+            name: top[1].name,
+            selfieUrl: top[1].selfieUrl,
+            points: top[1].points,
+          });
+          podium.push({
+            placeLabel: "1st",
+            rank: 1,
+            playerId: top[0].playerId,
+            guestId: top[0].guestId,
+            name: top[0].name,
+            selfieUrl: top[0].selfieUrl,
+            points: top[0].points,
+          });
+        } else {
+          podium.push({
+            placeLabel: "3rd",
+            rank: 3,
+            playerId: top[2].playerId,
+            guestId: top[2].guestId,
+            name: top[2].name,
+            selfieUrl: top[2].selfieUrl,
+            points: top[2].points,
+          });
+          podium.push({
+            placeLabel: "2nd",
+            rank: 2,
+            playerId: top[1].playerId,
+            guestId: top[1].guestId,
+            name: top[1].name,
+            selfieUrl: top[1].selfieUrl,
+            points: top[1].points,
+          });
+          podium.push({
+            placeLabel: "1st",
+            rank: 1,
+            playerId: top[0].playerId,
+            guestId: top[0].guestId,
+            name: top[0].name,
+            selfieUrl: top[0].selfieUrl,
+            points: top[0].points,
+          });
         }
 
         if (!cancelled) {
@@ -415,6 +467,7 @@ export default function TriviaPodum({ trivia }: TriviaPodiumProps) {
     }
 
     loadPodium();
+
     return () => {
       cancelled = true;
     };
@@ -423,7 +476,6 @@ export default function TriviaPodum({ trivia }: TriviaPodiumProps) {
   /* --- Step 3rd → 2nd → 1st every 10s, winner stays --- */
   useEffect(() => {
     if (!podiumRows.length) return;
-
     if (podiumRows.length === 1 || currentIndex >= podiumRows.length - 1) return;
 
     const id = window.setTimeout(() => {
@@ -436,15 +488,15 @@ export default function TriviaPodum({ trivia }: TriviaPodiumProps) {
   const current = podiumRows[currentIndex] || null;
   const glow = getPodiumGlow(current?.placeLabel);
 
-  // ✅ Confetti only when we land on 1st
+  // ✅ Confetti only when we land on 1st (more + slower)
   useEffect(() => {
     if (!current) return;
     if (current.placeLabel !== "1st") return;
 
     setConfettiKey((k) => k + 1);
-    setConfetti(makeConfetti(36));
+    setConfetti(makeConfetti(90)); // ✅ more confetti
 
-    const t = window.setTimeout(() => setConfetti([]), 2200);
+    const t = window.setTimeout(() => setConfetti([]), 6000); // ✅ keep longer
     return () => window.clearTimeout(t);
   }, [current?.playerId, current?.placeLabel]);
 
@@ -472,7 +524,7 @@ export default function TriviaPodum({ trivia }: TriviaPodiumProps) {
         }}
       />
 
-      {/* ✅ Vignette overlay (makes everything pop) */}
+      {/* ✅ Vignette overlay */}
       <div
         style={{
           position: "absolute",
@@ -486,7 +538,7 @@ export default function TriviaPodum({ trivia }: TriviaPodiumProps) {
         }}
       />
 
-      {/* Foreground content (not dimmed) */}
+      {/* Foreground */}
       <div
         style={{
           position: "relative",
@@ -543,7 +595,7 @@ export default function TriviaPodum({ trivia }: TriviaPodiumProps) {
             display: "flex",
           }}
         >
-          {/* ✅ Confetti overlay (only for 1st) */}
+          {/* ✅ Confetti overlay (more + slower) */}
           <AnimatePresence>
             {confetti.length > 0 && (
               <motion.div
@@ -562,22 +614,17 @@ export default function TriviaPodum({ trivia }: TriviaPodiumProps) {
                 {confetti.map((p) => (
                   <motion.span
                     key={p.id}
-                    initial={{
-                      opacity: 0,
-                      y: 0,
-                      x: 0,
-                      rotate: 0,
-                    }}
+                    initial={{ opacity: 0, y: 0, x: 0, rotate: 0 }}
                     animate={{
                       opacity: [0, p.opacity, 0],
-                      y: 620,
+                      y: 980, // ✅ farther fall
                       x: p.drift,
                       rotate: p.rotate,
                     }}
                     transition={{
                       delay: p.delay,
-                      duration: p.duration,
-                      ease: "easeOut",
+                      duration: p.duration, // ✅ slower
+                      ease: "easeIn", // ✅ gravity feel
                     }}
                     style={{
                       position: "absolute",
@@ -587,7 +634,7 @@ export default function TriviaPodum({ trivia }: TriviaPodiumProps) {
                       height: `${Math.max(6, p.size * 0.6)}px`,
                       borderRadius: 2,
                       background: p.color,
-                      boxShadow: "0 0 10px rgba(255,255,255,0.25)",
+                      boxShadow: "0 0 10px rgba(255,255,255,0.22)",
                       opacity: p.opacity,
                     }}
                   />
@@ -713,7 +760,7 @@ export default function TriviaPodum({ trivia }: TriviaPodiumProps) {
                     alignItems: "center",
                   }}
                 >
-                  {/* ✅ staggered entrance */}
+                  {/* ✅ Removed "IN" */}
                   <motion.p
                     style={STYLE.placeText}
                     initial={{ opacity: 0, y: 18, scale: 0.98 }}
