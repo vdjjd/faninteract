@@ -1334,6 +1334,8 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                           display: "grid",
                           gridTemplateColumns: "1fr 1fr",
                           gap: "2.5vh",
+                          // ✅ Lift A/B/C/D up so C isn't behind QR
+                          marginBottom: "4vh",
                         }}
                       >
                         {options.length > 0
@@ -1417,23 +1419,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                           : null}
                       </div>
 
-                      {/* CURRENT RANKINGS LABEL (below buttons) */}
-                      {!isFinalQuestion && (
-                        <div
-                          style={{
-                            marginTop: "2.2vh",
-                            fontSize:
-                              "clamp(1.6rem,2vw,2.2rem)",
-                            fontWeight: 800,
-                            opacity: 0.85,
-                            textShadow:
-                              "0 10px 30px rgba(0,0,0,0.45)",
-                            textAlign: "center",
-                          }}
-                        >
-                          Current Rankings
-                        </div>
-                      )}
+                      {/* ❌ (REMOVED old Current Rankings label inside card) */}
                     </div>
 
                     {/* TINTED OVERLAY + "THE ANSWER IS" */}
@@ -1750,114 +1736,136 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
             </div>
           )}
 
-          {/* TOP 3 LEADERS (question view only, NOT final question) */}
+          {/* CURRENT RANKINGS LABEL + TOP 3 LEADERS (question view only, NOT final) */}
           {view === "question" && !isFinalQuestion && (
-            <div
-              style={{
-                position: "absolute",
-                bottom: RANKINGS_CTRL.bottom,
-                left: RANKINGS_CTRL.centerLeft,
-                transform: `translateX(calc(-50% + ${RANKINGS_CTRL.offsetX}))`,
-                display: "flex",
-                gap: RANKINGS_CTRL.groupGap,
-                zIndex: 20,
-                pointerEvents: "none",
-              }}
-            >
-              {[1, 2, 3].map((place) => {
-                const row = topRanks.find((r) => r.place === place);
-                const hasSelfie = !!row?.selfieUrl;
+            <>
+              {/* ✅ New overlay label BETWEEN QR and 1st-place circle */}
+              <div
+                style={{
+                  position: "absolute",
+                  bottom: "17vh",
+                  left: "50%",
+                  transform: "translateX(-50%)",
+                  fontSize: "clamp(1.6rem,2vw,2.2rem)",
+                  fontWeight: 800,
+                  opacity: 0.9,
+                  color: "#fff",
+                  textShadow: "0 10px 30px rgba(0,0,0,0.55)",
+                  zIndex: 19,
+                  pointerEvents: "none",
+                }}
+              >
+                Current Rankings
+              </div>
 
-                const medalBorder = hasSelfie
-                  ? place === 1
-                    ? "3px solid rgba(212,175,55,0.95)"
-                    : place === 2
-                    ? "3px solid rgba(192,192,192,0.95)"
-                    : "3px solid rgba(205,127,50,0.95)"
-                  : "2px dashed rgba(255,255,255,0.45)";
+              {/* TOP 3 LEADERS */}
+              <div
+                style={{
+                  position: "absolute",
+                  bottom: RANKINGS_CTRL.bottom,
+                  left: RANKINGS_CTRL.centerLeft,
+                  transform: `translateX(calc(-50% + ${RANKINGS_CTRL.offsetX}))`,
+                  display: "flex",
+                  gap: RANKINGS_CTRL.groupGap,
+                  zIndex: 20,
+                  pointerEvents: "none",
+                }}
+              >
+                {[1, 2, 3].map((place) => {
+                  const row = topRanks.find((r) => r.place === place);
+                  const hasSelfie = !!row?.selfieUrl;
 
-                const medalGlow = hasSelfie
-                  ? place === 1
-                    ? "0 0 18px rgba(212,175,55,0.30)"
-                    : place === 2
-                    ? "0 0 16px rgba(192,192,192,0.22)"
-                    : "0 0 16px rgba(205,127,50,0.22)"
-                  : "none";
+                  const medalBorder = hasSelfie
+                    ? place === 1
+                      ? "3px solid rgba(212,175,55,0.95)"
+                      : place === 2
+                      ? "3px solid rgba(192,192,192,0.95)"
+                      : "3px solid rgba(205,127,50,0.95)"
+                    : "2px dashed rgba(255,255,255,0.45)";
 
-                return (
-                  <div
-                    key={place}
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns: `${RANKINGS_CTRL.avatarSize}px auto`,
-                      gridTemplateRows: "auto auto",
-                      columnGap: RANKINGS_CTRL.nameGap,
-                      alignItems: "center",
-                      fontWeight: 900,
-                      opacity: 0.92,
-                    }}
-                  >
+                  const medalGlow = hasSelfie
+                    ? place === 1
+                      ? "0 0 18px rgba(212,175,55,0.30)"
+                      : place === 2
+                      ? "0 0 16px rgba(192,192,192,0.22)"
+                      : "0 0 16px rgba(205,127,50,0.22)"
+                    : "none";
+
+                  return (
                     <div
-                      className={place === 1 && hasSelfie ? "fi-medal-breathe" : ""}
+                      key={place}
                       style={{
-                        gridColumn: "1 / 2",
-                        gridRow: "1 / 2",
-                        width: RANKINGS_CTRL.avatarSize,
-                        height: RANKINGS_CTRL.avatarSize,
-                        borderRadius: "50%",
-                        overflow: "hidden",
-                        background: "rgba(255,255,255,0.12)",
-                        border: medalBorder,
-                        boxShadow: hasSelfie ? medalGlow : "none",
+                        display: "grid",
+                        gridTemplateColumns: `${RANKINGS_CTRL.avatarSize}px auto`,
+                        gridTemplateRows: "auto auto",
+                        columnGap: RANKINGS_CTRL.nameGap,
+                        alignItems: "center",
+                        fontWeight: 900,
+                        opacity: 0.92,
                       }}
                     >
-                      {hasSelfie ? (
-                        <img
-                          src={row!.selfieUrl as string}
-                          alt={row!.name}
-                          style={{
-                            width: "100%",
-                            height: "100%",
-                            objectFit: "cover",
-                            display: "block",
-                          }}
-                        />
-                      ) : null}
-                    </div>
+                      <div
+                        className={place === 1 && hasSelfie ? "fi-medal-breathe" : ""}
+                        style={{
+                          gridColumn: "1 / 2",
+                          gridRow: "1 / 2",
+                          width: RANKINGS_CTRL.avatarSize,
+                          height: RANKINGS_CTRL.avatarSize,
+                          borderRadius: "50%",
+                          overflow: "hidden",
+                          background: "rgba(255,255,255,0.12)",
+                          border: medalBorder,
+                          boxShadow: hasSelfie ? medalGlow : "none",
+                        }}
+                      >
+                        {hasSelfie ? (
+                          <img
+                            src={row!.selfieUrl as string}
+                            alt={row!.name}
+                            style={{
+                              width: "100%",
+                              height: "100%",
+                              objectFit: "cover",
+                              display: "block",
+                            }}
+                          />
+                        ) : null}
+                      </div>
 
-                    <div
-                      style={{
-                        gridColumn: "2 / 3",
-                        gridRow: "1 / 2",
-                        fontSize: "clamp(1.05rem,1.3vw,1.5rem)",
-                        whiteSpace: "nowrap",
-                        maxWidth: RANKINGS_CTRL.nameMaxWidth,
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        color: "rgba(255,255,255,0.92)",
-                        textShadow: "0 2px 10px rgba(0,0,0,0.45)",
-                      }}
-                    >
-                      {row?.name || "—"}
-                    </div>
+                      <div
+                        style={{
+                          gridColumn: "2 / 3",
+                          gridRow: "1 / 2",
+                          fontSize: "clamp(1.05rem,1.3vw,1.5rem)",
+                          whiteSpace: "nowrap",
+                          maxWidth: RANKINGS_CTRL.nameMaxWidth,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          color: "rgba(255,255,255,0.92)",
+                          textShadow: "0 2px 10px rgba(0,0,0,0.45)",
+                        }}
+                      >
+                        {row?.name || "—"}
+                      </div>
 
-                    <div
-                      style={{
-                        gridColumn: "1 / 2",
-                        gridRow: "2 / 3",
-                        justifySelf: "center",
-                        marginTop: RANKINGS_CTRL.placeTopMargin,
-                        fontSize: "clamp(1rem,1.2vw,1.25rem)",
-                        opacity: 0.9,
-                        textShadow: "0 8px 20px rgba(0,0,0,0.4)",
-                      }}
-                    >
-                      {place === 1 ? "1st" : place === 2 ? "2nd" : "3rd"}
+                      <div
+                        style={{
+                          gridColumn: "1 / 2",
+                          gridRow: "2 / 3",
+                          justifySelf: "center",
+                          marginTop: RANKINGS_CTRL.placeTopMargin,
+                          fontSize: "clamp(1rem,1.2vw,1.25rem)",
+                          opacity: 0.9,
+                          textShadow: "0 8px 20px rgba(0,0,0,0.4)",
+                        }}
+                      >
+                        {place === 1 ? "1st" : place === 2 ? "2nd" : "3rd"}
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
-            </div>
+                  );
+                })}
+              </div>
+            </>
           )}
 
           {/* LOGO – hide during podium */}
