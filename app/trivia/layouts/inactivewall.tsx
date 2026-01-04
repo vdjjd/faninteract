@@ -1,7 +1,8 @@
 "use client";
 
 import { QRCodeCanvas } from "qrcode.react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import { getSupabaseClient } from "@/lib/supabaseClient";
 
 const supabase = getSupabaseClient();
@@ -15,12 +16,10 @@ interface TriviaInactiveWallProps {
 const FALLBACK_BG = "linear-gradient(to bottom right,#1b2735,#090a0f)";
 
 function parseCountdownSeconds(row: any): number {
-  // Prefer the new integer column
   if (typeof row?.countdown_seconds === "number" && row.countdown_seconds > 0) {
     return row.countdown_seconds;
   }
 
-  // Back-compat if you still have `countdown` text like "10 seconds"
   const raw = String(row?.countdown || "10 seconds").trim().toLowerCase();
   const parts = raw.split(/\s+/);
   const n = parseInt(parts[0] || "10", 10);
@@ -28,14 +27,13 @@ function parseCountdownSeconds(row: any): number {
 
   const unit = parts[1] || "seconds";
   if (unit.startsWith("min")) return n * 60;
-  return n; // default seconds
+  return n;
 }
 
 function pickPublicName(row: any): string {
   const pn = String(row?.public_name || "").trim();
   if (pn) return pn;
 
-  // backward compat if older data uses `title`
   const t = String(row?.title || "").trim();
   if (t) return t;
 
@@ -55,49 +53,81 @@ function CountdownDisplay({
   serverOffsetMs: number;
 }) {
   const [now, setNow] = useState<number>(() => Date.now());
+  const [lastWhole, setLastWhole] = useState<number | null>(null);
 
   useEffect(() => {
     if (!countdownActive || !countdownStartedAt) return;
-
     const id = window.setInterval(() => setNow(Date.now()), 250);
     return () => window.clearInterval(id);
   }, [countdownActive, countdownStartedAt]);
 
-  if (!countdownActive || !countdownStartedAt) {
-    const mFull = Math.floor(totalSeconds / 60);
-    const sFull = totalSeconds % 60;
-    return (
-      <div
-        style={{
-          fontSize: "clamp(6rem,8vw,9rem)",
-          fontWeight: 900,
-          color: "#fff",
-          textShadow: "0 0 40px rgba(0,0,0,0.7)",
-        }}
-      >
-        {mFull}:{sFull.toString().padStart(2, "0")}
-      </div>
-    );
-  }
+  // compute remaining
+  const { m, s, wholeRemaining } = useMemo(() => {
+    if (!countdownActive || !countdownStartedAt) {
+      const mFull = Math.floor(totalSeconds / 60);
+      const sFull = totalSeconds % 60;
+      return { m: mFull, s: sFull, wholeRemaining: totalSeconds };
+    }
+    const startMs = new Date(countdownStartedAt).getTime();
+    const nowMs = now + serverOffsetMs;
+    const elapsed = Math.max(0, (nowMs - startMs) / 1000);
+    const remaining = Math.max(0, totalSeconds - elapsed);
 
-  const startMs = new Date(countdownStartedAt).getTime();
-  const nowMs = now + serverOffsetMs;
-  const elapsed = Math.max(0, (nowMs - startMs) / 1000);
-  const remaining = Math.max(0, totalSeconds - elapsed);
+    const mm = Math.floor(remaining / 60);
+    const ss = Math.floor(remaining % 60);
+    return { m: mm, s: ss, wholeRemaining: Math.ceil(remaining) };
+  }, [countdownActive, countdownStartedAt, now, serverOffsetMs, totalSeconds]);
 
-  const m = Math.floor(remaining / 60);
-  const s = Math.floor(remaining % 60);
+  // ✅ tick pop on each whole second change
+  useEffect(() => {
+    if (!countdownActive) return;
+    if (lastWhole === null) {
+      setLastWhole(wholeRemaining);
+      return;
+    }
+    if (wholeRemaining !== lastWhole) {
+      setLastWhole(wholeRemaining);
+    }
+  }, [wholeRemaining, countdownActive, lastWhole]);
 
   return (
-    <div
-      style={{
-        fontSize: "clamp(6rem,8vw,9rem)",
-        fontWeight: 900,
-        color: "#fff",
-        textShadow: "0 0 40px rgba(0,0,0,0.7)",
-      }}
-    >
-      {m}:{s.toString().padStart(2, "0")}
+    <div style={{ position: "relative", display: "inline-block" }}>
+      <AnimatePresence mode="wait">
+        <motion.div
+          key={`${m}:${s}`}
+          initial={{ opacity: 0, scale: 0.92 }}
+          animate={{ opacity: 1, scale: 1 }}
+          exit={{ opacity: 0, scale: 1.06 }}
+          transition={{ duration: 0.22, ease: "easeOut" }}
+          style={{
+            fontSize: "clamp(6rem,8vw,9rem)",
+            fontWeight: 900,
+            color: "#fff",
+            textShadow:
+              "0 0 40px rgba(0,0,0,0.75), 0 0 18px rgba(90,160,255,0.25)",
+            letterSpacing: "0.02em",
+          }}
+        >
+          {m}:{s.toString().padStart(2, "0")}
+        </motion.div>
+      </AnimatePresence>
+
+      {/* subtle underline glow */}
+      <div
+        style={{
+          position: "absolute",
+          left: "8%",
+          right: "8%",
+          bottom: "-10px",
+          height: 6,
+          borderRadius: 999,
+          background:
+            "linear-gradient(90deg, rgba(255,255,255,0), rgba(160,210,255,0.55), rgba(255,255,255,0))",
+          filter: "blur(0.5px)",
+          opacity: 0.65,
+          pointerEvents: "none",
+        }}
+      />
     </div>
   );
 }
@@ -109,7 +139,7 @@ export default function TriviaInactiveWall({ trivia }: TriviaInactiveWallProps) 
   const [bg, setBg] = useState<string>(FALLBACK_BG);
   const [brightness, setBrightness] = useState<number>(100);
 
-  // server-time offset (same approach as user UI)
+  // server-time offset
   const [serverOffsetMs, setServerOffsetMs] = useState<number>(0);
 
   const [wallState, setWallState] = useState({
@@ -118,17 +148,6 @@ export default function TriviaInactiveWall({ trivia }: TriviaInactiveWallProps) 
     countdownStartedAt: trivia?.countdown_started_at || null,
     publicName: pickPublicName(trivia),
   });
-
-  /* 🌟 Pulse animation */
-  const PulseStyle = (
-    <style>{`
-      @keyframes pulseSoonGlow {
-        0%,100% { opacity:.7; text-shadow:0 0 14px rgba(255,255,255,0.3); }
-        50% { opacity:1; text-shadow:0 0 22px rgba(180,220,255,0.8); }
-      }
-      .pulseSoon { animation:pulseSoonGlow 2.5s ease-in-out infinite; }
-    `}</style>
-  );
 
   const applyBackgroundFromRow = (row: any) => {
     if (!row) {
@@ -199,7 +218,7 @@ export default function TriviaInactiveWall({ trivia }: TriviaInactiveWallProps) 
     applyBackgroundFromRow(trivia);
   }, [trivia]);
 
-  // 🔁 Live updates from DB (keeps countdown + background + name in sync)
+  // 🔁 Live updates from DB
   useEffect(() => {
     if (!trivia?.id) return;
 
@@ -235,7 +254,7 @@ export default function TriviaInactiveWall({ trivia }: TriviaInactiveWallProps) 
     };
   }, [trivia?.id]);
 
-  /* 🔗 BUILD QR URL → straight to signup with host + redirect */
+  /* 🔗 BUILD QR URL */
   const origin =
     typeof window !== "undefined"
       ? window.location.origin
@@ -246,7 +265,9 @@ export default function TriviaInactiveWall({ trivia }: TriviaInactiveWallProps) 
 
   const hostParam = (trivia as any)?.host_id || (trivia as any)?.host?.id || "";
 
-  const qrValue = `${origin}/guest/signup?trivia=${trivia?.id || ""}&host=${hostParam}&redirect=${encodedRedirect}`;
+  const qrValue = `${origin}/guest/signup?trivia=${
+    trivia?.id || ""
+  }&host=${hostParam}&redirect=${encodedRedirect}`;
 
   /* ✅ LOGO PRIORITY */
   const displayLogo =
@@ -257,172 +278,346 @@ export default function TriviaInactiveWall({ trivia }: TriviaInactiveWallProps) 
   if (!trivia) return <div>Loading Trivia…</div>;
 
   return (
-    <div
-      style={{
-        background: bg,
-        filter: `brightness(${brightness}%)`,
-        width: "100%",
-        height: "100vh",
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        overflow: "hidden",
-        position: "relative",
-        paddingTop: "3vh",
-      }}
-    >
-      {PulseStyle}
-
-      {/* Title (TOP) */}
-      <h1
-        style={{
-          color: "#fff",
-          fontSize: "clamp(2.5rem,4vw,5rem)",
-          fontWeight: 900,
-          marginBottom: "1vh",
-          textShadow: `
-            2px 2px 2px #000,
-            -2px 2px 2px #000,
-            2px -2px 2px #000,
-            -2px -2px 2px #000
-          `,
-        }}
-      >
-        {wallState.publicName}
-      </h1>
-
-      {/* Main Panel */}
+    <>
+      {/* Root wrapper with background layers (NO layout changes to your panel) */}
       <div
         style={{
-          width: "90vw",
-          height: "78vh",
-          maxWidth: "1800px",
-          aspectRatio: "16 / 9",
-          background: "rgba(255,255,255,0.08)",
-          backdropFilter: "blur(20px)",
-          border: "1px solid rgba(255,255,255,0.15)",
-          borderRadius: 24,
-          position: "relative",
+          width: "100%",
+          height: "100vh",
           overflow: "hidden",
-          display: "flex",
+          position: "relative",
         }}
       >
-        {/* QR SECTION */}
+        {/* ✅ Background ONLY gets brightness */}
         <div
           style={{
             position: "absolute",
-            top: "5%",
-            left: "3%",
-            width: "47%",
-            height: "90%",
+            inset: 0,
+            background: bg,
+            filter: `brightness(${brightness}%)`,
+            transform: "scale(1.02)",
+            zIndex: 0,
+          }}
+        />
+
+        {/* ✅ Vignette overlay */}
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            pointerEvents: "none",
+            zIndex: 1,
+            background: `
+              radial-gradient(circle at 50% 45%, rgba(0,0,0,0.12) 0%, rgba(0,0,0,0.58) 72%, rgba(0,0,0,0.82) 100%),
+              linear-gradient(180deg, rgba(0,0,0,0.35) 0%, rgba(0,0,0,0.05) 35%, rgba(0,0,0,0.45) 100%)
+            `,
+          }}
+        />
+
+        {/* ✅ subtle grain */}
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            pointerEvents: "none",
+            zIndex: 2,
+            opacity: 0.10,
+            backgroundImage: `
+              repeating-linear-gradient(
+                0deg,
+                rgba(255,255,255,0.02),
+                rgba(255,255,255,0.02) 1px,
+                rgba(0,0,0,0.02) 2px,
+                rgba(0,0,0,0.02) 3px
+              )
+            `,
+            mixBlendMode: "overlay",
+          }}
+        />
+
+        {/* Foreground content (your original layout) */}
+        <div
+          style={{
+            position: "relative",
+            zIndex: 3,
+            width: "100%",
+            height: "100%",
             display: "flex",
+            flexDirection: "column",
             alignItems: "center",
-            justifyContent: "center",
+            overflow: "hidden",
+            paddingTop: "3vh",
           }}
         >
-          <QRCodeCanvas
-            value={qrValue}
-            size={1000}
-            level="H"
-            style={{ width: "100%", height: "100%" }}
-          />
-        </div>
-
-        {/* TEXT + LOGO AREA */}
-        <div style={{ position: "relative", flexGrow: 1, marginLeft: "44%" }}>
-          {/* LOGO */}
-          <div
+          {/* Title (TOP) */}
+          <h1
             style={{
-              position: "absolute",
-              top: "2%",
-              left: "53%",
-              transform: "translateX(-50%)",
-              width: "clamp(300px,27vw,400px)",
-              height: "clamp(300px,12vw,260px)",
-              display: "flex",
-              justifyContent: "center",
-              alignItems: "center",
-              overflow: "hidden",
+              color: "#fff",
+              fontSize: "clamp(2.5rem,4vw,5rem)",
+              fontWeight: 900,
+              marginBottom: "1vh",
+              textShadow: `
+                2px 2px 2px #000,
+                -2px 2px 2px #000,
+                2px -2px 2px #000,
+                -2px -2px 2px #000
+              `,
             }}
           >
-            <img
-              src={displayLogo}
+            {wallState.publicName}
+          </h1>
+
+          {/* Main Panel */}
+          <div
+            style={{
+              width: "90vw",
+              height: "78vh",
+              maxWidth: "1800px",
+              aspectRatio: "16 / 9",
+              background: "rgba(255,255,255,0.08)",
+              backdropFilter: "blur(20px)",
+              border: "1px solid rgba(255,255,255,0.15)",
+              borderRadius: 24,
+              position: "relative",
+              overflow: "hidden",
+              display: "flex",
+              boxShadow: "0 25px 90px rgba(0,0,0,0.35)",
+            }}
+          >
+            {/* ✅ glass depth overlay */}
+            <div
               style={{
-                width: "100%",
-                height: "100%",
-                objectFit: "contain",
-                filter: "drop-shadow(0 0 12px rgba(0,0,0,0.6))",
+                position: "absolute",
+                inset: 0,
+                pointerEvents: "none",
+                background:
+                  "linear-gradient(180deg, rgba(255,255,255,0.10), rgba(255,255,255,0.03) 35%, rgba(0,0,0,0.08) 100%)",
+                boxShadow: "inset 0 1px 0 rgba(255,255,255,0.10)",
+                zIndex: 0,
               }}
             />
-          </div>
 
-          {/* GREY DIVIDER — UNTOUCHED */}
-          <div
-            style={{
-              position: "absolute",
-              top: "50%",
-              left: "53%",
-              transform: "translateX(-50%)",
-              width: "75%",
-              height: "1.4vh",
-              borderRadius: 6,
-              background: "linear-gradient(to right,#000,#444)",
-            }}
-          />
+            {/* QR SECTION */}
+            <div
+              style={{
+                position: "absolute",
+                top: "5%",
+                left: "3%",
+                width: "47%",
+                height: "90%",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                zIndex: 2,
+              }}
+            >
+              {/* ✅ QR frame/glow (same size/position) */}
+              <div
+                style={{
+                  width: "100%",
+                  height: "100%",
+                  borderRadius: 28,
+                  padding: "14px",
+                  background: "rgba(255,255,255,0.10)",
+                  border: "1px solid rgba(255,255,255,0.18)",
+                  boxShadow:
+                    "0 0 24px rgba(255,255,255,0.10), 0 0 60px rgba(70,140,255,0.10)",
+                  position: "relative",
+                  overflow: "hidden",
+                }}
+              >
+                <div className="fi-qr-sheen" />
 
-          {/* MAIN TEXT (CENTER) — MUST STAY "Trivia Game" */}
-          <p
-            style={{
-              position: "absolute",
-              top: "56%",
-              left: "53%",
-              transform: "translateX(-50%)",
-              color: "#fff",
-              fontSize: "clamp(2em,3.5vw,6rem)",
-              fontWeight: 900,
-              textAlign: "center",
-              textShadow: "0 0 14px rgba(0,0,0,0.6)",
-            }}
-          >
-            Trivia Game
-          </p>
+                <div
+                  style={{
+                    width: "100%",
+                    height: "100%",
+                    borderRadius: 18,
+                    overflow: "hidden",
+                    background: "#fff",
+                  }}
+                >
+                  <QRCodeCanvas
+                    value={qrValue}
+                    size={1000}
+                    level="H"
+                    style={{ width: "100%", height: "100%", display: "block" }}
+                  />
+                </div>
+              </div>
+            </div>
 
-          {/* STARTING SOON */}
-          <p
-            className="pulseSoon"
-            style={{
-              position: "absolute",
-              top: "67%",
-              left: "53%",
-              transform: "translateX(-50%)",
-              color: "#bcd9ff",
-              fontSize: "clamp(2.8rem,2.4vw,3.2rem)",
-              fontWeight: 700,
-              textAlign: "center",
-              margin: 0,
-            }}
-          >
-            Starting Soon!!
-          </p>
+            {/* TEXT + LOGO AREA */}
+            <div
+              style={{
+                position: "relative",
+                flexGrow: 1,
+                marginLeft: "44%",
+                zIndex: 2,
+              }}
+            >
+              {/* LOGO */}
+              <div
+                style={{
+                  position: "absolute",
+                  top: "2%",
+                  left: "53%",
+                  transform: "translateX(-50%)",
+                  width: "clamp(300px,27vw,400px)",
+                  height: "clamp(300px,12vw,260px)",
+                  display: "flex",
+                  justifyContent: "center",
+                  alignItems: "center",
+                  overflow: "hidden",
+                }}
+              >
+                <img
+                  src={displayLogo}
+                  style={{
+                    width: "100%",
+                    height: "100%",
+                    objectFit: "contain",
+                    filter: "drop-shadow(0 0 12px rgba(0,0,0,0.6))",
+                    animation: "fiLogoBreathe 3.5s ease-in-out infinite",
+                  }}
+                />
+              </div>
 
-          {/* COUNTDOWN */}
-          <div
-            style={{
-              position: "absolute",
-              top: "73%",
-              left: "53%",
-              transform: "translateX(-50%)",
-            }}
-          >
-            <CountdownDisplay
-              totalSeconds={wallState.countdownSeconds}
-              countdownActive={wallState.countdownActive}
-              countdownStartedAt={wallState.countdownStartedAt}
-              serverOffsetMs={serverOffsetMs}
-            />
+              {/* GREY DIVIDER — UNTOUCHED */}
+              <div
+                style={{
+                  position: "absolute",
+                  top: "50%",
+                  left: "53%",
+                  transform: "translateX(-50%)",
+                  width: "75%",
+                  height: "1.4vh",
+                  borderRadius: 6,
+                  background: "linear-gradient(to right,#000,#444)",
+                }}
+              />
+
+              {/* MAIN TEXT (CENTER) — MUST STAY "Trivia Game" */}
+              <p
+                style={{
+                  position: "absolute",
+                  top: "56%",
+                  left: "53%",
+                  transform: "translateX(-50%)",
+                  color: "#fff",
+                  fontSize: "clamp(2em,3.5vw,6rem)",
+                  fontWeight: 900,
+                  textAlign: "center",
+                  textShadow: "0 0 14px rgba(0,0,0,0.6)",
+                }}
+              >
+                Trivia Game
+              </p>
+
+              {/* STARTING SOON */}
+              <p
+                style={{
+                  position: "absolute",
+                  top: "67%",
+                  left: "53%",
+                  transform: "translateX(-50%)",
+                  color: "#bcd9ff",
+                  fontSize: "clamp(2.8rem,2.4vw,3.2rem)",
+                  fontWeight: 700,
+                  textAlign: "center",
+                  margin: 0,
+                  textShadow: "0 0 18px rgba(90,160,255,0.35)",
+                }}
+              >
+                <span className="fi-starting-soon">Starting Soon!!</span>
+              </p>
+
+              {/* COUNTDOWN */}
+              <div
+                style={{
+                  position: "absolute",
+                  top: "73%",
+                  left: "53%",
+                  transform: "translateX(-50%)",
+                }}
+              >
+                <CountdownDisplay
+                  totalSeconds={wallState.countdownSeconds}
+                  countdownActive={wallState.countdownActive}
+                  countdownStartedAt={wallState.countdownStartedAt}
+                  serverOffsetMs={serverOffsetMs}
+                />
+              </div>
+            </div>
           </div>
         </div>
       </div>
-    </div>
+
+      {/* Animations (visual only) */}
+      <style>{`
+        /* QR sheen sweep */
+        .fi-qr-sheen {
+          position: absolute;
+          inset: 0;
+          pointer-events: none;
+          opacity: 0.45;
+          background: linear-gradient(
+            120deg,
+            rgba(255,255,255,0) 40%,
+            rgba(255,255,255,0.18) 50%,
+            rgba(255,255,255,0) 60%
+          );
+          transform: translateX(-140%);
+          animation: fiQrSheen 3.2s ease-in-out infinite;
+          mix-blend-mode: screen;
+        }
+        @keyframes fiQrSheen {
+          0% { transform: translateX(-140%); }
+          55% { transform: translateX(140%); }
+          100% { transform: translateX(140%); }
+        }
+
+        /* Starting soon shimmer */
+        .fi-starting-soon {
+          position: relative;
+          display: inline-block;
+          animation: fiSoonGlow 2.6s ease-in-out infinite;
+        }
+        .fi-starting-soon::after {
+          content: "";
+          position: absolute;
+          top: 0;
+          bottom: 0;
+          width: 55%;
+          left: -65%;
+          background: linear-gradient(
+            90deg,
+            rgba(255,255,255,0),
+            rgba(255,255,255,0.22),
+            rgba(255,255,255,0)
+          );
+          filter: blur(0.5px);
+          opacity: 0.65;
+          animation: fiSoonShine 2.8s ease-in-out infinite;
+          pointer-events: none;
+        }
+        @keyframes fiSoonGlow {
+          0%,100% { opacity: 0.78; text-shadow: 0 0 14px rgba(180,220,255,0.35); }
+          50% { opacity: 1; text-shadow: 0 0 26px rgba(180,220,255,0.80); }
+        }
+        @keyframes fiSoonShine {
+          0% { transform: translateX(0%); }
+          55% { transform: translateX(240%); }
+          100% { transform: translateX(240%); }
+        }
+
+        /* Logo breathe */
+        @keyframes fiLogoBreathe {
+          0%   { filter: drop-shadow(0 0 12px rgba(0,0,0,0.65)) drop-shadow(0 0 0px rgba(80,150,255,0.0)); }
+          50%  { filter: drop-shadow(0 0 14px rgba(0,0,0,0.65)) drop-shadow(0 0 18px rgba(80,150,255,0.22)); }
+          100% { filter: drop-shadow(0 0 12px rgba(0,0,0,0.65)) drop-shadow(0 0 0px rgba(80,150,255,0.0)); }
+        }
+      `}</style>
+    </>
   );
 }

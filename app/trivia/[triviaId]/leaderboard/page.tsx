@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
+import { AnimatePresence, motion } from "framer-motion";
 import { getSupabaseClient } from "@/lib/supabaseClient";
 
 const supabase = getSupabaseClient();
@@ -79,6 +80,32 @@ const SAFE_BOUNDS = {
 
 const FALLBACK_BG = "linear-gradient(to bottom right,#1b2735,#090a0f)";
 
+function medalFor(rank: number) {
+  if (rank === 1)
+    return {
+      ring: "rgba(255, 215, 0, 0.95)",
+      glow: "rgba(255, 215, 0, 0.35)",
+      badge: "rgba(255, 215, 0, 0.92)",
+    };
+  if (rank === 2)
+    return {
+      ring: "rgba(220, 220, 220, 0.95)",
+      glow: "rgba(220, 220, 220, 0.30)",
+      badge: "rgba(220, 220, 220, 0.90)",
+    };
+  if (rank === 3)
+    return {
+      ring: "rgba(205, 127, 50, 0.95)",
+      glow: "rgba(205, 127, 50, 0.30)",
+      badge: "rgba(205, 127, 50, 0.90)",
+    };
+  return {
+    ring: "rgba(255,255,255,0.45)",
+    glow: "rgba(255,255,255,0.10)",
+    badge: "rgba(255,255,255,0.55)",
+  };
+}
+
 export default function TriviaLeaderboardPage() {
   const params = useParams<{ triviaId: string }>();
   const triviaId = params?.triviaId;
@@ -89,6 +116,9 @@ export default function TriviaLeaderboardPage() {
 
   const [bg, setBg] = useState<string>(FALLBACK_BG);
   const [brightness, setBrightness] = useState<number>(100);
+
+  // subtle pulse when leaderboard updates
+  const [bumpKey, setBumpKey] = useState(0);
 
   /* -------------------------------------------------- */
   /* BACKGROUND FROM trivia_cards                        */
@@ -126,7 +156,6 @@ export default function TriviaLeaderboardPage() {
         .maybeSingle();
 
       if (cancelled) return;
-
       if (!error && data) applyBackgroundFromRow(data);
       else applyBackgroundFromRow(null);
     }
@@ -182,6 +211,7 @@ export default function TriviaLeaderboardPage() {
         if (!cancelled && !sameRows([], rowsRef.current)) {
           rowsRef.current = [];
           setRows([]);
+          setBumpKey((k) => k + 1);
         }
         if (!cancelled) setLoading(false);
         return;
@@ -197,6 +227,7 @@ export default function TriviaLeaderboardPage() {
         if (!cancelled && !sameRows([], rowsRef.current)) {
           rowsRef.current = [];
           setRows([]);
+          setBumpKey((k) => k + 1);
         }
         if (!cancelled) setLoading(false);
         return;
@@ -263,6 +294,7 @@ export default function TriviaLeaderboardPage() {
       if (!cancelled && !sameRows(built, rowsRef.current)) {
         rowsRef.current = built;
         setRows(built);
+        setBumpKey((k) => k + 1);
       }
 
       if (!cancelled) setLoading(false);
@@ -278,152 +310,299 @@ export default function TriviaLeaderboardPage() {
   }, [triviaId]);
 
   return (
-    <div
-      style={{
-        width: "100vw",
-        height: "100vh",
-        background: bg,
-        filter: `brightness(${brightness}%)`,
-        color: "#fff",
-        position: "relative",
-        overflow: "hidden",
-        display: "flex",
-        justifyContent: "center",
-      }}
-    >
-      <div
-        style={{
-          position: "absolute",
-          top: UI.titleTop,
-          left: "50%",
-          transform: "translateX(-50%)",
-          fontSize: "clamp(2.5rem,4vw,4.8rem)",
-          fontWeight: 900,
-          letterSpacing: "0.02em",
-          textShadow: "0 10px 40px rgba(0,0,0,0.65)",
-        }}
-      >
-        Leaderboard
-      </div>
+    <>
+      <div style={{ width: "100vw", height: "100vh", position: "relative", overflow: "hidden" }}>
+        {/* ✅ background gets brightness, not the UI */}
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            background: bg,
+            filter: `brightness(${brightness}%)`,
+            transform: "scale(1.02)",
+            zIndex: 0,
+          }}
+        />
 
-      <div
-        style={{
-          position: "absolute",
-          top: UI.listTop,
-          left: SAFE_BOUNDS.left,
-          right: SAFE_BOUNDS.right,
-          maxWidth: UI.maxWidth,
-          margin: "0 auto",
-        }}
-      >
-        {loading && (
-          <div style={{ textAlign: "center", opacity: 0.75 }}>
-            Loading leaderboard…
+        {/* ✅ vignette */}
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            zIndex: 1,
+            pointerEvents: "none",
+            background: `
+              radial-gradient(circle at 50% 40%, rgba(0,0,0,0.12) 0%, rgba(0,0,0,0.55) 70%, rgba(0,0,0,0.82) 100%),
+              linear-gradient(180deg, rgba(0,0,0,0.30) 0%, rgba(0,0,0,0.05) 35%, rgba(0,0,0,0.42) 100%)
+            `,
+          }}
+        />
+
+        {/* ✅ subtle grain */}
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            zIndex: 2,
+            pointerEvents: "none",
+            opacity: 0.10,
+            backgroundImage: `
+              repeating-linear-gradient(
+                0deg,
+                rgba(255,255,255,0.02),
+                rgba(255,255,255,0.02) 1px,
+                rgba(0,0,0,0.02) 2px,
+                rgba(0,0,0,0.02) 3px
+              )
+            `,
+            mixBlendMode: "overlay",
+          }}
+        />
+
+        {/* Foreground */}
+        <div
+          style={{
+            position: "relative",
+            zIndex: 3,
+            width: "100%",
+            height: "100%",
+            color: "#fff",
+            display: "flex",
+            justifyContent: "center",
+          }}
+        >
+          {/* Title */}
+          <div
+            style={{
+              position: "absolute",
+              top: UI.titleTop,
+              left: "50%",
+              transform: "translateX(-50%)",
+              fontSize: "clamp(2.5rem,4vw,4.8rem)",
+              fontWeight: 900,
+              letterSpacing: "0.02em",
+              textShadow:
+                "0 10px 40px rgba(0,0,0,0.65), 0 0 28px rgba(120,190,255,0.18)",
+            }}
+          >
+            <span className="fiTitleShine">Leaderboard</span>
           </div>
-        )}
 
-        {!loading && rows.length === 0 && (
-          <div style={{ textAlign: "center", opacity: 0.75 }}>
-            No scores yet.
-          </div>
-        )}
+          {/* List */}
+          <motion.div
+            key={bumpKey}
+            initial={{ scale: 0.995, opacity: 0.98 }}
+            animate={{ scale: 1, opacity: 1 }}
+            transition={{ duration: 0.35, ease: "easeOut" }}
+            style={{
+              position: "absolute",
+              top: UI.listTop,
+              left: SAFE_BOUNDS.left,
+              right: SAFE_BOUNDS.right,
+              maxWidth: UI.maxWidth,
+              margin: "0 auto",
+            }}
+          >
+            {loading && (
+              <div style={{ textAlign: "center", opacity: 0.8 }}>
+                Loading leaderboard…
+              </div>
+            )}
 
-        {!loading && rows.length > 0 && (
-          <div style={{ display: "flex", flexDirection: "column", gap: UI.rowGap }}>
-            {rows.slice(0, 10).map((r) => {
-              const isTop3 = r.rank <= 3;
+            {!loading && rows.length === 0 && (
+              <div style={{ textAlign: "center", opacity: 0.8 }}>
+                No scores yet.
+              </div>
+            )}
 
-              return (
-                <div
-                  key={r.playerId}
-                  style={{
-                    height: UI.rowHeight,
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    borderRadius: 22,
-                    padding: `0 ${UI.rowPadX}px`,
-                    background: "rgba(255,255,255,0.07)",
-                    border: isTop3
-                      ? "2px solid rgba(190,242,100,0.55)"
-                      : "1px solid rgba(255,255,255,0.15)",
-                    boxShadow: isTop3 ? "0 0 28px rgba(190,242,100,0.22)" : "none",
-                  }}
-                >
-                  <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
+            {!loading && rows.length > 0 && (
+              <div style={{ display: "flex", flexDirection: "column", gap: UI.rowGap }}>
+                {rows.slice(0, 10).map((r) => {
+                  const isTop3 = r.rank <= 3;
+                  const medal = medalFor(r.rank);
+
+                  return (
                     <div
+                      key={r.playerId}
+                      className={isTop3 ? "fiTopRow" : ""}
                       style={{
-                        width: UI.avatar,
-                        height: UI.avatar,
-                        borderRadius: "50%",
-                        overflow: "hidden",
-                        background: "rgba(255,255,255,0.12)",
-                        border: r.selfieUrl
-                          ? "2px solid rgba(255,255,255,0.45)"
-                          : "2px dashed rgba(255,255,255,0.45)",
+                        height: UI.rowHeight,
                         display: "flex",
                         alignItems: "center",
-                        justifyContent: "center",
+                        justifyContent: "space-between",
+                        borderRadius: 22,
+                        padding: `0 ${UI.rowPadX}px`,
+                        background: isTop3
+                          ? "linear-gradient(90deg, rgba(255,255,255,0.10), rgba(255,255,255,0.06))"
+                          : "rgba(255,255,255,0.07)",
+                        border: isTop3
+                          ? `2px solid ${medal.ring}`
+                          : "1px solid rgba(255,255,255,0.15)",
+                        boxShadow: isTop3
+                          ? `0 0 26px ${medal.glow}, 0 18px 60px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.12)`
+                          : "0 14px 50px rgba(0,0,0,0.18), inset 0 1px 0 rgba(255,255,255,0.08)",
                         position: "relative",
+                        overflow: "hidden",
                       }}
                     >
-                      {r.selfieUrl ? (
-                        <img
-                          src={r.selfieUrl}
-                          alt={r.name}
-                          style={{ width: "100%", height: "100%", objectFit: "cover" }}
-                        />
-                      ) : (
-                        <div style={{ fontWeight: 900, fontSize: "1.25rem", opacity: 0.9 }}>
-                          {r.rank}
-                        </div>
-                      )}
+                      {/* inner highlight */}
+                      <div
+                        style={{
+                          position: "absolute",
+                          inset: 0,
+                          pointerEvents: "none",
+                          background:
+                            "linear-gradient(180deg, rgba(255,255,255,0.10), rgba(255,255,255,0.02) 45%, rgba(0,0,0,0.08) 100%)",
+                          opacity: 0.75,
+                        }}
+                      />
 
-                      {r.selfieUrl && (
+                      <div style={{ display: "flex", alignItems: "center", gap: 18, position: "relative", zIndex: 2 }}>
                         <div
                           style={{
-                            position: "absolute",
-                            bottom: -8,
-                            right: -8,
-                            width: 30,
-                            height: 30,
+                            width: UI.avatar,
+                            height: UI.avatar,
                             borderRadius: "50%",
-                            background: "rgba(0,0,0,0.75)",
-                            border: "1px solid rgba(255,255,255,0.25)",
+                            overflow: "hidden",
+                            background: "rgba(255,255,255,0.12)",
+                            border: r.selfieUrl
+                              ? `3px solid ${isTop3 ? medal.ring : "rgba(255,255,255,0.45)"}`
+                              : `2px dashed ${isTop3 ? medal.ring : "rgba(255,255,255,0.45)"}`,
+                            boxShadow: isTop3 ? `0 0 18px ${medal.glow}` : "0 0 14px rgba(0,0,0,0.35)",
                             display: "flex",
                             alignItems: "center",
                             justifyContent: "center",
-                            fontWeight: 900,
+                            position: "relative",
                           }}
                         >
-                          {r.rank}
+                          {r.selfieUrl ? (
+                            <img
+                              src={r.selfieUrl}
+                              alt={r.name}
+                              style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                            />
+                          ) : (
+                            <div style={{ fontWeight: 900, fontSize: "1.25rem", opacity: 0.95 }}>
+                              {r.rank}
+                            </div>
+                          )}
+
+                          {/* rank badge stays same position */}
+                          {r.selfieUrl && (
+                            <div
+                              style={{
+                                position: "absolute",
+                                bottom: -8,
+                                right: -8,
+                                width: 30,
+                                height: 30,
+                                borderRadius: "50%",
+                                background: "rgba(0,0,0,0.75)",
+                                border: `1px solid ${isTop3 ? medal.badge : "rgba(255,255,255,0.25)"}`,
+                                boxShadow: isTop3 ? `0 0 14px ${medal.glow}` : "none",
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                fontWeight: 900,
+                              }}
+                            >
+                              {r.rank}
+                            </div>
+                          )}
                         </div>
-                      )}
-                    </div>
 
-                    <div
-                      style={{
-                        fontSize: "clamp(1.3rem,2.2vw,2.4rem)",
-                        fontWeight: 900,
-                        whiteSpace: "nowrap",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        maxWidth: "65vw",
-                      }}
-                    >
-                      {r.name}
-                    </div>
-                  </div>
+                        <div
+                          style={{
+                            fontSize: "clamp(1.3rem,2.2vw,2.4rem)",
+                            fontWeight: 900,
+                            whiteSpace: "nowrap",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            maxWidth: "65vw",
+                            textShadow: isTop3
+                              ? "0 10px 30px rgba(0,0,0,0.45), 0 0 18px rgba(255,255,255,0.12)"
+                              : "0 8px 22px rgba(0,0,0,0.40)",
+                          }}
+                        >
+                          {r.name}
+                        </div>
+                      </div>
 
-                  <div style={{ fontSize: "clamp(1.6rem,2.6vw,3rem)", fontWeight: 900 }}>
-                    {r.points}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
+                      <div
+                        style={{
+                          fontSize: "clamp(1.6rem,2.6vw,3rem)",
+                          fontWeight: 900,
+                          position: "relative",
+                          zIndex: 2,
+                          textShadow: isTop3
+                            ? `0 0 18px ${medal.glow}, 0 10px 35px rgba(0,0,0,0.50)`
+                            : "0 10px 35px rgba(0,0,0,0.50)",
+                        }}
+                      >
+                        {r.points}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </motion.div>
+        </div>
       </div>
-    </div>
+
+      <style>{`
+        /* title subtle shine */
+        .fiTitleShine {
+          position: relative;
+          display: inline-block;
+        }
+        .fiTitleShine::after {
+          content: "";
+          position: absolute;
+          top: 0;
+          bottom: 0;
+          width: 55%;
+          left: -70%;
+          background: linear-gradient(
+            90deg,
+            rgba(255,255,255,0),
+            rgba(255,255,255,0.18),
+            rgba(255,255,255,0)
+          );
+          filter: blur(0.5px);
+          opacity: 0.55;
+          animation: fiTitleSheen 4.5s ease-in-out infinite;
+          pointer-events: none;
+        }
+        @keyframes fiTitleSheen {
+          0% { transform: translateX(0%); }
+          55% { transform: translateX(240%); }
+          100% { transform: translateX(240%); }
+        }
+
+        /* top3 row slow sweep */
+        .fiTopRow::before {
+          content: "";
+          position: absolute;
+          inset: 0;
+          background: linear-gradient(
+            110deg,
+            rgba(255,255,255,0) 42%,
+            rgba(255,255,255,0.10) 50%,
+            rgba(255,255,255,0) 58%
+          );
+          transform: translateX(-140%);
+          opacity: 0.7;
+          animation: fiRowSweep 5.2s ease-in-out infinite;
+          pointer-events: none;
+          mix-blend-mode: screen;
+        }
+        @keyframes fiRowSweep {
+          0% { transform: translateX(-140%); }
+          55% { transform: translateX(140%); }
+          100% { transform: translateX(140%); }
+        }
+      `}</style>
+    </>
   );
 }
