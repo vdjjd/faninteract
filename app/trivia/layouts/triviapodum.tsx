@@ -1,3 +1,5 @@
+"use client";
+
 import React, { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { getSupabaseClient } from "@/lib/supabaseClient";
@@ -26,6 +28,12 @@ const STEP_DURATION_MS = 10000; // 10 seconds between 3rd → 2nd → 1st
 const fallbackLogo = "/faninteractlogo.png";
 const fallbackPhoto = "/fallback.png";
 const FALLBACK_BG = "linear-gradient(135deg,#1b2735,#090a0f)";
+
+/* ---------- CONFETTI LOOP CONTROL ---------- */
+
+const CONFETTI_BURSTS = 5; // ✅ loop 5 times
+const CONFETTI_BURST_INTERVAL_MS = 6200; // ✅ spacing between bursts
+const CONFETTI_CLEAR_AFTER_MS = 6500; // ✅ clear after last burst finishes
 
 /* ---------- HELPERS ---------- */
 
@@ -108,7 +116,7 @@ function getPodiumGlow(place?: "1st" | "2nd" | "3rd") {
   };
 }
 
-/* ---------- CONFETTI (more + slower) ---------- */
+/* ---------- CONFETTI (more + slower + loop 5x + start higher) ---------- */
 
 type ConfettiParticle = {
   id: string;
@@ -129,13 +137,13 @@ function makeConfetti(count: number): ConfettiParticle[] {
     arr.push({
       id: `${Date.now()}-${i}-${Math.random().toString(16).slice(2)}`,
       leftPct: Math.random() * 100,
-      size: 6 + Math.random() * 10, // more variety
-      delay: Math.random() * 0.6, // more stagger
+      size: 6 + Math.random() * 10,
+      delay: Math.random() * 0.6,
       duration: 2.8 + Math.random() * 2.0, // ✅ slower (2.8–4.8s)
       drift: (Math.random() - 0.5) * 380,
       rotate: (Math.random() - 0.5) * 1080,
       color: colors[Math.floor(Math.random() * colors.length)],
-      opacity: 0.45 + Math.random() * 0.25, // softer since more pieces
+      opacity: 0.45 + Math.random() * 0.25,
     });
   }
   return arr;
@@ -488,16 +496,31 @@ export default function TriviaPodum({ trivia }: TriviaPodiumProps) {
   const current = podiumRows[currentIndex] || null;
   const glow = getPodiumGlow(current?.placeLabel);
 
-  // ✅ Confetti only when we land on 1st (more + slower)
+  // ✅ Confetti bursts: loop 5 times, starts at frosted top border
   useEffect(() => {
     if (!current) return;
     if (current.placeLabel !== "1st") return;
 
-    setConfettiKey((k) => k + 1);
-    setConfetti(makeConfetti(90)); // ✅ more confetti
+    const timers: number[] = [];
 
-    const t = window.setTimeout(() => setConfetti([]), 6000); // ✅ keep longer
-    return () => window.clearTimeout(t);
+    const triggerBurst = () => {
+      setConfettiKey((k) => k + 1);
+      setConfetti(makeConfetti(110)); // ✅ more confetti (tweak)
+    };
+
+    for (let i = 0; i < CONFETTI_BURSTS; i++) {
+      timers.push(window.setTimeout(triggerBurst, i * CONFETTI_BURST_INTERVAL_MS));
+    }
+
+    timers.push(
+      window.setTimeout(() => {
+        setConfetti([]);
+      }, (CONFETTI_BURSTS - 1) * CONFETTI_BURST_INTERVAL_MS + CONFETTI_CLEAR_AFTER_MS)
+    );
+
+    return () => {
+      timers.forEach((t) => window.clearTimeout(t));
+    };
   }, [current?.playerId, current?.placeLabel]);
 
   return (
@@ -595,7 +618,7 @@ export default function TriviaPodum({ trivia }: TriviaPodiumProps) {
             display: "flex",
           }}
         >
-          {/* ✅ Confetti overlay (more + slower) */}
+          {/* ✅ Confetti overlay (looped bursts + starts at top border) */}
           <AnimatePresence>
             {confetti.length > 0 && (
               <motion.div
@@ -614,21 +637,21 @@ export default function TriviaPodum({ trivia }: TriviaPodiumProps) {
                 {confetti.map((p) => (
                   <motion.span
                     key={p.id}
-                    initial={{ opacity: 0, y: 0, x: 0, rotate: 0 }}
+                    initial={{ opacity: 0, y: -160, x: 0, rotate: 0 }} // ✅ start higher
                     animate={{
                       opacity: [0, p.opacity, 0],
-                      y: 980, // ✅ farther fall
+                      y: 980,
                       x: p.drift,
                       rotate: p.rotate,
                     }}
                     transition={{
                       delay: p.delay,
                       duration: p.duration, // ✅ slower
-                      ease: "easeIn", // ✅ gravity feel
+                      ease: "easeIn",
                     }}
                     style={{
                       position: "absolute",
-                      top: "10%",
+                      top: "0%", // ✅ start at frosted glass top border
                       left: `${p.leftPct}%`,
                       width: `${p.size}px`,
                       height: `${Math.max(6, p.size * 0.6)}px`,
@@ -656,7 +679,6 @@ export default function TriviaPodum({ trivia }: TriviaPodiumProps) {
               background: "rgba(0,0,0,0.4)",
               border: `6px solid ${glow.borderColor}`,
             }}
-            // ✅ breathing glow
             animate={{
               boxShadow: [glow.baseShadow, glow.pulseShadow, glow.baseShadow],
             }}
