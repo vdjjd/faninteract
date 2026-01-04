@@ -1,7 +1,7 @@
 "use client";
 
 import { QRCodeCanvas } from "qrcode.react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { getSupabaseClient } from "@/lib/supabaseClient";
 
 const supabase = getSupabaseClient();
@@ -29,6 +29,17 @@ function parseCountdownSeconds(row: any): number {
   const unit = parts[1] || "seconds";
   if (unit.startsWith("min")) return n * 60;
   return n; // default seconds
+}
+
+function pickPublicName(row: any): string {
+  const pn = String(row?.public_name || "").trim();
+  if (pn) return pn;
+
+  // backward compat if older data uses `title`
+  const t = String(row?.title || "").trim();
+  if (t) return t;
+
+  return "Trivia Game";
 }
 
 /* ---------- COUNTDOWN COMPONENT (DB-synced + server-time synced) ---------- */
@@ -105,7 +116,7 @@ export default function TriviaInactiveWall({ trivia }: TriviaInactiveWallProps) 
     countdownSeconds: parseCountdownSeconds(trivia),
     countdownActive: trivia?.countdown_active === true,
     countdownStartedAt: trivia?.countdown_started_at || null,
-    title: trivia?.title || "",
+    publicName: pickPublicName(trivia),
   });
 
   /* 🌟 Pulse animation */
@@ -182,13 +193,13 @@ export default function TriviaInactiveWall({ trivia }: TriviaInactiveWallProps) 
       countdownSeconds: parseCountdownSeconds(trivia),
       countdownActive: trivia.countdown_active === true,
       countdownStartedAt: trivia.countdown_started_at || null,
-      title: trivia.title || "",
+      publicName: pickPublicName(trivia),
     });
 
     applyBackgroundFromRow(trivia);
   }, [trivia]);
 
-  // 🔁 Live updates from DB (keeps countdown + background in sync)
+  // 🔁 Live updates from DB (keeps countdown + background + name in sync)
   useEffect(() => {
     if (!trivia?.id) return;
 
@@ -211,7 +222,7 @@ export default function TriviaInactiveWall({ trivia }: TriviaInactiveWallProps) 
             countdownSeconds: parseCountdownSeconds(next),
             countdownActive: next.countdown_active === true,
             countdownStartedAt: next.countdown_started_at || null,
-            title: next.title ?? prev.title,
+            publicName: pickPublicName(next) || prev.publicName,
           }));
 
           applyBackgroundFromRow(next);
@@ -262,7 +273,7 @@ export default function TriviaInactiveWall({ trivia }: TriviaInactiveWallProps) 
     >
       {PulseStyle}
 
-      {/* Title */}
+      {/* Title (TOP) */}
       <h1
         style={{
           color: "#fff",
@@ -277,7 +288,7 @@ export default function TriviaInactiveWall({ trivia }: TriviaInactiveWallProps) 
           `,
         }}
       >
-        {wallState.title || "Trivia Game"}
+        {wallState.publicName}
       </h1>
 
       {/* Main Panel */}
@@ -359,7 +370,7 @@ export default function TriviaInactiveWall({ trivia }: TriviaInactiveWallProps) 
             }}
           />
 
-          {/* MAIN TEXT */}
+          {/* MAIN TEXT (CENTER) */}
           <p
             style={{
               position: "absolute",
@@ -373,7 +384,7 @@ export default function TriviaInactiveWall({ trivia }: TriviaInactiveWallProps) 
               textShadow: "0 0 14px rgba(0,0,0,0.6)",
             }}
           >
-            Trivia Game
+            {wallState.publicName}
           </p>
 
           {/* STARTING SOON */}
