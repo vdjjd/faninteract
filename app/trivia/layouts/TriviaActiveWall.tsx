@@ -178,7 +178,6 @@ function sameLeaderRows(a: LeaderRow[], b: LeaderRow[]) {
 
 /**
  * ✅ FIX FOR “Q1 then jumps to Q4/Q8”
- * Ordering rules described below.
  */
 type QuestionOrderMode = "question_number" | "round_number" | "created_at";
 
@@ -268,7 +267,6 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
     setCardCountdownActive(!!trivia?.countdown_active);
   }, [trivia?.id, trivia?.status, trivia?.countdown_active]);
 
-  // Poll card status so the wall reacts instantly to Pause/Resume from dashboard
   useEffect(() => {
     if (!trivia?.id) return;
     let alive = true;
@@ -353,7 +351,6 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
           const next = payload?.new;
           if (!next) return;
           setPublicName(pickPublicName(next));
-          // also pick up status changes from realtime if they arrive
           if (typeof next.status === "string") setCardStatus(next.status);
           if (typeof next.countdown_active === "boolean")
             setCardCountdownActive(!!next.countdown_active);
@@ -369,7 +366,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
   /* -------------------------------------------------- */
   /* ✅ SERVER CLOCK OFFSET                              */
   /* -------------------------------------------------- */
-  const serverOffsetRef = useRef(0); // serverNowMs - deviceNowMs
+  const serverOffsetRef = useRef(0);
 
   async function syncServerOffset() {
     const attempt = async (fn: string) => {
@@ -480,8 +477,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
   }
 
   /* -------------------------------------------------- */
-  /* ✅ Poll session: current_question + phase authority  */
-  /*    ✅ UPDATED: allow status = paused                 */
+  /* ✅ Poll session                                     */
   /* -------------------------------------------------- */
   useEffect(() => {
     if (!trivia?.id) return;
@@ -593,19 +589,16 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
     setShowAnswerOverlay(wallPhase === "overlay");
     setRevealAnswer(wallPhase === "reveal");
 
-    // If paused, lock the UI regardless of phase (prevents “green bar” vibe)
     if (isPaused) setLocked(true);
     else setLocked(wallPhase !== "question");
   }, [wallPhase, isPaused]);
 
   /* -------------------------------------------------- */
-  /* ✅ QUESTION TIMER (bar only) + phase trigger         */
-  /*    ✅ UPDATED: freezes on pause                      */
+  /* ✅ QUESTION TIMER                                    */
   /* -------------------------------------------------- */
   useEffect(() => {
     let intervalId: number | null = null;
 
-    // When paused, FREEZE progress in place (do not reset to 1/0)
     if (isPaused) {
       setLocked(true);
       return () => {
@@ -680,8 +673,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
   ]);
 
   /* -------------------------------------------------- */
-  /* ✅ PHASE MACHINE (wall authority)                    */
-  /*    ✅ UPDATED: freezes on pause                      */
+  /* ✅ PHASE MACHINE                                     */
   /* -------------------------------------------------- */
   const phaseTickLockRef = useRef(false);
 
@@ -749,8 +741,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
   ]);
 
   /* -------------------------------------------------- */
-  /* TOP 3 RANKINGS (AUTO UPDATE)                        */
-  /* ✅ UPDATED: supports paused sessions                */
+  /* TOP 3 RANKINGS                                      */
   /* -------------------------------------------------- */
   useEffect(() => {
     if (!trivia?.id) return;
@@ -899,8 +890,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
   }, [trivia?.id, isActiveGame, sessionId]);
 
   /* -------------------------------------------------- */
-  /* FULL LEADERBOARD LOADER (ONLY USED IN VIEW=leaderboard) */
-  /* ✅ UPDATED: supports paused sessions                */
+  /* FULL LEADERBOARD LOADER                             */
   /* -------------------------------------------------- */
   useEffect(() => {
     if (!trivia?.id) return;
@@ -1063,7 +1053,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
 
   return (
     <>
-      {/* ROOT: background layers + foreground wrapper (NO layout changes) */}
+      {/* ROOT */}
       <div
         style={{
           width: "100vw",
@@ -1075,7 +1065,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
           justifyContent: "center",
         }}
       >
-        {/* ✅ Background ONLY gets brightness */}
+        {/* Background */}
         <div
           style={{
             position: "absolute",
@@ -1087,7 +1077,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
           }}
         />
 
-        {/* ✅ Vignette overlay */}
+        {/* Vignette */}
         <div
           style={{
             position: "absolute",
@@ -1101,7 +1091,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
           }}
         />
 
-        {/* ✅ Subtle grain (very low) */}
+        {/* Grain */}
         <div
           style={{
             position: "absolute",
@@ -1122,7 +1112,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
           }}
         />
 
-        {/* Foreground wrapper */}
+        {/* Foreground */}
         <div
           style={{
             position: "relative",
@@ -1131,7 +1121,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
             height: "100%",
           }}
         >
-          {/* ✅ TOP TITLE (PUBLIC NAME) */}
+          {/* Title */}
           <div
             style={{
               position: "absolute",
@@ -1161,7 +1151,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
             </div>
           </div>
 
-          {/* ✅ PAUSED OVERLAY (all views except podium) */}
+          {/* Paused overlay */}
           {isPaused && view !== "podium" && (
             <div
               style={{
@@ -1196,7 +1186,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
             </div>
           )}
 
-          {/* ✅ View transitions */}
+          {/* View transitions */}
           <AnimatePresence mode="wait">
             <motion.div
               key={view}
@@ -1210,9 +1200,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                 position: "relative",
               }}
             >
-              {/* =======================
-                  QUESTION VIEW
-              ======================= */}
+              {/* QUESTION VIEW */}
               {view === "question" && (
                 <div
                   style={{
@@ -1236,12 +1224,12 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                       borderRadius: 24,
                       position: "relative",
                       overflow: "hidden",
-                      padding: "2vh 4vw", // <-- CHANGED HERE
+                      padding: "1vh 4vw", // ⬅️ CHANGED (less top padding)
                       color: "#fff",
                       boxShadow: "0 25px 90px rgba(0,0,0,0.35)",
                     }}
                   >
-                    {/* ✅ Glass depth overlay */}
+                    {/* Glass depth */}
                     <div
                       style={{
                         position: "absolute",
@@ -1254,7 +1242,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                       }}
                     />
 
-                    {/* ✅ MAIN CONTENT: question + timer + answers in a column */}
+                    {/* MAIN CONTENT */}
                     <div
                       style={{
                         position: "relative",
@@ -1264,14 +1252,13 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                         flexDirection: "column",
                       }}
                     >
-                      {/* QUESTION AREA = all space above timer bar */}
+                      {/* QUESTION AREA – now pinned to top of glass */}
                       <div
                         style={{
-                          flex: 1,
                           maxWidth: "92%",
-                          margin: "0 auto",
+                          margin: "0 auto 1.8vh auto", // small gap before timer
                           display: "flex",
-                          alignItems: "center",
+                          alignItems: "flex-start",
                           justifyContent: "center",
                         }}
                       >
@@ -1294,7 +1281,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                         </div>
                       </div>
 
-                      {/* TIMER BAR – sits right above buttons */}
+                      {/* TIMER BAR */}
                       <div
                         style={{
                           width: "100%",
@@ -1302,7 +1289,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                           background: "rgba(255,255,255,0.15)",
                           borderRadius: 999,
                           overflow: "hidden",
-                          marginTop: "1.5vh",
+                          marginTop: "0.5vh",
                           marginBottom: "1.8vh",
                           boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.10)",
                         }}
@@ -1329,7 +1316,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                         </div>
                       </div>
 
-                      {/* ANSWERS – directly under timer */}
+                      {/* ANSWERS */}
                       <div
                         style={{
                           width: "100%",
@@ -1394,7 +1381,6 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                                     overflow: "hidden",
                                   }}
                                 >
-                                  {/* subtle inner highlight */}
                                   <div
                                     style={{
                                       position: "absolute",
@@ -1419,7 +1405,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                           : null}
                       </div>
 
-                      {/* CURRENT RANKINGS LABEL (below buttons) */}
+                      {/* CURRENT RANKINGS LABEL */}
                       {!isFinalQuestion && (
                         <div
                           style={{
@@ -1438,7 +1424,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                       )}
                     </div>
 
-                    {/* TINTED OVERLAY + "THE ANSWER IS" */}
+                    {/* ANSWER OVERLAY */}
                     {showAnswerOverlay && (
                       <div
                         style={{
@@ -1489,9 +1475,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                 </div>
               )}
 
-              {/* =======================
-                  LEADERBOARD VIEW
-              ======================= */}
+              {/* LEADERBOARD VIEW */}
               {view === "leaderboard" && (
                 <div
                   style={{
@@ -1571,7 +1555,6 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                                 overflow: "hidden",
                               }}
                             >
-                              {/* ✅ Glass depth overlay */}
                               <div
                                 style={{
                                   position: "absolute",
@@ -1582,7 +1565,6 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                                 }}
                               />
 
-                              {/* ✅ Top-3 sheen sweep */}
                               {isTop3 && <div className="fi-row-sheen" />}
 
                               <div
@@ -1697,9 +1679,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                 </div>
               )}
 
-              {/* =======================
-                  PODIUM VIEW
-              ======================= */}
+              {/* PODIUM VIEW */}
               {view === "podium" && (
                 <div
                   style={{
@@ -1714,7 +1694,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
             </motion.div>
           </AnimatePresence>
 
-          {/* ✅ QR CODE — hide during podium */}
+          {/* QR CODE */}
           {view !== "podium" && (
             <div
               style={{
@@ -1752,7 +1732,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
             </div>
           )}
 
-          {/* TOP 3 LEADERS (question view only, NOT final question) */}
+          {/* TOP 3 LEADERS */}
           {view === "question" && !isFinalQuestion && (
             <div
               style={{
@@ -1862,7 +1842,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
             </div>
           )}
 
-          {/* LOGO – hide during podium */}
+          {/* LOGO */}
           {view !== "podium" && (
             <div
               style={{
