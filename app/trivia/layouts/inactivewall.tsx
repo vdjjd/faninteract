@@ -370,7 +370,7 @@ export default function TriviaInactiveWall({ trivia }: TriviaInactiveWallProps) 
             }}
           />
 
-          {/* MAIN TEXT (CENTER) */}
+          {/* MAIN TEXT (CENTER) — MUST STAY "Trivia Game" */}
           <p
             style={{
               position: "absolute",
@@ -384,7 +384,7 @@ export default function TriviaInactiveWall({ trivia }: TriviaInactiveWallProps) 
               textShadow: "0 0 14px rgba(0,0,0,0.6)",
             }}
           >
-            {wallState.publicName}
+            Trivia Game
           </p>
 
           {/* STARTING SOON */}
