@@ -178,7 +178,6 @@ function sameLeaderRows(a: LeaderRow[], b: LeaderRow[]) {
 
 /**
  * ✅ FIX FOR “Q1 then jumps to Q4/Q8”
- * Ordering rules described below.
  */
 type QuestionOrderMode = "question_number" | "round_number" | "created_at";
 
@@ -591,19 +590,17 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
     setShowAnswerOverlay(wallPhase === "overlay");
     setRevealAnswer(wallPhase === "reveal");
 
-    // If paused, lock the UI regardless of phase (prevents “green bar” vibe)
+    // If paused, lock the UI regardless of phase
     if (isPaused) setLocked(true);
     else setLocked(wallPhase !== "question");
   }, [wallPhase, isPaused]);
 
   /* -------------------------------------------------- */
   /* ✅ QUESTION TIMER (bar only) + phase trigger         */
-  /*    ✅ UPDATED: freezes on pause                      */
   /* -------------------------------------------------- */
   useEffect(() => {
     let intervalId: number | null = null;
 
-    // When paused, FREEZE progress in place (do not reset to 1/0)
     if (isPaused) {
       setLocked(true);
       return () => {
@@ -679,7 +676,6 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
 
   /* -------------------------------------------------- */
   /* ✅ PHASE MACHINE (wall authority)                    */
-  /*    ✅ UPDATED: freezes on pause                      */
   /* -------------------------------------------------- */
   const phaseTickLockRef = useRef(false);
 
@@ -748,7 +744,6 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
 
   /* -------------------------------------------------- */
   /* TOP 3 RANKINGS (AUTO UPDATE)                        */
-  /* ✅ UPDATED: supports paused sessions                */
   /* -------------------------------------------------- */
   useEffect(() => {
     if (!trivia?.id) return;
@@ -897,8 +892,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
   }, [trivia?.id, isActiveGame, sessionId]);
 
   /* -------------------------------------------------- */
-  /* FULL LEADERBOARD LOADER (ONLY USED IN VIEW=leaderboard) */
-  /* ✅ UPDATED: supports paused sessions                */
+  /* FULL LEADERBOARD LOADER                             */
   /* -------------------------------------------------- */
   useEffect(() => {
     if (!trivia?.id) return;
@@ -1061,7 +1055,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
 
   return (
     <>
-      {/* ROOT: background layers + foreground wrapper (NO layout changes) */}
+      {/* ROOT: background layers + foreground wrapper */}
       <div
         style={{
           width: "100vw",
@@ -1073,7 +1067,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
           justifyContent: "center",
         }}
       >
-        {/* ✅ Background ONLY gets brightness */}
+        {/* Background */}
         <div
           style={{
             position: "absolute",
@@ -1085,7 +1079,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
           }}
         />
 
-        {/* ✅ Vignette overlay */}
+        {/* Vignette */}
         <div
           style={{
             position: "absolute",
@@ -1099,7 +1093,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
           }}
         />
 
-        {/* ✅ Subtle grain (very low) */}
+        {/* Grain */}
         <div
           style={{
             position: "absolute",
@@ -1129,7 +1123,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
             height: "100%",
           }}
         >
-          {/* ✅ TOP TITLE (PUBLIC NAME) */}
+          {/* TOP TITLE */}
           <div
             style={{
               position: "absolute",
@@ -1159,7 +1153,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
             </div>
           </div>
 
-          {/* ✅ PAUSED OVERLAY (all views except podium) */}
+          {/* PAUSED OVERLAY */}
           {isPaused && view !== "podium" && (
             <div
               style={{
@@ -1194,7 +1188,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
             </div>
           )}
 
-          {/* ✅ View transitions */}
+          {/* View transitions */}
           <AnimatePresence mode="wait">
             <motion.div
               key={view}
@@ -1208,9 +1202,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                 position: "relative",
               }}
             >
-              {/* =======================
-                  QUESTION VIEW
-              ======================= */}
+              {/* QUESTION VIEW */}
               {view === "question" && (
                 <div
                   style={{
@@ -1239,7 +1231,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                       boxShadow: "0 25px 90px rgba(0,0,0,0.35)",
                     }}
                   >
-                    {/* ✅ Glass depth overlay */}
+                    {/* Glass overlay */}
                     <div
                       style={{
                         position: "absolute",
@@ -1252,7 +1244,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                       }}
                     />
 
-                    {/* ✅ MAIN CONTENT: question + timer + answers in a column */}
+                    {/* Question + timer + answers as a column */}
                     <div
                       style={{
                         position: "relative",
@@ -1262,7 +1254,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                         flexDirection: "column",
                       }}
                     >
-                      {/* QUESTION AREA = all space above timer bar */}
+                      {/* QUESTION AREA */}
                       <div
                         style={{
                           flex: 1,
@@ -1292,7 +1284,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                         </div>
                       </div>
 
-                      {/* TIMER BAR – sits right above buttons */}
+                      {/* TIMER BAR – right above buttons */}
                       <div
                         style={{
                           width: "100%",
@@ -1327,7 +1319,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                         </div>
                       </div>
 
-                      {/* ANSWERS – directly under timer */}
+                      {/* ANSWERS */}
                       <div
                         style={{
                           width: "100%",
@@ -1392,7 +1384,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                                     overflow: "hidden",
                                   }}
                                 >
-                                  {/* subtle inner highlight */}
+                                  {/* inner highlight */}
                                   <div
                                     style={{
                                       position: "absolute",
@@ -1416,27 +1408,9 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                             })
                           : null}
                       </div>
-
-                      {/* CURRENT RANKINGS LABEL (below buttons) */}
-                      {!isFinalQuestion && (
-                        <div
-                          style={{
-                            marginTop: "2.2vh",
-                            fontSize:
-                              "clamp(1.6rem,2vw,2.2rem)",
-                            fontWeight: 800,
-                            opacity: 0.85,
-                            textShadow:
-                              "0 10px 30px rgba(0,0,0,0.45)",
-                            textAlign: "center",
-                          }}
-                        >
-                          Current Rankings
-                        </div>
-                      )}
                     </div>
 
-                    {/* TINTED OVERLAY + "THE ANSWER IS" */}
+                    {/* ANSWER OVERLAY */}
                     {showAnswerOverlay && (
                       <div
                         style={{
@@ -1487,9 +1461,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                 </div>
               )}
 
-              {/* =======================
-                  LEADERBOARD VIEW
-              ======================= */}
+              {/* LEADERBOARD VIEW */}
               {view === "leaderboard" && (
                 <div
                   style={{
@@ -1569,7 +1541,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                                 overflow: "hidden",
                               }}
                             >
-                              {/* ✅ Glass depth overlay */}
+                              {/* glass overlay */}
                               <div
                                 style={{
                                   position: "absolute",
@@ -1580,7 +1552,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                                 }}
                               />
 
-                              {/* ✅ Top-3 sheen sweep */}
+                              {/* sheen for top 3 */}
                               {isTop3 && <div className="fi-row-sheen" />}
 
                               <div
@@ -1695,9 +1667,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                 </div>
               )}
 
-              {/* =======================
-                  PODIUM VIEW
-              ======================= */}
+              {/* PODIUM VIEW */}
               {view === "podium" && (
                 <div
                   style={{
@@ -1712,7 +1682,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
             </motion.div>
           </AnimatePresence>
 
-          {/* ✅ QR CODE — hide during podium */}
+          {/* QR CODE (hide during podium) */}
           {view !== "podium" && (
             <div
               style={{
@@ -1750,114 +1720,136 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
             </div>
           )}
 
-          {/* TOP 3 LEADERS (question view only, NOT final question) */}
+          {/* CURRENT RANKINGS LABEL + TOP 3 (question view only, NOT final) */}
           {view === "question" && !isFinalQuestion && (
-            <div
-              style={{
-                position: "absolute",
-                bottom: RANKINGS_CTRL.bottom,
-                left: RANKINGS_CTRL.centerLeft,
-                transform: `translateX(calc(-50% + ${RANKINGS_CTRL.offsetX}))`,
-                display: "flex",
-                gap: RANKINGS_CTRL.groupGap,
-                zIndex: 20,
-                pointerEvents: "none",
-              }}
-            >
-              {[1, 2, 3].map((place) => {
-                const row = topRanks.find((r) => r.place === place);
-                const hasSelfie = !!row?.selfieUrl;
+            <>
+              {/* ✅ New position: between QR and first place */}
+              <div
+                style={{
+                  position: "absolute",
+                  bottom: "18vh",
+                  left: "50%",
+                  transform: "translateX(-50%)",
+                  fontSize: "clamp(1.6rem,2vw,2.2rem)",
+                  fontWeight: 800,
+                  opacity: 0.9,
+                  color: "#fff",
+                  textShadow: "0 10px 30px rgba(0,0,0,0.55)",
+                  zIndex: 19,
+                  pointerEvents: "none",
+                }}
+              >
+                Current Rankings
+              </div>
 
-                const medalBorder = hasSelfie
-                  ? place === 1
-                    ? "3px solid rgba(212,175,55,0.95)"
-                    : place === 2
-                    ? "3px solid rgba(192,192,192,0.95)"
-                    : "3px solid rgba(205,127,50,0.95)"
-                  : "2px dashed rgba(255,255,255,0.45)";
+              {/* TOP 3 LEADERS */}
+              <div
+                style={{
+                  position: "absolute",
+                  bottom: RANKINGS_CTRL.bottom,
+                  left: RANKINGS_CTRL.centerLeft,
+                  transform: `translateX(calc(-50% + ${RANKINGS_CTRL.offsetX}))`,
+                  display: "flex",
+                  gap: RANKINGS_CTRL.groupGap,
+                  zIndex: 20,
+                  pointerEvents: "none",
+                }}
+              >
+                {[1, 2, 3].map((place) => {
+                  const row = topRanks.find((r) => r.place === place);
+                  const hasSelfie = !!row?.selfieUrl;
 
-                const medalGlow = hasSelfie
-                  ? place === 1
-                    ? "0 0 18px rgba(212,175,55,0.30)"
-                    : place === 2
-                    ? "0 0 16px rgba(192,192,192,0.22)"
-                    : "0 0 16px rgba(205,127,50,0.22)"
-                  : "none";
+                  const medalBorder = hasSelfie
+                    ? place === 1
+                      ? "3px solid rgba(212,175,55,0.95)"
+                      : place === 2
+                      ? "3px solid rgba(192,192,192,0.95)"
+                      : "3px solid rgba(205,127,50,0.95)"
+                    : "2px dashed rgba(255,255,255,0.45)";
 
-                return (
-                  <div
-                    key={place}
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns: `${RANKINGS_CTRL.avatarSize}px auto`,
-                      gridTemplateRows: "auto auto",
-                      columnGap: RANKINGS_CTRL.nameGap,
-                      alignItems: "center",
-                      fontWeight: 900,
-                      opacity: 0.92,
-                    }}
-                  >
+                  const medalGlow = hasSelfie
+                    ? place === 1
+                      ? "0 0 18px rgba(212,175,55,0.30)"
+                      : place === 2
+                      ? "0 0 16px rgba(192,192,192,0.22)"
+                      : "0 0 16px rgba(205,127,50,0.22)"
+                    : "none";
+
+                  return (
                     <div
-                      className={place === 1 && hasSelfie ? "fi-medal-breathe" : ""}
+                      key={place}
                       style={{
-                        gridColumn: "1 / 2",
-                        gridRow: "1 / 2",
-                        width: RANKINGS_CTRL.avatarSize,
-                        height: RANKINGS_CTRL.avatarSize,
-                        borderRadius: "50%",
-                        overflow: "hidden",
-                        background: "rgba(255,255,255,0.12)",
-                        border: medalBorder,
-                        boxShadow: hasSelfie ? medalGlow : "none",
+                        display: "grid",
+                        gridTemplateColumns: `${RANKINGS_CTRL.avatarSize}px auto`,
+                        gridTemplateRows: "auto auto",
+                        columnGap: RANKINGS_CTRL.nameGap,
+                        alignItems: "center",
+                        fontWeight: 900,
+                        opacity: 0.92,
                       }}
                     >
-                      {hasSelfie ? (
-                        <img
-                          src={row!.selfieUrl as string}
-                          alt={row!.name}
-                          style={{
-                            width: "100%",
-                            height: "100%",
-                            objectFit: "cover",
-                            display: "block",
-                          }}
-                        />
-                      ) : null}
-                    </div>
+                      <div
+                        className={place === 1 && hasSelfie ? "fi-medal-breathe" : ""}
+                        style={{
+                          gridColumn: "1 / 2",
+                          gridRow: "1 / 2",
+                          width: RANKINGS_CTRL.avatarSize,
+                          height: RANKINGS_CTRL.avatarSize,
+                          borderRadius: "50%",
+                          overflow: "hidden",
+                          background: "rgba(255,255,255,0.12)",
+                          border: medalBorder,
+                          boxShadow: hasSelfie ? medalGlow : "none",
+                        }}
+                      >
+                        {hasSelfie ? (
+                          <img
+                            src={row!.selfieUrl as string}
+                            alt={row!.name}
+                            style={{
+                              width: "100%",
+                              height: "100%",
+                              objectFit: "cover",
+                              display: "block",
+                            }}
+                          />
+                        ) : null}
+                      </div>
 
-                    <div
-                      style={{
-                        gridColumn: "2 / 3",
-                        gridRow: "1 / 2",
-                        fontSize: "clamp(1.05rem,1.3vw,1.5rem)",
-                        whiteSpace: "nowrap",
-                        maxWidth: RANKINGS_CTRL.nameMaxWidth,
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        color: "rgba(255,255,255,0.92)",
-                        textShadow: "0 2px 10px rgba(0,0,0,0.45)",
-                      }}
-                    >
-                      {row?.name || "—"}
-                    </div>
+                      <div
+                        style={{
+                          gridColumn: "2 / 3",
+                          gridRow: "1 / 2",
+                          fontSize: "clamp(1.05rem,1.3vw,1.5rem)",
+                          whiteSpace: "nowrap",
+                          maxWidth: RANKINGS_CTRL.nameMaxWidth,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          color: "rgba(255,255,255,0.92)",
+                          textShadow: "0 2px 10px rgba(0,0,0,0.45)",
+                        }}
+                      >
+                        {row?.name || "—"}
+                      </div>
 
-                    <div
-                      style={{
-                        gridColumn: "1 / 2",
-                        gridRow: "2 / 3",
-                        justifySelf: "center",
-                        marginTop: RANKINGS_CTRL.placeTopMargin,
-                        fontSize: "clamp(1rem,1.2vw,1.25rem)",
-                        opacity: 0.9,
-                        textShadow: "0 8px 20px rgba(0,0,0,0.4)",
-                      }}
-                    >
-                      {place === 1 ? "1st" : place === 2 ? "2nd" : "3rd"}
+                      <div
+                        style={{
+                          gridColumn: "1 / 2",
+                          gridRow: "2 / 3",
+                          justifySelf: "center",
+                          marginTop: RANKINGS_CTRL.placeTopMargin,
+                          fontSize: "clamp(1rem,1.2vw,1.25rem)",
+                          opacity: 0.9,
+                          textShadow: "0 8px 20px rgba(0,0,0,0.4)",
+                        }}
+                      >
+                        {place === 1 ? "1st" : place === 2 ? "2nd" : "3rd"}
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
-            </div>
+                  );
+                })}
+              </div>
+            </>
           )}
 
           {/* LOGO – hide during podium */}
