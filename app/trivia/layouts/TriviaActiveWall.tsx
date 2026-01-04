@@ -396,7 +396,9 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
   useEffect(() => {
     syncServerOffset();
     const id = window.setInterval(syncServerOffset, 15000);
-    return () => window.clearInterval(id);
+    return () => {
+      clearInterval(id);
+    };
   }, []);
 
   /* -------------------------------------------------- */
@@ -1234,7 +1236,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                       borderRadius: 24,
                       position: "relative",
                       overflow: "hidden",
-                      padding: "4vh 4vw",
+                      padding: "2vh 4vw", // <-- CHANGED HERE
                       color: "#fff",
                       boxShadow: "0 25px 90px rgba(0,0,0,0.35)",
                     }}
