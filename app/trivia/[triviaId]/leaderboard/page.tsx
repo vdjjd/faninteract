@@ -72,17 +72,9 @@ const UI = {
   avatar: 64,
 };
 
-/**
- * 🔧 SAFE HORIZONTAL BOUNDS FOR LEADERBOARD ROWS
- * - left: must clear the QR zone (bottom-left)
- * - right: must clear the logo zone (top-right)
- *
- * Tweak these two values on localhost to line up perfectly
- * with your QR + logo overlays on the main wall.
- */
 const SAFE_BOUNDS = {
-  left: "18vw", // move this right if QR still overlaps
-  right: "18vw", // move this left if logo still overlaps
+  left: "18vw",
+  right: "18vw",
 };
 
 const FALLBACK_BG = "linear-gradient(to bottom right,#1b2735,#090a0f)";
@@ -95,7 +87,6 @@ export default function TriviaLeaderboardPage() {
   const rowsRef = useRef<LeaderRow[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // 🎨 background from trivia card
   const [bg, setBg] = useState<string>(FALLBACK_BG);
   const [brightness, setBrightness] = useState<number>(100);
 
@@ -136,16 +127,12 @@ export default function TriviaLeaderboardPage() {
 
       if (cancelled) return;
 
-      if (!error && data) {
-        applyBackgroundFromRow(data);
-      } else {
-        applyBackgroundFromRow(null);
-      }
+      if (!error && data) applyBackgroundFromRow(data);
+      else applyBackgroundFromRow(null);
     }
 
     loadTriviaBg();
 
-    // Optional: live updates if host changes background mid-game
     const channel = supabase
       .channel(`leaderboard-trivia-${triviaId}`)
       .on(
@@ -172,7 +159,7 @@ export default function TriviaLeaderboardPage() {
   }, [triviaId]);
 
   /* -------------------------------------------------- */
-  /* LEADERBOARD DATA (READ-ONLY)                        */
+  /* LEADERBOARD DATA (READ ONLY)                        */
   /* -------------------------------------------------- */
   useEffect(() => {
     if (!triviaId) return;
@@ -182,7 +169,6 @@ export default function TriviaLeaderboardPage() {
     async function loadLeaderboard() {
       if (!rowsRef.current.length) setLoading(true);
 
-      // Latest running/waiting session for this trivia card
       const { data: session, error: sessionErr } = await supabase
         .from("trivia_sessions")
         .select("id,status,created_at")
@@ -246,9 +232,7 @@ export default function TriviaLeaderboardPage() {
           )
           .in("id", guestIds);
 
-        if (guestsErr) {
-          console.warn("⚠️ guest_profiles fetch error:", guestsErr);
-        } else {
+        if (!guestsErr) {
           for (const g of guests || []) {
             guestMap.set(g.id, {
               name: formatName(g?.first_name, g?.last_name),
@@ -293,11 +277,6 @@ export default function TriviaLeaderboardPage() {
     };
   }, [triviaId]);
 
-  // ✅ IMPORTANT:
-  // This page is now READ-ONLY.
-  // It does NOT advance current_question or change any session fields.
-  // That prevents multi-client "double advance" and the Q1→Q3 / Q3→Q8 skipping.
-
   return (
     <div
       style={{
@@ -312,7 +291,6 @@ export default function TriviaLeaderboardPage() {
         justifyContent: "center",
       }}
     >
-      {/* TITLE */}
       <div
         style={{
           position: "absolute",
@@ -328,13 +306,12 @@ export default function TriviaLeaderboardPage() {
         Leaderboard
       </div>
 
-      {/* LIST CONTAINER */}
       <div
         style={{
           position: "absolute",
           top: UI.listTop,
-          left: SAFE_BOUNDS.left, // 🔧 start to the right of QR
-          right: SAFE_BOUNDS.right, // 🔧 end to the left of logo
+          left: SAFE_BOUNDS.left,
+          right: SAFE_BOUNDS.right,
           maxWidth: UI.maxWidth,
           margin: "0 auto",
         }}
@@ -352,13 +329,7 @@ export default function TriviaLeaderboardPage() {
         )}
 
         {!loading && rows.length > 0 && (
-          <div
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              gap: UI.rowGap,
-            }}
-          >
+          <div style={{ display: "flex", flexDirection: "column", gap: UI.rowGap }}>
             {rows.slice(0, 10).map((r) => {
               const isTop3 = r.rank <= 3;
 
@@ -376,19 +347,10 @@ export default function TriviaLeaderboardPage() {
                     border: isTop3
                       ? "2px solid rgba(190,242,100,0.55)"
                       : "1px solid rgba(255,255,255,0.15)",
-                    boxShadow: isTop3
-                      ? "0 0 28px rgba(190,242,100,0.22)"
-                      : "none",
+                    boxShadow: isTop3 ? "0 0 28px rgba(190,242,100,0.22)" : "none",
                   }}
                 >
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 18,
-                    }}
-                  >
-                    {/* Avatar */}
+                  <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
                     <div
                       style={{
                         width: UI.avatar,
@@ -409,20 +371,10 @@ export default function TriviaLeaderboardPage() {
                         <img
                           src={r.selfieUrl}
                           alt={r.name}
-                          style={{
-                            width: "100%",
-                            height: "100%",
-                            objectFit: "cover",
-                          }}
+                          style={{ width: "100%", height: "100%", objectFit: "cover" }}
                         />
                       ) : (
-                        <div
-                          style={{
-                            fontWeight: 900,
-                            fontSize: "1.25rem",
-                            opacity: 0.9,
-                          }}
-                        >
+                        <div style={{ fontWeight: 900, fontSize: "1.25rem", opacity: 0.9 }}>
                           {r.rank}
                         </div>
                       )}
@@ -449,7 +401,6 @@ export default function TriviaLeaderboardPage() {
                       )}
                     </div>
 
-                    {/* Name */}
                     <div
                       style={{
                         fontSize: "clamp(1.3rem,2.2vw,2.4rem)",
@@ -464,13 +415,7 @@ export default function TriviaLeaderboardPage() {
                     </div>
                   </div>
 
-                  {/* Points */}
-                  <div
-                    style={{
-                      fontSize: "clamp(1.6rem,2.6vw,3rem)",
-                      fontWeight: 900,
-                    }}
-                  >
+                  <div style={{ fontSize: "clamp(1.6rem,2.6vw,3rem)", fontWeight: 900 }}>
                     {r.points}
                   </div>
                 </div>
