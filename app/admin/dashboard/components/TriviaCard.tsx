@@ -166,10 +166,11 @@ export default function TriviaCard({
   const [pauseBusy, setPauseBusy] = useState(false);
 
   /* ------------------------------------------------------------
-     PARTICIPANTS / PENDING COUNTS
+     PARTICIPANTS / PENDING / ACTIVE COUNTS
   ------------------------------------------------------------ */
   const [participantsCount, setParticipantsCount] = useState(0);
   const [pendingCount, setPendingCount] = useState(0);
+  const [activePlayersCount, setActivePlayersCount] = useState(0); // ⬅️ NEW
 
   /* ------------------------------------------------------------
      LEADERBOARD STATE
@@ -417,14 +418,14 @@ export default function TriviaCard({
   }
 
   /* ------------------------------------------------------------
-     PARTICIPANTS / PENDING COUNTS
+     PARTICIPANTS / PENDING / ACTIVE COUNTS
   ------------------------------------------------------------ */
   async function loadCounts() {
+    // 1️⃣ Find the MOST RECENT session for this trivia card (any status)
     const { data: session, error: sessionErr } = await supabase
       .from("trivia_sessions")
       .select("id,status,created_at")
       .eq("trivia_card_id", trivia.id)
-      .neq("status", "finished")
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle();
@@ -432,12 +433,14 @@ export default function TriviaCard({
     if (sessionErr || !session) {
       setParticipantsCount(0);
       setPendingCount(0);
+      setActivePlayersCount(0);
       setActiveSessionId(null);
       return;
     }
 
     setActiveSessionId(session.id);
 
+    // 2️⃣ Load players for this session
     const { data: players, error: playersErr } = await supabase
       .from("trivia_players")
       .select("id,status")
@@ -446,11 +449,37 @@ export default function TriviaCard({
     if (playersErr || !players) {
       setParticipantsCount(0);
       setPendingCount(0);
+      setActivePlayersCount(0);
       return;
     }
 
     setParticipantsCount(players.length);
     setPendingCount(players.filter((p) => p.status === "pending").length);
+
+    // 3️⃣ ACTIVE = players who have at least one answer row
+    if (!players.length) {
+      setActivePlayersCount(0);
+      return;
+    }
+
+    const playerIds = players.map((p) => p.id);
+
+    const { data: answers, error: answersErr } = await supabase
+      .from("trivia_answers")
+      .select("player_id")
+      .in("player_id", playerIds);
+
+    if (answersErr || !answers) {
+      setActivePlayersCount(0);
+      return;
+    }
+
+    const activeSet = new Set<string>();
+    for (const a of answers) {
+      if (a.player_id) activeSet.add(a.player_id as string);
+    }
+
+    setActivePlayersCount(activeSet.size);
   }
 
   useEffect(() => {
@@ -934,7 +963,7 @@ export default function TriviaCard({
   }
 
   /* ------------------------------------------------------------
-     STOP TRIVIA
+     STOP TRIVIA (go back to Inactive wall, keep players)
   ------------------------------------------------------------ */
   async function handleStopTrivia() {
     if (playTimeoutRef.current) {
@@ -943,6 +972,7 @@ export default function TriviaCard({
     }
     playLockRef.current = false;
 
+    // ⬇️ Card goes "finished" so wall shows Inactive view
     await supabase
       .from("trivia_cards")
       .update({
@@ -951,11 +981,57 @@ export default function TriviaCard({
       })
       .eq("id", trivia.id);
 
-    await supabase
+    // ⬇️ Keep the most recent session available to replay with same players
+    const { data: session, error: sessionErr } = await supabase
       .from("trivia_sessions")
-      .update({ status: "finished", paused_at: null })
+      .select("id,status,created_at")
       .eq("trivia_card_id", trivia.id)
-      .neq("status", "finished");
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (!sessionErr && session?.id) {
+      // Put session into neutral "waiting" state
+      await supabase
+        .from("trivia_sessions")
+        .update({ status: "waiting", paused_at: null })
+        .eq("id", session.id);
+
+      // 🔍 Clean out APPROVED players who never answered a question
+      const { data: players, error: playersErr } = await supabase
+        .from("trivia_players")
+        .select("id,status")
+        .eq("session_id", session.id);
+
+      if (!playersErr && players && players.length) {
+        const playerIds = players.map((p) => p.id);
+
+        const { data: answers, error: answersErr } = await supabase
+          .from("trivia_answers")
+          .select("player_id")
+          .in("player_id", playerIds);
+
+        if (!answersErr && answers) {
+          const activeSet = new Set<string>(
+            answers.map((a: any) => a.player_id as string)
+          );
+
+          const inactiveIds = players
+            .filter(
+              (p) =>
+                p.status === "approved" && !activeSet.has(p.id as string)
+            )
+            .map((p) => p.id);
+
+          if (inactiveIds.length > 0) {
+            await supabase
+              .from("trivia_players")
+              .delete()
+              .in("id", inactiveIds);
+          }
+        }
+      }
+    }
 
     setCardStatus("finished");
     setCardCountdownActive(false);
@@ -1195,7 +1271,7 @@ export default function TriviaCard({
               </button>
             </div>
 
-            {/* COL 3: Participants + Moderate Players */}
+            {/* COL 3: Players + Moderate Players */}
             <div className={cn("flex", "flex-col", "gap-2")}>
               <div
                 className={cn(
@@ -1210,8 +1286,16 @@ export default function TriviaCard({
                   "min-h-[72px]"
                 )}
               >
-                <p className={cn("text-xs", "opacity-75")}>Participants</p>
-                <p className={cn("text-lg", "font-bold")}>{participantsCount}</p>
+                <p className={cn("text-xs", "opacity-75")}>Players</p>
+                <p className={cn("text-lg", "font-bold")}>
+                  {participantsCount}
+                </p>
+                <p className={cn("text-[0.7rem]", "opacity-75", "mt-1")}>
+                  Active:{" "}
+                  <span className="font-semibold">
+                    {activePlayersCount}
+                  </span>
+                </p>
               </div>
 
               <button
