@@ -318,6 +318,9 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
 
   const questionRef = useRef<HTMLDivElement | null>(null);
 
+  // ✅ track if question is long (> ~4 lines) to shrink font
+  const [isLongQuestion, setIsLongQuestion] = useState(false);
+
   const [topRanks, setTopRanks] = useState<TopRankRow[]>([]);
   const topRanksRef = useRef<TopRankRow[]>([]);
 
@@ -592,6 +595,38 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
     if (isPaused) setLocked(true);
     else setLocked(wallPhase !== "question");
   }, [wallPhase, isPaused]);
+
+  /* -------------------------------------------------- */
+  /* ✅ Auto-detect long questions (> ~4 lines)           */
+  /* -------------------------------------------------- */
+  useEffect(() => {
+    const el = questionRef.current;
+    if (!el || !question?.question_text || view !== "question") {
+      setIsLongQuestion(false);
+      return;
+    }
+
+    const handle = window.setTimeout(() => {
+      const style = window.getComputedStyle(el);
+      const fontSizePx = parseFloat(style.fontSize || "0");
+      const lineHeightRaw = parseFloat(style.lineHeight || "0");
+      const lineHeightPx =
+        !Number.isNaN(lineHeightRaw) && lineHeightRaw > 0
+          ? lineHeightRaw
+          : fontSizePx * 1.2;
+
+      const maxHeight = lineHeightPx * 4; // target ~4 lines
+      const actual = el.scrollHeight;
+
+      if (actual > maxHeight + 4) {
+        setIsLongQuestion(true);
+      } else {
+        setIsLongQuestion(false);
+      }
+    }, 0);
+
+    return () => window.clearTimeout(handle);
+  }, [question?.question_text, view]);
 
   /* -------------------------------------------------- */
   /* ✅ QUESTION TIMER                                    */
@@ -1271,7 +1306,9 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                             wordBreak: "break-word",
                             overflowWrap: "anywhere",
                             textShadow: "0 10px 40px rgba(0,0,0,0.65)",
-                            fontSize: "clamp(2.4rem,3.5vw,4.5rem)",
+                            fontSize: isLongQuestion
+                              ? "clamp(2rem,2.7vw,3.2rem)"
+                              : "clamp(2.4rem,3.5vw,4.5rem)",
                             lineHeight: 1.12,
                           }}
                         >
@@ -1405,7 +1442,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                           : null}
                       </div>
 
-                      {/* ⬇️ "Current Rankings" label was here — removed on purpose */}
+                      {/* ⬇️ "Current Rankings" label was here — intentionally removed */}
                     </div>
 
                     {/* ANSWER OVERLAY */}
@@ -1825,6 +1862,29 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
               })}
             </div>
           )}
+
+          {/* Question X of Y label (centered under rankings, outside glass) */}
+          {view === "question" &&
+            currentQuestionNumber != null &&
+            totalQuestions != null &&
+            totalQuestions > 0 && (
+              <div
+                style={{
+                  position: "absolute",
+                  bottom: "5.4vh", // under RANKINGS_CTRL.bottom
+                  left: "50%",
+                  transform: "translateX(-50%)",
+                  zIndex: 19,
+                  pointerEvents: "none",
+                  color: "rgba(255,255,255,0.9)",
+                  fontWeight: 700,
+                  fontSize: "clamp(1.1rem,1.5vw,1.7rem)",
+                  textShadow: "0 2px 10px rgba(0,0,0,0.7)",
+                }}
+              >
+                Question {currentQuestionNumber} of {totalQuestions}
+              </div>
+            )}
 
           {/* LOGO */}
           {view !== "podium" && (
