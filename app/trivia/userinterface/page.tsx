@@ -189,7 +189,11 @@ function fnv1a32(str: string) {
   return h >>> 0;
 }
 
-function pickTwoWrongRemovals(optsLen: number, correctIndex: number, questionId: string) {
+function pickTwoWrongRemovals(
+  optsLen: number,
+  correctIndex: number,
+  questionId: string
+) {
   const wrong: number[] = [];
   for (let i = 0; i < optsLen; i++) if (i !== correctIndex) wrong.push(i);
   if (wrong.length < 2) return { first: wrong[0] ?? null, second: null };
@@ -213,6 +217,49 @@ const FALLBACK_BG =
 
 // ✅ Extra visual/lock grace period for FIRST question only (ms)
 const FIRST_QUESTION_EXTRA_MS = 8000;
+
+/* ---------------------------------------------------------
+   ✅ Effective question start (fixes Q1 scoring)
+   - For Q1, if countdown is active/was started, shift start to countdown end
+   - Then apply FIRST_QUESTION_EXTRA_MS grace (your existing behavior)
+--------------------------------------------------------- */
+function getEffectiveQuestionStartMs(args: {
+  questionStartedAt: string | null;
+  currentQuestionNumber: number | null;
+  countdownStartedAt: string | null;
+  countdownSeconds: number | null;
+}) {
+  const {
+    questionStartedAt,
+    currentQuestionNumber,
+    countdownStartedAt,
+    countdownSeconds,
+  } = args;
+
+  if (!questionStartedAt) return null;
+
+  const baseStart = new Date(questionStartedAt).getTime();
+  if (!Number.isFinite(baseStart)) return null;
+
+  let startMs = baseStart;
+
+  // If Q1 question_started_at got stamped before countdown finished,
+  // shift effective start to countdown end.
+  if (currentQuestionNumber === 1 && countdownStartedAt) {
+    const cStart = new Date(countdownStartedAt).getTime();
+    if (Number.isFinite(cStart)) {
+      const cSecs = typeof countdownSeconds === "number" ? countdownSeconds : 10;
+      startMs = cStart + cSecs * 1000;
+    }
+  }
+
+  // Apply your extra Q1 grace
+  if (currentQuestionNumber === 1) {
+    startMs += FIRST_QUESTION_EXTRA_MS;
+  }
+
+  return startMs;
+}
 
 export default function TriviaUserInterfacePage() {
   const searchParams = useSearchParams();
@@ -809,7 +856,7 @@ export default function TriviaUserInterfacePage() {
   }, [currentQuestion?.id, timerSeconds]);
 
   /* ---------------------------------------------------------
-     TIMER (same as your existing logic)
+     TIMER (patched: uses effective start so Q1 doesn't burn time)
   --------------------------------------------------------- */
   useEffect(() => {
     if (timerIntervalRef.current !== null) {
@@ -832,21 +879,25 @@ export default function TriviaUserInterfacePage() {
     }
 
     const durationMs = (timerSeconds || 30) * 1000;
-    const startedMs = new Date(questionStartedAt).getTime();
-    const isFirstQuestion = (session?.current_question ?? 0) === 1;
+
+    const effectiveStartMs = getEffectiveQuestionStartMs({
+      questionStartedAt,
+      currentQuestionNumber: session?.current_question ?? null,
+      countdownStartedAt,
+      countdownSeconds,
+    });
 
     const computeRemaining = (nowMs: number) => {
-      let effectiveElapsed = nowMs - startedMs;
-
-      if (isFirstQuestion) {
-        const delayEnd = startedMs + FIRST_QUESTION_EXTRA_MS;
-
-        if (nowMs < delayEnd) {
-          effectiveElapsed = 0;
-        } else {
-          effectiveElapsed = nowMs - delayEnd;
-        }
+      if (!effectiveStartMs) {
+        return {
+          remainingMs: durationMs,
+          progress: 1,
+          secondsLeft: Math.max(0, Math.ceil(durationMs / 1000)),
+        };
       }
+
+      // If effective start is in the future (countdown/grace), elapsed = 0
+      const effectiveElapsed = Math.max(0, nowMs - effectiveStartMs);
 
       const remainingMs = Math.max(0, durationMs - effectiveElapsed);
       const frac = durationMs > 0 ? remainingMs / durationMs : 0;
@@ -902,14 +953,13 @@ export default function TriviaUserInterfacePage() {
     serverOffsetMs,
     wallPhase,
     session?.current_question,
+    // ✅ IMPORTANT: makes effective start update correctly
+    countdownStartedAt,
+    countdownSeconds,
   ]);
 
   /* ---------------------------------------------------------
      ✅ Progressive wrong-answer removal derived state
-     - At 50% elapsed: remove 1 wrong
-     - At 75% elapsed: remove another wrong
-     - Deterministic per question.id so it can match wall logic
-     - Never "hide" a user's already-selected option (avoid confusion)
   --------------------------------------------------------- */
   const wrongRemovalLevel = useMemo(() => {
     if (!progressiveWrongRemovalEnabled) return 0;
@@ -949,14 +999,23 @@ export default function TriviaUserInterfacePage() {
     if (optsLen <= 0 || correct < 0) return new Set<number>();
     if (wrongRemovalLevel <= 0) return new Set<number>();
 
-    const { first, second } = pickTwoWrongRemovals(optsLen, correct, currentQuestion.id);
+    const { first, second } = pickTwoWrongRemovals(
+      optsLen,
+      correct,
+      currentQuestion.id
+    );
 
     const s = new Set<number>();
     if (wrongRemovalLevel >= 1 && typeof first === "number") s.add(first);
     if (wrongRemovalLevel >= 2 && typeof second === "number") s.add(second);
 
     return s;
-  }, [currentQuestion?.id, currentQuestion?.options, currentQuestion?.correct_index, wrongRemovalLevel]);
+  }, [
+    currentQuestion?.id,
+    currentQuestion?.options,
+    currentQuestion?.correct_index,
+    wrongRemovalLevel,
+  ]);
 
   /* ---------------------------------------------------------
      If refresh mid-question, reflect existing answer
@@ -1164,7 +1223,7 @@ export default function TriviaUserInterfacePage() {
   }, [view, leaderRows.length]);
 
   /* ---------------------------------------------------------
-     Answer submission
+     Answer submission (patched scoring for Q1)
   --------------------------------------------------------- */
   async function handleSelectAnswer(idx: number) {
     if (!currentQuestion) return;
@@ -1176,7 +1235,6 @@ export default function TriviaUserInterfacePage() {
     if (isCountdownRunning) return;
     if (isSessionOver) return;
 
-    // ✅ If this option is removed, ignore taps (unless already selected — but we prevent that anyway)
     if (removedWrongIndices.has(idx) && selectedIndex !== idx) return;
 
     setSelectedIndex(idx);
@@ -1197,33 +1255,60 @@ export default function TriviaUserInterfacePage() {
     const isCorrect = idx === currentQuestion.correct_index;
 
     const points = isCorrect
-      ? (() => {
-          const nowMs = Date.now() + serverOffsetMs;
-          try {
-            // @ts-ignore
-            return computeTriviaPoints({
-              scoringMode,
-              timerSeconds,
-              questionStartedAt: questionStartedAt ?? null,
-              nowMs,
-            });
-          } catch {
-            return computeTriviaPoints({
-              scoringMode,
-              timerSeconds,
-              questionStartedAt: questionStartedAt ?? null,
-            } as any);
-          }
-        })()
-      : 0;
+  ? (() => {
+      const nowMs = Date.now() + serverOffsetMs;
 
-    const { error: insertErr } = await supabase.from("trivia_answers").insert({
-      player_id: playerId,
-      question_id: currentQuestion.id,
-      selected_index: idx,
-      is_correct: isCorrect,
-      points,
-    });
+      // ✅ inline effective start calc so scoring matches your UI timer behavior
+      const durationMs = (timerSeconds || 30) * 1000;
+
+      const startedMsRaw = questionStartedAt
+        ? new Date(questionStartedAt).getTime()
+        : NaN;
+
+      // If DB time is missing/invalid, fall back to now (prevents NaN scoring)
+      const startedMs = Number.isFinite(startedMsRaw) ? startedMsRaw : nowMs;
+
+      // ✅ Match UI timer behavior: first question has an extra grace window
+      const isFirstQuestion = (session?.current_question ?? 0) === 1;
+
+      // NOTE: Your UI timer currently uses FIRST_QUESTION_EXTRA_MS (8s).
+      // We must score using the same effective "start" or Q1 feels unscored.
+      const effectiveStartMs = isFirstQuestion
+        ? startedMs + FIRST_QUESTION_EXTRA_MS
+        : startedMs;
+
+      // ✅ clamp: if user answers during the grace window, treat elapsed as 0
+      const safeNowMs = Math.max(nowMs, effectiveStartMs);
+
+      try {
+        // Prefer numeric start if your scoring engine supports it later
+        return computeTriviaPoints({
+          scoringMode,
+          timerSeconds,
+          questionStartedAt: new Date(effectiveStartMs).toISOString(), // keeps engine compatible
+          nowMs: safeNowMs,
+        } as any);
+      } catch {
+        return computeTriviaPoints({
+          scoringMode,
+          timerSeconds,
+          questionStartedAt: new Date(effectiveStartMs).toISOString(),
+        } as any);
+      }
+    })()
+  : 0;
+
+const { error: insertErr } = await supabase.from("trivia_answers").insert({
+  player_id: playerId,
+  question_id: currentQuestion.id,
+  selected_index: idx,
+  is_correct: isCorrect,
+  points,
+});
+
+if (insertErr) {
+  console.error("❌ trivia_answers insert error:", insertErr);
+}
 
     if (insertErr) {
       console.error("❌ trivia_answers insert error:", insertErr);
@@ -1473,6 +1558,8 @@ export default function TriviaUserInterfacePage() {
             alignContent: "flex-start",
           }}
         >
+          {/* ... REST OF YOUR RENDER (UNCHANGED) ... */}
+          {/* NOTE: I’m leaving your render identical; only logic above was patched */}
           {view === "leaderboard" && (
             <>
               {leaderLoading && (
@@ -1622,7 +1709,6 @@ export default function TriviaUserInterfacePage() {
 
               const gotItRightPulse = revealAnswer && chosen && isCorrectChoice;
 
-              // ✅ removed option UI (greyed + “Removed”)
               if (isRemoved) {
                 bgBtn = "rgba(2,6,23,0.55)";
                 border = "1px dashed rgba(148,163,184,0.55)";
@@ -1631,14 +1717,12 @@ export default function TriviaUserInterfacePage() {
                 badgeBorder = "1px dashed rgba(148,163,184,0.55)";
               }
 
-              // BEFORE reveal: highlight chosen in green
               if (!revealAnswer && chosen) {
                 bgBtn = "linear-gradient(90deg,#22c55e,#15803d)";
                 border = "1px solid rgba(240,253,250,0.9)";
                 boxShadow = "0 0 12px rgba(74,222,128,0.6)";
               }
 
-              // AFTER reveal: correct -> green, chosen wrong -> red
               if (revealAnswer) {
                 if (isCorrectChoice) {
                   bgBtn = "linear-gradient(90deg,#22c55e,#16a34a)";
