@@ -6,7 +6,7 @@ import { getSupabaseClient } from "@/lib/supabaseClient";
 import { computeTriviaPoints } from "@/lib/trivia/triviaScoringEngine";
 import { useTriviaCardFlags } from "@/lib/trivia/hooks/useTriviaCardFlags";
 
-// ✅ NEW: herd highlight (same hook the wall uses)
+// ✅ herd highlight (same hook the wall uses)
 import { useHerdHighlight } from "@/lib/trivia/wall/useHerdHighlight";
 
 const supabase = getSupabaseClient();
@@ -43,6 +43,9 @@ type LeaderRow = {
   name: string;
   points: number;
   selfieUrl?: string | null;
+
+  // ✅ NEW: streak (ready for UI highlight later)
+  streak?: number;
 };
 
 type HostRow = {
@@ -105,12 +108,87 @@ function sameLeaderRows(a: LeaderRow[], b: LeaderRow[]) {
       a[i].rank !== b[i].rank ||
       a[i].name !== b[i].name ||
       a[i].points !== b[i].points ||
-      (a[i].selfieUrl || null) !== (b[i].selfieUrl || null)
+      (a[i].selfieUrl || null) !== (b[i].selfieUrl || null) ||
+      (a[i].streak || 0) !== (b[i].streak || 0)
     ) {
       return false;
     }
   }
   return true;
+}
+
+/* ---------------------------------------------------------
+   ✅ STREAK MULTIPLIER HELPERS
+--------------------------------------------------------- */
+function streakBonusPct(streak: number): number {
+  // 2 => 0.10, 3 => 0.20, 4 => 0.30, 5 => 0.40, 6+ => 0.50
+  if (!Number.isFinite(streak) || streak < 2) return 0;
+  return Math.min(0.1 * (streak - 1), 0.5);
+}
+
+function computeStreakBeforeCurrentQuestion(args: {
+  answers: { question_id: string; is_correct: boolean | null }[];
+  questions: any[];
+  currentQuestionIndex: number;
+}): number {
+  const { answers, questions, currentQuestionIndex } = args;
+  if (!Array.isArray(questions) || questions.length === 0) return 0;
+  if (!Number.isFinite(currentQuestionIndex)) return 0;
+
+  const qIndexById = new Map<string, number>();
+  for (let i = 0; i < questions.length; i++) {
+    const id = questions[i]?.id;
+    if (typeof id === "string") qIndexById.set(id, i);
+  }
+
+  const ansByIdx = new Map<number, boolean>();
+  for (const a of answers || []) {
+    const qi = qIndexById.get(a.question_id);
+    if (typeof qi === "number") ansByIdx.set(qi, !!a.is_correct);
+  }
+
+  let streak = 0;
+  for (let i = currentQuestionIndex - 1; i >= 0; i--) {
+    if (!ansByIdx.has(i)) break; // missing answer breaks streak
+    if (!ansByIdx.get(i)) break; // wrong breaks streak
+    streak++;
+  }
+  return streak;
+}
+
+function computeStreakEndingAtLatestAnswered(args: {
+  answers: { question_id: string; is_correct: boolean | null }[];
+  questions: any[];
+}): number {
+  const { answers, questions } = args;
+  if (!Array.isArray(questions) || questions.length === 0) return 0;
+
+  const qIndexById = new Map<string, number>();
+  for (let i = 0; i < questions.length; i++) {
+    const id = questions[i]?.id;
+    if (typeof id === "string") qIndexById.set(id, i);
+  }
+
+  const ansByIdx = new Map<number, boolean>();
+  let latestIdx = -1;
+
+  for (const a of answers || []) {
+    const qi = qIndexById.get(a.question_id);
+    if (typeof qi === "number") {
+      ansByIdx.set(qi, !!a.is_correct);
+      if (qi > latestIdx) latestIdx = qi;
+    }
+  }
+
+  if (latestIdx < 0) return 0;
+
+  let streak = 0;
+  for (let i = latestIdx; i >= 0; i--) {
+    if (!ansByIdx.has(i)) break;
+    if (!ansByIdx.get(i)) break;
+    streak++;
+  }
+  return streak;
 }
 
 /* ---------------------------------------------------------
@@ -363,14 +441,16 @@ export default function TriviaUserInterfacePage() {
   const countdownActive = flags?.countdownActive ?? false;
   const countdownStartedAt = flags?.countdownStartedAt ?? null;
 
-  // ✅ NEW: Highlight The Herd (try to read from flags, but we’ll also fallback-load from DB)
+  // ✅ NEW: streak flag (tolerate camelCase or snake_case)
+  const streakMultiplierEnabled =
+    (flags as any)?.streakMultiplierEnabled ??
+    (flags as any)?.streak_multiplier_enabled ??
+    false;
+
+  // ✅ Highlight The Herd (try to read from flags, but we’ll also fallback-load from DB)
   const herdEnabledFromFlags = useMemo(() => {
     const f: any = flags as any;
-    return (
-      readHerdEnabled(f) ||
-      readHerdEnabled(f?.new) || // tolerate odd shapes
-      false
-    );
+    return readHerdEnabled(f) || readHerdEnabled(f?.new) || false;
   }, [flags]);
 
   const [highlightTheHerdEnabled, setHighlightTheHerdEnabled] =
@@ -504,7 +584,9 @@ export default function TriviaUserInterfacePage() {
           .maybeSingle();
 
         if (!cancelled && !e1 && herd1) {
-          setHighlightTheHerdEnabled(!!(herd1 as any).highlight_the_herd_enabled);
+          setHighlightTheHerdEnabled(
+            !!(herd1 as any).highlight_the_herd_enabled
+          );
         } else {
           const { data: herd2, error: e2 } = await supabase
             .from("trivia_cards")
@@ -1082,6 +1164,7 @@ export default function TriviaUserInterfacePage() {
 
   /* ---------------------------------------------------------
      ✅ Leaderboard loader (ONLY players who have points)
+     ✅ Also computes streak (ready for later UI)
   --------------------------------------------------------- */
   useEffect(() => {
     if (!session?.id) return;
@@ -1114,7 +1197,7 @@ export default function TriviaUserInterfacePage() {
 
       const { data: answers, error: answersErr } = await supabase
         .from("trivia_answers")
-        .select("player_id,points")
+        .select("player_id,points,question_id,is_correct")
         .in("player_id", playerIds);
 
       if (answersErr) {
@@ -1124,14 +1207,32 @@ export default function TriviaUserInterfacePage() {
       }
 
       const totals = new Map<string, number>();
+      const byPlayer = new Map<string, any[]>();
+
       for (const a of answers || []) {
+        const pid = (a as any).player_id as string;
+
         const pts =
           typeof (a as any).points === "number" ? (a as any).points : 0;
-        totals.set(
-          (a as any).player_id,
-          (totals.get((a as any).player_id) || 0) + pts
-        );
+
+        totals.set(pid, (totals.get(pid) || 0) + pts);
+
+        if (!byPlayer.has(pid)) byPlayer.set(pid, []);
+        byPlayer.get(pid)!.push(a);
       }
+
+      // ✅ streaks computed from latest answered question in your questions[] order
+const streaks = new Map<string, number>();
+
+byPlayer.forEach((arr, pid) => {
+  streaks.set(
+    pid,
+    computeStreakEndingAtLatestAnswered({
+      answers: (arr as any) || [],
+      questions,
+    })
+  );
+});
 
       const guestMap = new Map<
         string,
@@ -1169,6 +1270,7 @@ export default function TriviaUserInterfacePage() {
             name: safeName,
             points: totals.get(p.id) || 0,
             selfieUrl: safeSelfie,
+            streak: streaks.get(p.id) || 0,
           };
         })
         .filter((r) => r.points > 0)
@@ -1191,7 +1293,7 @@ export default function TriviaUserInterfacePage() {
       cancelled = true;
       window.clearInterval(id);
     };
-  }, [session?.id, wallPhase]);
+  }, [session?.id, wallPhase, questions]);
 
   /* ---------------------------------------------------------
      ✅ Auto-scroll leaderboard down then back up (when list is long)
@@ -1248,6 +1350,7 @@ export default function TriviaUserInterfacePage() {
 
   /* ---------------------------------------------------------
      Answer submission (patched scoring to match effective start)
+     ✅ Streak Multiplier (optional)
   --------------------------------------------------------- */
   async function handleSelectAnswer(idx: number) {
     if (!currentQuestion) return;
@@ -1278,7 +1381,8 @@ export default function TriviaUserInterfacePage() {
 
     const isCorrect = idx === currentQuestion.correct_index;
 
-    const points = isCorrect
+    // --- base points (time-based)
+    const basePoints = isCorrect
       ? (() => {
           const nowMs = Date.now() + serverOffsetMs;
 
@@ -1309,6 +1413,29 @@ export default function TriviaUserInterfacePage() {
           }
         })()
       : 0;
+
+    // --- streak bonus (optional)
+    let bonusPct = 0;
+
+    if (streakMultiplierEnabled && isCorrect) {
+      const { data: prev, error: prevErr } = await supabase
+        .from("trivia_answers")
+        .select("question_id,is_correct")
+        .eq("player_id", playerId);
+
+      if (!prevErr && Array.isArray(prev)) {
+        const streakBefore = computeStreakBeforeCurrentQuestion({
+          answers: prev as any,
+          questions,
+          currentQuestionIndex,
+        });
+
+        const streakAfter = streakBefore + 1;
+        bonusPct = streakBonusPct(streakAfter);
+      }
+    }
+
+    const points = isCorrect ? Math.round(basePoints * (1 + bonusPct)) : 0;
 
     const { error: insertErr } = await supabase.from("trivia_answers").insert({
       player_id: playerId,

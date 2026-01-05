@@ -1,4 +1,3 @@
-// lib/trivia/hooks/useTriviaCardFlags.ts
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -23,6 +22,9 @@ type TriviaCardFlags = {
   adsEnabled: boolean;
   progressiveWrongRemovalEnabled: boolean;
   highlightTheHerdEnabled: boolean;
+
+  // ✅ NEW: streak multiplier toggle
+  streakMultiplierEnabled: boolean;
 
   // optional display bits (handy for user UI)
   publicName?: string;
@@ -54,6 +56,9 @@ const DEFAULTS = {
   adsEnabled: false,
   progressiveWrongRemovalEnabled: false,
   highlightTheHerdEnabled: false,
+
+  // ✅ NEW
+  streakMultiplierEnabled: false,
 
   publicName: "Trivia Game",
   backgroundType: "gradient",
@@ -96,6 +101,12 @@ function fromRow(id: string, row: any): TriviaCardFlags {
     adsEnabled: !!row?.ads_enabled,
     progressiveWrongRemovalEnabled: !!row?.progressive_wrong_removal_enabled,
     highlightTheHerdEnabled: !!row?.highlight_the_herd_enabled,
+
+    // ✅ NEW
+    streakMultiplierEnabled:
+      typeof row?.streak_multiplier_enabled === "boolean"
+        ? row.streak_multiplier_enabled
+        : DEFAULTS.streakMultiplierEnabled,
 
     publicName: String(row?.public_name ?? DEFAULTS.publicName),
     backgroundType: String(row?.background_type ?? DEFAULTS.backgroundType),
@@ -165,6 +176,10 @@ export function useTriviaCardFlags(
             "ads_enabled",
             "progressive_wrong_removal_enabled",
             "highlight_the_herd_enabled",
+
+            // ✅ NEW
+            "streak_multiplier_enabled",
+
             "public_name",
             "background_type",
             "background_value",
