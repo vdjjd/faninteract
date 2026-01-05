@@ -76,9 +76,19 @@ export default function TriviaCard({
 
   /* ------------------------------------------------------------
      TRIVIA SETTINGS STATE
- ------------------------------------------------------------ */
+  ------------------------------------------------------------ */
+
+  // ✅ Timer allowed options: 30, 15, 12, 10 seconds
+  const TIMER_OPTIONS = [30, 15, 12, 10];
+
+  const normalizeTimerSeconds = (n: any) => {
+    const v = Number(n);
+    if (TIMER_OPTIONS.includes(v)) return v;
+    return 30;
+  };
+
   const [timerSeconds, setTimerSeconds] = useState<number>(
-    trivia?.timer_seconds ?? 30
+    normalizeTimerSeconds(trivia?.timer_seconds ?? 30)
   );
 
   const COUNTDOWN_OPTIONS: Array<{ label: string; value: number }> = [
@@ -127,19 +137,23 @@ export default function TriviaCard({
     useState<boolean>(!!trivia?.progressive_wrong_removal_enabled);
 
   // ✅ Highlight The Herd setting
-  const [highlightTheHerdEnabled, setHighlightTheHerdEnabled] = useState<boolean>(
-    !!trivia?.highlight_the_herd_enabled
-  );
+  const [highlightTheHerdEnabled, setHighlightTheHerdEnabled] =
+    useState<boolean>(!!trivia?.highlight_the_herd_enabled);
 
   // ✅ NEW: Streak Multiplier setting
   const [streakMultiplierEnabled, setStreakMultiplierEnabled] =
     useState<boolean>(!!trivia?.streak_multiplier_enabled);
 
+  // ✅ NEW: Points Type (100s / 1000s / 10000s)
+  const [pointsType, setPointsType] = useState<string>(
+    trivia?.points_type || "100s"
+  );
+
   const [savingSettings, setSavingSettings] = useState(false);
 
   /* ------------------------------------------------------------
      CARD STATUS (LIVE POLLING FROM trivia_cards)
- ------------------------------------------------------------ */
+  ------------------------------------------------------------ */
   const [cardStatus, setCardStatus] = useState<string>(trivia.status);
   const [cardCountdownActive, setCardCountdownActive] = useState<boolean>(
     !!trivia.countdown_active
@@ -157,13 +171,13 @@ export default function TriviaCard({
 
   /* ------------------------------------------------------------
      PARTICIPANTS / PENDING COUNTS
- ------------------------------------------------------------ */
+  ------------------------------------------------------------ */
   const [participantsCount, setParticipantsCount] = useState(0);
   const [pendingCount, setPendingCount] = useState(0);
 
   /* ------------------------------------------------------------
      LEADERBOARD STATE
- ------------------------------------------------------------ */
+  ------------------------------------------------------------ */
   const [leaderboard, setLeaderboard] = useState<LeaderRow[]>([]);
   const [leaderboardLoading, setLeaderboardLoading] = useState(false);
   const lastLeaderboardRef = useRef<LeaderRow[]>([]);
@@ -179,25 +193,28 @@ export default function TriviaCard({
 
   /* ------------------------------------------------------------
      ACTIVE TAB
- ------------------------------------------------------------ */
+  ------------------------------------------------------------ */
   const [activeTab, setActiveTab] = useState<
     "menu" | "questions" | "leaderboard" | "settings1" | "settings2"
   >("menu");
 
   /* ------------------------------------------------------------
      Keep state in sync if parent reloads trivia
- ------------------------------------------------------------ */
+  ------------------------------------------------------------ */
   useEffect(() => {
-    setTimerSeconds(trivia?.timer_seconds ?? 30);
+    setTimerSeconds(normalizeTimerSeconds(trivia?.timer_seconds ?? 30));
     setCountdownSeconds(normalizeCountdownSeconds(trivia?.countdown_seconds ?? 10));
     setPlayMode(trivia?.play_mode || "auto");
     setScoringMode(trivia?.scoring_mode || "100s");
     setRequireSelfie(trivia?.require_selfie ?? true);
     setAdsEnabled(!!trivia?.ads_enabled);
 
-    setProgressiveWrongRemovalEnabled(!!trivia?.progressive_wrong_removal_enabled);
+    setProgressiveWrongRemovalEnabled(
+      !!trivia?.progressive_wrong_removal_enabled
+    );
     setHighlightTheHerdEnabled(!!trivia?.highlight_the_herd_enabled);
     setStreakMultiplierEnabled(!!trivia?.streak_multiplier_enabled);
+    setPointsType(trivia?.points_type || "100s");
 
     setCardStatus(trivia?.status);
     setCardCountdownActive(!!trivia?.countdown_active);
@@ -212,6 +229,7 @@ export default function TriviaCard({
     trivia?.progressive_wrong_removal_enabled,
     trivia?.highlight_the_herd_enabled,
     trivia?.streak_multiplier_enabled,
+    trivia?.points_type,
     trivia?.status,
     trivia?.countdown_active,
   ]);
@@ -236,7 +254,7 @@ export default function TriviaCard({
 
   /* ------------------------------------------------------------
      Poll trivia_cards.status + countdown_active every 2s
- ------------------------------------------------------------ */
+  ------------------------------------------------------------ */
   useEffect(() => {
     let isMounted = true;
 
@@ -246,7 +264,7 @@ export default function TriviaCard({
       const { data, error } = await supabase
         .from("trivia_cards")
         .select(
-          "status, countdown_active, countdown_seconds, background_type, background_value, ads_enabled, progressive_wrong_removal_enabled, highlight_the_herd_enabled, streak_multiplier_enabled"
+          "status, countdown_active, countdown_seconds, background_type, background_value, ads_enabled, progressive_wrong_removal_enabled, highlight_the_herd_enabled, streak_multiplier_enabled, points_type"
         )
         .eq("id", trivia.id)
         .maybeSingle();
@@ -271,6 +289,7 @@ export default function TriviaCard({
       setCountdownSeconds(
         normalizeCountdownSeconds((data as any).countdown_seconds ?? 10)
       );
+      setPointsType(data.points_type || "100s");
 
       // keep parent object in sync (your existing pattern)
       trivia.background_type = data.background_type;
@@ -281,6 +300,7 @@ export default function TriviaCard({
         .progressive_wrong_removal_enabled;
       trivia.highlight_the_herd_enabled = (data as any).highlight_the_herd_enabled;
       trivia.streak_multiplier_enabled = (data as any).streak_multiplier_enabled;
+      trivia.points_type = data.points_type;
     };
 
     pollCard();
@@ -301,7 +321,8 @@ export default function TriviaCard({
     ads_enabled?: boolean;
     progressive_wrong_removal_enabled?: boolean;
     highlight_the_herd_enabled?: boolean;
-    streak_multiplier_enabled?: boolean; // ✅ NEW
+    streak_multiplier_enabled?: boolean;
+    points_type?: string; // ✅ NEW
   }) {
     try {
       setSavingSettings(true);
@@ -372,9 +393,16 @@ export default function TriviaCard({
     await updateTriviaSettings({ streak_multiplier_enabled: value });
   }
 
+  // ✅ NEW: Points Type handler
+  async function handlePointsTypeChange(e: any) {
+    const value = e.target.value || "100s";
+    setPointsType(value);
+    await updateTriviaSettings({ points_type: value });
+  }
+
   /* ------------------------------------------------------------
      FETCH QUESTIONS (ON TAB OPEN)
- ------------------------------------------------------------ */
+  ------------------------------------------------------------ */
   async function loadQuestions() {
     setLoadingQuestions(true);
 
@@ -398,7 +426,7 @@ export default function TriviaCard({
   /* ------------------------------------------------------------
      PARTICIPANTS / PENDING COUNTS (poll every 2s)
      ✅ ALSO sets activeSessionId
- ------------------------------------------------------------ */
+  ------------------------------------------------------------ */
   async function loadCounts() {
     const { data: session, error: sessionErr } = await supabase
       .from("trivia_sessions")
@@ -452,7 +480,7 @@ export default function TriviaCard({
 
   /* ------------------------------------------------------------
      LEADERBOARD LOADER (read-only)
- ------------------------------------------------------------ */
+  ------------------------------------------------------------ */
   async function loadLeaderboard(cancelledRef?: { current: boolean }) {
     if (!trivia?.id) return;
 
@@ -546,7 +574,7 @@ export default function TriviaCard({
 
   /* ------------------------------------------------------------
      LEADERBOARD AUTO-REFRESH (still read-only)
- ------------------------------------------------------------ */
+  ------------------------------------------------------------ */
   useEffect(() => {
     if (activeTab !== "leaderboard") return;
     if (!trivia?.id) return;
@@ -646,7 +674,7 @@ export default function TriviaCard({
 
   /* ------------------------------------------------------------
      QUESTION ACTIONS
- ------------------------------------------------------------ */
+  ------------------------------------------------------------ */
   async function handleSetQuestionActive(id: string, active: boolean) {
     const { data, error } = await supabase
       .from("trivia_questions")
@@ -691,7 +719,7 @@ export default function TriviaCard({
 
   /* ------------------------------------------------------------
      DELETE TRIVIA
- ------------------------------------------------------------ */
+  ------------------------------------------------------------ */
   async function handleDeleteTrivia() {
     const yes = confirm(
       `Delete trivia "${trivia.public_name}"?\n\nThis will permanently remove:\n• The trivia game\n• All questions & answers linked to it\n\nThis cannot be undone.`
@@ -915,7 +943,7 @@ export default function TriviaCard({
 
   /* ------------------------------------------------------------
      ⏹ STOP TRIVIA
- ------------------------------------------------------------ */
+  ------------------------------------------------------------ */
   async function handleStopTrivia() {
     if (playTimeoutRef.current) {
       window.clearTimeout(playTimeoutRef.current);
@@ -943,7 +971,7 @@ export default function TriviaCard({
 
   /* ------------------------------------------------------------
      PAGINATION DERIVED VALUES
- ------------------------------------------------------------ */
+  ------------------------------------------------------------ */
   const totalPages =
     questions.length > 0 ? Math.ceil(questions.length / PAGE_SIZE) : 1;
 
@@ -1480,17 +1508,274 @@ export default function TriviaCard({
         </Tabs.Content>
 
         {/* ---------------- SETTINGS ONE ---------------- */}
-        <Tabs.Content value="settings1" className={cn("mt-4", "space-y-4")}>
-          {/* You can fill in your timer/play/scoring UI here if needed */}
-          {savingSettings && (
-            <p className={cn("text-xs", "opacity-70")}>
-              Saving settings…
-            </p>
-          )}
+        <Tabs.Content value="settings1" className={cn("mt-4")}>
+          <div className={cn("space-y-5")}>
+            {/* Question Timer – now dropdown: 30, 15, 12, 10 */}
+            <div
+              className={cn(
+                "flex",
+                "items-center",
+                "justify-between",
+                "gap-4"
+              )}
+            >
+              <div>
+                <p className={cn("text-sm", "font-semibold")}>Question Timer</p>
+                <p className={cn("text-xs", "opacity-70")}>
+                  How many seconds players have to answer each question on the wall.
+                </p>
+              </div>
+
+              <select
+                value={timerSeconds}
+                onChange={handleTimerChange}
+                className={cn(
+                  "bg-gray-800",
+                  "border",
+                  "border-white/20",
+                  "rounded-md",
+                  "px-3",
+                  "py-1.5",
+                  "text-sm",
+                  "outline-none",
+                  "focus:border-blue-400"
+                )}
+              >
+                {TIMER_OPTIONS.map((opt) => (
+                  <option key={opt} value={opt}>
+                    {opt} seconds
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Lobby Countdown Length */}
+            <div
+              className={cn(
+                "flex",
+                "items-center",
+                "justify-between",
+                "gap-4"
+              )}
+            >
+              <div>
+                <p className={cn("text-sm", "font-semibold")}>Lobby Countdown</p>
+                <p className={cn("text-xs", "opacity-70")}>
+                  How long the pre-game countdown runs before the first question.
+                </p>
+              </div>
+
+              <select
+                value={countdownSeconds}
+                onChange={handleCountdownSecondsChange}
+                className={cn(
+                  "bg-gray-800",
+                  "border",
+                  "border-white/20",
+                  "rounded-md",
+                  "px-3",
+                  "py-1.5",
+                  "text-sm",
+                  "outline-none",
+                  "focus:border-blue-400"
+                )}
+              >
+                {COUNTDOWN_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Play Mode */}
+            <div
+              className={cn(
+                "flex",
+                "items-center",
+                "justify-between",
+                "gap-4"
+              )}
+            >
+              <div>
+                <p className={cn("text-sm", "font-semibold")}>Play Mode</p>
+                <p className={cn("text-xs", "opacity-70")}>
+                  Auto-advance or manual control between questions.
+                </p>
+              </div>
+
+              <select
+                value={playMode}
+                onChange={handlePlayModeChange}
+                className={cn(
+                  "bg-gray-800",
+                  "border",
+                  "border-white/20",
+                  "rounded-md",
+                  "px-3",
+                  "py-1.5",
+                  "text-sm",
+                  "outline-none",
+                  "focus:border-blue-400"
+                )}
+              >
+                <option value="auto">Auto (host taps Play once)</option>
+                <option value="manual">Manual (host advances each question)</option>
+              </select>
+            </div>
+
+            {/* Scoring Mode */}
+            <div
+              className={cn(
+                "flex",
+                "items-center",
+                "justify-between",
+                "gap-4"
+              )}
+            >
+              <div>
+                <p className={cn("text-sm", "font-semibold")}>Scoring Mode</p>
+                <p className={cn("text-xs", "opacity-70")}>
+                  Choose how points are awarded for correct answers.
+                </p>
+              </div>
+
+              <select
+                value={scoringMode}
+                onChange={handleScoringModeChange}
+                className={cn(
+                  "bg-gray-800",
+                  "border",
+                  "border-white/20",
+                  "rounded-md",
+                  "px-3",
+                  "py-1.5",
+                  "text-sm",
+                  "outline-none",
+                  "focus:border-blue-400"
+                )}
+              >
+                <option value="100s">Flat 100 points per correct</option>
+                <option value="speed">Speed-based (faster = more)</option>
+              </select>
+            </div>
+
+            {/* Require Selfie */}
+            <div
+              className={cn(
+                "flex",
+                "items-center",
+                "justify-between",
+                "gap-4"
+              )}
+            >
+              <div>
+                <p className={cn("text-sm", "font-semibold")}>Require Selfie</p>
+                <p className={cn("text-xs", "opacity-70")}>
+                  Force players to upload a selfie before joining the game.
+                </p>
+              </div>
+
+              <select
+                value={requireSelfie ? "on" : "off"}
+                onChange={handleRequireSelfieChange}
+                className={cn(
+                  "bg-gray-800",
+                  "border",
+                  "border-white/20",
+                  "rounded-md",
+                  "px-3",
+                  "py-1.5",
+                  "text-sm",
+                  "outline-none",
+                  "focus:border-blue-400"
+                )}
+              >
+                <option value="on">On</option>
+                <option value="off">Off</option>
+              </select>
+            </div>
+
+            {/* Ads Enabled */}
+            <div
+              className={cn(
+                "flex",
+                "items-center",
+                "justify-between",
+                "gap-4"
+              )}
+            >
+              <div>
+                <p className={cn("text-sm", "font-semibold")}>Show Ads / Sponsor Bar</p>
+                <p className={cn("text-xs", "opacity-70")}>
+                  Turn on sponsor/ads integrations (where supported).
+                </p>
+              </div>
+
+              <select
+                value={adsEnabled ? "on" : "off"}
+                onChange={handleAdsEnabledChange}
+                className={cn(
+                  "bg-gray-800",
+                  "border",
+                  "border-white/20",
+                  "rounded-md",
+                  "px-3",
+                  "py-1.5",
+                  "text-sm",
+                  "outline-none",
+                  "focus:border-blue-400"
+                )}
+              >
+                <option value="on">On</option>
+                <option value="off">Off</option>
+              </select>
+            </div>
+
+            {savingSettings && (
+              <p className={cn("text-xs", "opacity-70")}>Saving settings…</p>
+            )}
+          </div>
         </Tabs.Content>
 
         {/* ---------------- SETTINGS TWO ---------------- */}
         <Tabs.Content value="settings2" className={cn("mt-4", "space-y-4")}>
+          {/* Points Type (100s / 1000s / 10000s) */}
+          <div
+            className={cn(
+              "flex",
+              "items-center",
+              "justify-between",
+              "gap-4"
+            )}
+          >
+            <div>
+              <p className={cn("text-sm", "font-semibold")}>Points Type</p>
+              <p className={cn("text-xs", "opacity-70")}>
+                Cosmetic points scale: 100s, 1,000s, or 10,000s.
+              </p>
+            </div>
+            <select
+              value={pointsType}
+              onChange={handlePointsTypeChange}
+              className={cn(
+                "bg-gray-800",
+                "border",
+                "border-white/20",
+                "rounded-md",
+                "px-3",
+                "py-1.5",
+                "text-sm",
+                "outline-none",
+                "focus:border-blue-400"
+              )}
+            >
+              <option value="100s">100&apos;s</option>
+              <option value="1000s">1,000&apos;s</option>
+              <option value="10000s">10,000&apos;s</option>
+            </select>
+          </div>
+
           {/* Progressive Removal */}
           <div
             className={cn(
@@ -1588,7 +1873,7 @@ export default function TriviaCard({
             </select>
           </div>
 
-          {/* ✅ NEW: Streak Multiplier */}
+          {/* Streak Multiplier */}
           <div
             className={cn(
               "flex",
