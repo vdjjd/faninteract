@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
 
 import TriviaCard from "./TriviaCard";
 import OptionsModalTrivia from "@/components/OptionsModalTrivia";
-import TriviaRegenerateModal from "@/components/TriviaRegenerateModal"; // ⬅️ NEW
+import TriviaRegenerateModal from "@/components/TriviaRegenerateModal";
 
 const supabase = getSupabaseClient();
 
@@ -27,7 +27,7 @@ export default function TriviaGrid({
 }: TriviaGridProps) {
   const [localTrivia, setLocalTrivia] = useState<any[]>([]);
   const [optionsTrivia, setOptionsTrivia] = useState<any | null>(null);
-  const [regenerateTrivia, setRegenerateTrivia] = useState<any | null>(null); // ⬅️ NEW
+  const [regenerateTrivia, setRegenerateTrivia] = useState<any | null>(null);
 
   /* ------------------------------------------------------------
      Sync props → local state
@@ -100,6 +100,26 @@ export default function TriviaGrid({
   }
 
   /* ------------------------------------------------------------
+     Difficulty label -> API key
+  ------------------------------------------------------------ */
+  function mapDifficultyLabelToKey(label: string): string {
+    switch (label) {
+      case "Elementary":
+        return "elementary";
+      case "Junior High":
+        return "jr_high";
+      case "High School":
+        return "high_school";
+      case "College":
+        return "college";
+      case "PhD":
+        return "phd";
+      default:
+        return "high_school";
+    }
+  }
+
+  /* ------------------------------------------------------------
      Handle REGENERATE submit from modal
   ------------------------------------------------------------ */
   async function handleRegenerateSubmit(payload: {
@@ -107,25 +127,47 @@ export default function TriviaGrid({
     newPublicName: string;
     topicPrompt: string;
     numQuestions: number;
-    difficulty: string;
+    difficulty: string; // label form from the modal
   }) {
+    if (!regenerateTrivia) return;
+
     try {
-      // 🔁 Call your API / Edge function that asks AI for new questions
-      // Adjust this endpoint to match however you did initial creation.
-      await fetch("/api/trivia/regenerate", {
+      const apiDifficulty = mapDifficultyLabelToKey(payload.difficulty);
+
+      const res = await fetch("/trivia/ai-generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          ...payload,
+          triviaId: payload.triviaId, // 🔁 tells API to regenerate instead of create
+          publicName: payload.newPublicName,
+          privateName:
+            regenerateTrivia.private_name ??
+            regenerateTrivia.public_name ??
+            payload.newPublicName,
+          topicPrompt: payload.topicPrompt,
+          numQuestions: payload.numQuestions,
+          difficulty: apiDifficulty,
+          numRounds: regenerateTrivia.rounds ?? 1,
+          sameTopicForAllRounds: true,
+          roundTopics: [],
           hostId: host?.id ?? null,
         }),
       });
 
+      const data = await res.json().catch(() => null);
+
+      if (!res.ok || !data?.success) {
+        throw new Error(data?.error || "Failed to regenerate trivia");
+      }
+
+      // ✅ Success: close modal and refresh games
       setRegenerateTrivia(null);
       await refreshTrivia();
     } catch (err) {
       console.error("❌ Error regenerating trivia:", err);
-      // you could keep the modal open on error if you want
+      alert("Regenerating trivia failed. Check console for details.");
+      // ❗ DO NOT close the modal here; TriviaRegenerateModal will
+      // reset its isGenerating flag in its own catch.
     }
   }
 
@@ -149,9 +191,9 @@ export default function TriviaGrid({
             trivia={triviaItem}
             onOpenOptions={handleOpenOptionsLocal}
             onDelete={handleDelete}
-            onLaunch={() => handleLaunch(triviaItem.id)}
+            onLaunch={handleLaunch} // ⬅️ Card will call onLaunch(trivia.id)
             onOpenModeration={onOpenModeration}
-            onRegenerateQuestions={handleOpenRegenerate} // ⬅️ WIRE BUTTON
+            onRegenerateQuestions={handleOpenRegenerate}
           />
         ))}
       </div>

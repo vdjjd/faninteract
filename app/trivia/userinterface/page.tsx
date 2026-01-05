@@ -320,8 +320,6 @@ const FIRST_QUESTION_EXTRA_MS = 8000;
 
 /* ---------------------------------------------------------
    ✅ Effective question start (fixes Q1 scoring)
-   - For Q1, if countdown is active/was started, shift start to countdown end
-   - Then apply FIRST_QUESTION_EXTRA_MS grace (your existing behavior)
 --------------------------------------------------------- */
 function getEffectiveQuestionStartMs(args: {
   questionStartedAt: string | null;
@@ -545,7 +543,7 @@ export default function TriviaUserInterfacePage() {
       setLoading(true);
       setLoadingMessage("Loading trivia game…");
 
-      // 1) trivia card (keep for host_id + background + timer/scoring display)
+      // 1) trivia card
       const { data: card, error: cardErr } = await supabase
         .from("trivia_cards")
         .select(
@@ -574,8 +572,7 @@ export default function TriviaUserInterfacePage() {
 
       setTrivia(card);
 
-      // ✅ Herd flag fallback-load (safe: won’t break if column missing)
-      // (If flags hook supplies it, the flags effect will override this anyway.)
+      // ✅ Herd flag fallback-load
       try {
         const { data: herd1, error: e1 } = await supabase
           .from("trivia_cards")
@@ -835,7 +832,7 @@ export default function TriviaUserInterfacePage() {
     | "podium";
 
   /* ---------------------------------------------------------
-     ✅ Session over detection + close handler
+     ✅ Session over detection + close handler + continue button
   --------------------------------------------------------- */
   const isLastQuestion = currentQuestionIndex === questions.length - 1;
 
@@ -854,6 +851,12 @@ export default function TriviaUserInterfacePage() {
         window.location.href = "about:blank";
       } catch {}
     }, 50);
+  }
+
+  function handleContinueToNextRound() {
+    if (!gameId) return;
+    // Important: tell the thanks page this is a trivia flow
+    router.push(`/thanks/${gameId}?type=trivia`);
   }
 
   /* ---------------------------------------------------------
@@ -1164,7 +1167,6 @@ export default function TriviaUserInterfacePage() {
 
   /* ---------------------------------------------------------
      ✅ Leaderboard loader (ONLY players who have points)
-     ✅ Also computes streak (ready for later UI)
   --------------------------------------------------------- */
   useEffect(() => {
     if (!session?.id) return;
@@ -1296,7 +1298,7 @@ export default function TriviaUserInterfacePage() {
   }, [session?.id, wallPhase, questions]);
 
   /* ---------------------------------------------------------
-     ✅ Auto-scroll leaderboard down then back up (when list is long)
+     ✅ Auto-scroll leaderboard down then back up
   --------------------------------------------------------- */
   useEffect(() => {
     if (view !== "leaderboard") return;
@@ -1349,8 +1351,7 @@ export default function TriviaUserInterfacePage() {
   }, [view, leaderRows.length]);
 
   /* ---------------------------------------------------------
-     Answer submission (patched scoring to match effective start)
-     ✅ Streak Multiplier (optional)
+     Answer submission
   --------------------------------------------------------- */
   async function handleSelectAnswer(idx: number) {
     if (!currentQuestion) return;
@@ -2220,14 +2221,39 @@ export default function TriviaUserInterfacePage() {
               This Trivia Session Is Over
             </div>
 
-            <div style={{ opacity: 0.85, fontSize: "0.95rem" }}>
+            <div
+              style={{
+                opacity: 0.85,
+                fontSize: "0.95rem",
+                marginBottom: 16,
+              }}
+            >
               Thanks for playing!
             </div>
 
+            {/* ➕ NEW: Continue to Next Round (send to /thanks/[id]?type=trivia) */}
+            <button
+              onClick={handleContinueToNextRound}
+              style={{
+                width: "100%",
+                padding: "12px 14px",
+                borderRadius: 16,
+                border: "1px solid rgba(59,130,246,0.6)",
+                background: "linear-gradient(90deg,#3b82f6,#0ea5e9)",
+                color: "#fff",
+                fontWeight: 900,
+                fontSize: "1rem",
+                cursor: "pointer",
+                marginBottom: 10,
+              }}
+            >
+              Continue to Next Round
+            </button>
+
+            {/* Existing Close button */}
             <button
               onClick={handleCloseTab}
               style={{
-                marginTop: 16,
                 width: "100%",
                 padding: "12px 14px",
                 borderRadius: 16,
@@ -2242,7 +2268,13 @@ export default function TriviaUserInterfacePage() {
               Close
             </button>
 
-            <div style={{ marginTop: 10, fontSize: "0.75rem", opacity: 0.65 }}>
+            <div
+              style={{
+                marginTop: 10,
+                fontSize: "0.75rem",
+                opacity: 0.65,
+              }}
+            >
               If your browser blocks tab closing, just close this tab manually.
             </div>
           </div>

@@ -170,7 +170,7 @@ export default function TriviaCard({
   ------------------------------------------------------------ */
   const [participantsCount, setParticipantsCount] = useState(0);
   const [pendingCount, setPendingCount] = useState(0);
-  const [activePlayersCount, setActivePlayersCount] = useState(0); // ⬅️ NEW
+  const [activePlayersCount, setActivePlayersCount] = useState(0); // NEW
 
   /* ------------------------------------------------------------
      LEADERBOARD STATE
@@ -972,16 +972,16 @@ export default function TriviaCard({
     }
     playLockRef.current = false;
 
-    // ⬇️ Card goes "finished" so wall shows Inactive view
+    // ⬇️ Card goes back to "inactive" so wall shows Inactive view
     await supabase
       .from("trivia_cards")
       .update({
-        status: "finished",
+        status: "inactive",
         countdown_active: false,
       })
       .eq("id", trivia.id);
 
-    // ⬇️ Keep the most recent session available to replay with same players
+    // ⬇️ Keep the most recent session (so we can reuse players)
     const { data: session, error: sessionErr } = await supabase
       .from("trivia_sessions")
       .select("id,status,created_at")
@@ -991,13 +991,13 @@ export default function TriviaCard({
       .maybeSingle();
 
     if (!sessionErr && session?.id) {
-      // Put session into neutral "waiting" state
+      // Neutral waiting state
       await supabase
         .from("trivia_sessions")
         .update({ status: "waiting", paused_at: null })
         .eq("id", session.id);
 
-      // 🔍 Clean out APPROVED players who never answered a question
+      // 🔍 Auto-remove APPROVED players who never answered a question = inactive for a game
       const { data: players, error: playersErr } = await supabase
         .from("trivia_players")
         .select("id,status")
@@ -1033,7 +1033,7 @@ export default function TriviaCard({
       }
     }
 
-    setCardStatus("finished");
+    setCardStatus("inactive");
     setCardCountdownActive(false);
   }
 

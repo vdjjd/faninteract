@@ -29,14 +29,14 @@ export default function TriviaRegenerateModal({
   const [difficulty, setDifficulty] = useState("High School");
   const [isGenerating, setIsGenerating] = useState(false);
 
-  // Prefill from the existing trivia card when it opens
+  // ✅ Prefill & reset state every time the modal opens on a trivia card
   useEffect(() => {
     if (isOpen && trivia) {
       setPublicName(trivia.public_name || "");
       setTopicPrompt(trivia.topic_prompt || "");
       setNumQuestions(trivia.num_questions || 10);
       setDifficulty(trivia.difficulty || "High School");
-      setIsGenerating(false);
+      setIsGenerating(false); // reset the spinner like the Create modal
     }
   }, [isOpen, trivia]);
 
@@ -58,10 +58,11 @@ export default function TriviaRegenerateModal({
         numQuestions,
         difficulty,
       });
-      // parent should close on success
+      // ⚠️ DO NOT setIsGenerating(false) here on success.
+      // Parent will close the modal; spinner just unmounts like Create modal.
     } catch (err) {
       console.error("❌ Error regenerating trivia:", err);
-      setIsGenerating(false);
+      setIsGenerating(false); // allow retry if it fails
     }
   };
 
@@ -215,7 +216,7 @@ export default function TriviaRegenerateModal({
           </button>
         </div>
 
-        {/* Blocking overlay while AI is generating */}
+        {/* ✅ Blocking overlay while AI is generating */}
         {isGenerating && (
           <div
             className={cn(
@@ -249,7 +250,8 @@ export default function TriviaRegenerateModal({
                 "text-center"
               )}
             >
-              Please don&apos;t close this window until it finishes.
+              This may take a few seconds. Please don&apos;t click again or
+              close this window.
             </p>
           </div>
         )}

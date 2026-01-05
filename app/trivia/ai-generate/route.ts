@@ -1,3 +1,4 @@
+// app/trivia/ai-generate/route.ts
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
 import { createClient } from "@supabase/supabase-js";
@@ -153,6 +154,8 @@ export async function POST(req: Request) {
       sameTopicForAllRounds,
       roundTopics,
       hostId,
+      // 🔥 NEW: optional triviaId means "regenerate for this existing card"
+      triviaId,
     } = await req.json();
 
     const finalTopicList = sameTopicForAllRounds
@@ -224,26 +227,60 @@ Return ONLY valid JSON:
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     );
 
-    // Create trivia card
-    const { data: triviaCard, error: triviaErr } = await supabase
-      .from("trivia_cards")
-      .insert({
-        host_id: hostId,
-        public_name: publicName,
-        private_name: privateName,
-        topic_prompt: topicPrompt,
-        difficulty,
-        question_count: numQuestions,
-        rounds: numRounds,
-        per_round_topics: sameTopicForAllRounds ? null : roundTopics,
-        status: "inactive",
-      })
-      .select()
-      .single();
+    let triviaCardId: string;
 
-    if (triviaErr) throw triviaErr;
+    if (triviaId) {
+      // 🔁 REGENERATE EXISTING CARD
+      const { data: triviaCard, error: triviaErr } = await supabase
+        .from("trivia_cards")
+        .update({
+          public_name: publicName,
+          private_name: privateName,
+          topic_prompt: topicPrompt,
+          difficulty,
+          question_count: numQuestions,
+          rounds: numRounds,
+          per_round_topics: sameTopicForAllRounds ? null : roundTopics,
+        })
+        .eq("id", triviaId)
+        .select()
+        .single();
 
-    // Insert questions (with shuffled options)
+      if (triviaErr || !triviaCard) throw triviaErr || new Error("Card not found");
+
+      triviaCardId = triviaCard.id;
+
+      // Delete old questions for this card
+      const { error: delErr } = await supabase
+        .from("trivia_questions")
+        .delete()
+        .eq("trivia_card_id", triviaCardId);
+
+      if (delErr) throw delErr;
+    } else {
+      // 🆕 CREATE NEW TRIVIA CARD (original behavior)
+      const { data: triviaCard, error: triviaErr } = await supabase
+        .from("trivia_cards")
+        .insert({
+          host_id: hostId,
+          public_name: publicName,
+          private_name: privateName,
+          topic_prompt: topicPrompt,
+          difficulty,
+          question_count: numQuestions,
+          rounds: numRounds,
+          per_round_topics: sameTopicForAllRounds ? null : roundTopics,
+          status: "inactive",
+        })
+        .select()
+        .single();
+
+      if (triviaErr || !triviaCard) throw triviaErr || new Error("Failed to create card");
+
+      triviaCardId = triviaCard.id;
+    }
+
+    // Insert questions (with shuffled options) for triviaCardId
     for (const round of parsed.rounds) {
       for (const rawQ of round.questions) {
         const shuffledQ = shuffleQuestionOptions(rawQ);
@@ -251,11 +288,8 @@ Return ONLY valid JSON:
           shuffledQ.correct_index
         );
 
-        // Optional: uncomment while testing to verify distribution
-        // console.log("Q:", shuffledQ.question, "correct_index:", safeCorrectIndex);
-
         const { error } = await supabase.from("trivia_questions").insert({
-          trivia_card_id: triviaCard.id,
+          trivia_card_id: triviaCardId,
           round_number: round.round_number,
           question_text: shuffledQ.question,
           options: shuffledQ.options,
@@ -268,7 +302,7 @@ Return ONLY valid JSON:
       }
     }
 
-    return NextResponse.json({ success: true, triviaId: triviaCard.id });
+    return NextResponse.json({ success: true, triviaId: triviaCardId });
   } catch (err: any) {
     console.error("❌ TRIVIA GENERATION FAILED:", err);
     return NextResponse.json(
