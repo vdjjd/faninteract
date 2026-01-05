@@ -56,12 +56,14 @@ export default function TriviaCard({
   onDelete,
   onLaunch,
   onOpenModeration,
+  onRegenerateQuestions,
 }: {
   trivia: any;
   onOpenOptions: (trivia: any) => void;
   onDelete: (id: string) => void;
   onLaunch: (id: string) => void;
   onOpenModeration?: (trivia: any) => void;
+  onRegenerateQuestions?: (trivia: any) => void;
 }) {
   if (!trivia) return null;
 
@@ -78,7 +80,6 @@ export default function TriviaCard({
      TRIVIA SETTINGS STATE
   ------------------------------------------------------------ */
 
-  // ✅ Timer allowed options: 30, 15, 12, 10 seconds
   const TIMER_OPTIONS = [30, 15, 12, 10];
 
   const normalizeTimerSeconds = (n: any) => {
@@ -132,19 +133,15 @@ export default function TriviaCard({
 
   const [adsEnabled, setAdsEnabled] = useState<boolean>(!!trivia?.ads_enabled);
 
-  // ✅ Progressive wrong-answer removal setting
   const [progressiveWrongRemovalEnabled, setProgressiveWrongRemovalEnabled] =
     useState<boolean>(!!trivia?.progressive_wrong_removal_enabled);
 
-  // ✅ Highlight The Herd setting
   const [highlightTheHerdEnabled, setHighlightTheHerdEnabled] =
     useState<boolean>(!!trivia?.highlight_the_herd_enabled);
 
-  // ✅ NEW: Streak Multiplier setting
   const [streakMultiplierEnabled, setStreakMultiplierEnabled] =
     useState<boolean>(!!trivia?.streak_multiplier_enabled);
 
-  // ✅ NEW: Points Type (100s / 1000s / 10000s)
   const [pointsType, setPointsType] = useState<string>(
     trivia?.points_type || "100s"
   );
@@ -152,7 +149,7 @@ export default function TriviaCard({
   const [savingSettings, setSavingSettings] = useState(false);
 
   /* ------------------------------------------------------------
-     CARD STATUS (LIVE POLLING FROM trivia_cards)
+     CARD STATUS
   ------------------------------------------------------------ */
   const [cardStatus, setCardStatus] = useState<string>(trivia.status);
   const [cardCountdownActive, setCardCountdownActive] = useState<boolean>(
@@ -160,12 +157,12 @@ export default function TriviaCard({
   );
 
   /* ------------------------------------------------------------
-     ✅ ACTIVE SESSION (used only for counts/leaderboard)
+     ACTIVE SESSION
   ------------------------------------------------------------ */
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
 
   /* ------------------------------------------------------------
-     ✅ PAUSE STATE
+     PAUSE STATE
   ------------------------------------------------------------ */
   const [pauseBusy, setPauseBusy] = useState(false);
 
@@ -199,7 +196,7 @@ export default function TriviaCard({
   >("menu");
 
   /* ------------------------------------------------------------
-     Keep state in sync if parent reloads trivia
+     Sync with trivia props
   ------------------------------------------------------------ */
   useEffect(() => {
     setTimerSeconds(normalizeTimerSeconds(trivia?.timer_seconds ?? 30));
@@ -235,7 +232,7 @@ export default function TriviaCard({
   ]);
 
   /* ------------------------------------------------------------
-     ✅ SERVER TIME HELPER (shared)
+     SERVER TIME HELPER
   ------------------------------------------------------------ */
   const getServerIsoNow = async (): Promise<string> => {
     try {
@@ -253,7 +250,7 @@ export default function TriviaCard({
   };
 
   /* ------------------------------------------------------------
-     Poll trivia_cards.status + countdown_active every 2s
+     Poll trivia_cards
   ------------------------------------------------------------ */
   useEffect(() => {
     let isMounted = true;
@@ -291,7 +288,6 @@ export default function TriviaCard({
       );
       setPointsType(data.points_type || "100s");
 
-      // keep parent object in sync (your existing pattern)
       trivia.background_type = data.background_type;
       trivia.background_value = data.background_value;
       trivia.ads_enabled = data.ads_enabled;
@@ -322,7 +318,7 @@ export default function TriviaCard({
     progressive_wrong_removal_enabled?: boolean;
     highlight_the_herd_enabled?: boolean;
     streak_multiplier_enabled?: boolean;
-    points_type?: string; // ✅ NEW
+    points_type?: string;
   }) {
     try {
       setSavingSettings(true);
@@ -386,14 +382,12 @@ export default function TriviaCard({
     await updateTriviaSettings({ highlight_the_herd_enabled: value });
   }
 
-  // ✅ NEW: Streak Multiplier handler
   async function handleStreakMultiplierChange(e: any) {
     const value = e.target.value === "on";
     setStreakMultiplierEnabled(value);
     await updateTriviaSettings({ streak_multiplier_enabled: value });
   }
 
-  // ✅ NEW: Points Type handler
   async function handlePointsTypeChange(e: any) {
     const value = e.target.value || "100s";
     setPointsType(value);
@@ -401,7 +395,7 @@ export default function TriviaCard({
   }
 
   /* ------------------------------------------------------------
-     FETCH QUESTIONS (ON TAB OPEN)
+     FETCH QUESTIONS
   ------------------------------------------------------------ */
   async function loadQuestions() {
     setLoadingQuestions(true);
@@ -424,8 +418,7 @@ export default function TriviaCard({
   }
 
   /* ------------------------------------------------------------
-     PARTICIPANTS / PENDING COUNTS (poll every 2s)
-     ✅ ALSO sets activeSessionId
+     PARTICIPANTS / PENDING COUNTS
   ------------------------------------------------------------ */
   async function loadCounts() {
     const { data: session, error: sessionErr } = await supabase
@@ -479,7 +472,7 @@ export default function TriviaCard({
   }, [trivia.id]);
 
   /* ------------------------------------------------------------
-     LEADERBOARD LOADER (read-only)
+     LEADERBOARD LOADER
   ------------------------------------------------------------ */
   async function loadLeaderboard(cancelledRef?: { current: boolean }) {
     if (!trivia?.id) return;
@@ -573,7 +566,7 @@ export default function TriviaCard({
   }
 
   /* ------------------------------------------------------------
-     LEADERBOARD AUTO-REFRESH (still read-only)
+     LEADERBOARD AUTO-REFRESH
   ------------------------------------------------------------ */
   useEffect(() => {
     if (activeTab !== "leaderboard") return;
@@ -732,7 +725,7 @@ export default function TriviaCard({
   }
 
   /* ------------------------------------------------------------
-     ✅ PAUSE / RESUME TRIVIA
+     PAUSE / RESUME TRIVIA
   ------------------------------------------------------------ */
   const canPause =
     !cardCountdownActive &&
@@ -822,7 +815,7 @@ export default function TriviaCard({
   }
 
   /* ------------------------------------------------------------
-     ▶️ PLAY TRIVIA
+     PLAY TRIVIA
   ------------------------------------------------------------ */
   async function handlePlayTrivia() {
     if (playLockRef.current) return;
@@ -942,7 +935,7 @@ export default function TriviaCard({
   }
 
   /* ------------------------------------------------------------
-     ⏹ STOP TRIVIA
+     STOP TRIVIA
   ------------------------------------------------------------ */
   async function handleStopTrivia() {
     if (playTimeoutRef.current) {
@@ -1069,49 +1062,25 @@ export default function TriviaCard({
           </div>
 
           <div className={cn("grid", "grid-cols-3", "gap-3", "mt-4")}>
-            <button
-              onClick={() => onLaunch(trivia.id)}
-              className={cn(
-                "bg-blue-600",
-                "hover:bg-blue-700",
-                "py-2",
-                "rounded-lg",
-                "font-semibold"
-              )}
-            >
-              Launch
-            </button>
-
-            <button
-              onClick={() => onOpenOptions(trivia)}
-              className={cn(
-                "bg-gray-700",
-                "hover:bg-gray-600",
-                "py-2",
-                "rounded-lg",
-                "font-semibold"
-              )}
-            >
-              Options
-            </button>
-
-            <div
-              className={cn(
-                "bg-gray-800/80",
-                "p-3",
-                "rounded-lg",
-                "flex",
-                "flex-col",
-                "items-center",
-                "justify-center",
-                "backdrop-blur-sm"
-              )}
-            >
-              <p className={cn("text-xs", "opacity-75")}>Participants</p>
-              <p className={cn("text-lg", "font-bold")}>{participantsCount}</p>
-            </div>
-
+            {/* COL 1: Launch + Play / Stop / Pause */}
             <div className={cn("flex", "flex-col", "gap-2")}>
+              <button
+                onClick={() => onLaunch(trivia.id)}
+                className={cn(
+                  "bg-blue-600",
+                  "hover:bg-blue-700",
+                  "py-2",
+                  "rounded-lg",
+                  "font-semibold",
+                  "h-10",
+                  "flex",
+                  "items-center",
+                  "justify-center"
+                )}
+              >
+                Launch
+              </button>
+
               <button
                 onClick={handlePlayTrivia}
                 disabled={cardStatus === "paused"}
@@ -1121,6 +1090,10 @@ export default function TriviaCard({
                   "py-2",
                   "rounded-lg",
                   "font-semibold",
+                  "h-10",
+                  "flex",
+                  "items-center",
+                  "justify-center",
                   cardStatus === "paused" && "opacity-40 cursor-not-allowed"
                 )}
               >
@@ -1134,7 +1107,11 @@ export default function TriviaCard({
                   "hover:bg-red-700",
                   "py-2",
                   "rounded-lg",
-                  "font-semibold"
+                  "font-semibold",
+                  "h-10",
+                  "flex",
+                  "items-center",
+                  "justify-center"
                 )}
               >
                 ⏹ Stop
@@ -1147,29 +1124,58 @@ export default function TriviaCard({
                   "py-2",
                   "rounded-lg",
                   "font-semibold",
+                  "h-10",
+                  "flex",
+                  "items-center",
+                  "justify-center",
                   cardStatus === "paused"
                     ? "bg-amber-600 hover:bg-amber-700"
                     : "bg-yellow-600 hover:bg-yellow-700",
-                  (!canPause || pauseBusy) &&
-                    "opacity-40 cursor-not-allowed"
+                  (!canPause || pauseBusy) && "opacity-40 cursor-not-allowed"
                 )}
               >
                 {cardStatus === "paused" ? "▶ Resume" : "⏸ Pause"}
               </button>
             </div>
 
+            {/* COL 2: Options + New AI + Delete */}
             <div className={cn("flex", "flex-col", "gap-2")}>
-              <div
+              <button
+                onClick={() => onOpenOptions(trivia)}
+                className={cn(
+                  "bg-gray-700",
+                  "hover:bg-gray-600",
+                  "py-2",
+                  "rounded-lg",
+                  "font-semibold",
+                  "h-10",
+                  "flex",
+                  "items-center",
+                  "justify-center"
+                )}
+              >
+                Options
+              </button>
+
+              <button
+                onClick={() => onRegenerateQuestions?.(trivia)}
+                disabled={!onRegenerateQuestions}
                 className={cn(
                   "py-2",
                   "rounded-lg",
                   "font-semibold",
-                  "opacity-0",
-                  "pointer-events-none"
+                  "h-10",
+                  "flex",
+                  "items-center",
+                  "justify-center",
+                  onRegenerateQuestions
+                    ? "bg-orange-500 hover:bg-orange-600 text-black"
+                    : "bg-gray-700/60 cursor-not-allowed opacity-60"
                 )}
               >
-                spacer
-              </div>
+                New Questions Or Topic
+              </button>
+
               <button
                 onClick={handleDeleteTrivia}
                 className={cn(
@@ -1177,36 +1183,58 @@ export default function TriviaCard({
                   "hover:bg-red-800",
                   "py-2",
                   "rounded-lg",
-                  "font-semibold"
+                  "font-semibold",
+                  "h-10",
+                  "flex",
+                  "items-center",
+                  "justify-center"
                 )}
               >
                 ❌ Delete
               </button>
             </div>
 
-            <button
-              onClick={() => onOpenModeration?.(trivia)}
-              className={cn(
-                "bg-purple-600",
-                "hover:bg-purple-700",
-                "py-2",
-                "rounded-lg",
-                "font-semibold",
-                "w-full",
-                "flex",
-                "flex-col",
-                "items-center",
-                "justify-content",
-                "text-sm"
-              )}
-            >
-              <span>Moderate Players</span>
-              <span
-                className={cn("text-[11px]", "opacity-80", "mt-0.5")}
+            {/* COL 3: Participants + Moderate Players */}
+            <div className={cn("flex", "flex-col", "gap-2")}>
+              <div
+                className={cn(
+                  "bg-gray-800/80",
+                  "p-3",
+                  "rounded-lg",
+                  "flex",
+                  "flex-col",
+                  "items-center",
+                  "justify-center",
+                  "backdrop-blur-sm",
+                  "min-h-[72px]"
+                )}
               >
-                {`(Waiting ${pendingCount} Players)`}
-              </span>
-            </button>
+                <p className={cn("text-xs", "opacity-75")}>Participants</p>
+                <p className={cn("text-lg", "font-bold")}>{participantsCount}</p>
+              </div>
+
+              <button
+                onClick={() => onOpenModeration?.(trivia)}
+                className={cn(
+                  "py-2",
+                  "rounded-lg",
+                  "font-semibold",
+                  "w-full",
+                  "h-10",
+                  "flex",
+                  "items-center",
+                  "justify-center",
+                  "text-sm",
+                  pendingCount > 0
+                    ? "bg-yellow-400 hover:bg-yellow-500 text-black"
+                    : "bg-purple-600 hover:bg-purple-700 text-white"
+                )}
+              >
+                {pendingCount > 0
+                  ? `Moderate (${pendingCount} waiting)`
+                  : "Moderate Players"}
+              </button>
+            </div>
           </div>
         </Tabs.Content>
 
@@ -1231,21 +1259,16 @@ export default function TriviaCard({
                 "px-3 py-1 rounded-md text-xs font-semibold",
                 "border border-blue-400/60",
                 "bg-blue-500/20 hover:bg-blue-500/30",
-                questions.length === 0 &&
-                  "opacity-40 cursor-not-allowed"
+                questions.length === 0 && "opacity-40 cursor-not-allowed"
               )}
             >
               ➕ Add All to Game
             </button>
           </div>
 
-          {loadingQuestions && (
-            <p className="opacity-70">Loading questions…</p>
-          )}
+          {loadingQuestions && <p className="opacity-70">Loading questions…</p>}
           {!loadingQuestions && questions.length === 0 && (
-            <p className={cn("opacity-70", "italic")}>
-              No questions found.
-            </p>
+            <p className={cn("opacity-70", "italic")}>No questions found.</p>
           )}
 
           {!loadingQuestions && questions.length > 0 && (
@@ -1292,24 +1315,14 @@ export default function TriviaCard({
                                 : "text-red-300/80"
                             )}
                           >
-                            {isActive
-                              ? "Included in game"
-                              : "Not in game"}
+                            {isActive ? "Included in game" : "Not in game"}
                           </p>
                         </div>
 
-                        <div
-                          className={cn(
-                            "flex",
-                            "flex-col",
-                            "gap-1"
-                          )}
-                        >
+                        <div className={cn("flex", "flex-col", "gap-1")}>
                           <button
                             type="button"
-                            onClick={() =>
-                              handleSetQuestionActive(q.id, true)
-                            }
+                            onClick={() => handleSetQuestionActive(q.id, true)}
                             disabled={isActive}
                             className={cn(
                               "w-7 h-7 flex items-center justify-center",
@@ -1325,9 +1338,7 @@ export default function TriviaCard({
 
                           <button
                             type="button"
-                            onClick={() =>
-                              handleSetQuestionActive(q.id, false)
-                            }
+                            onClick={() => handleSetQuestionActive(q.id, false)}
                             disabled={!isActive}
                             className={cn(
                               "w-7 h-7 flex items-center justify-center",
@@ -1343,13 +1354,7 @@ export default function TriviaCard({
                         </div>
                       </div>
 
-                      <ul
-                        className={cn(
-                          "grid",
-                          "grid-cols-2",
-                          "gap-2"
-                        )}
-                      >
+                      <ul className={cn("grid", "grid-cols-2", "gap-2")}>
                         {q.options.map((opt: string, i: number) => (
                           <li
                             key={i}
@@ -1381,14 +1386,11 @@ export default function TriviaCard({
                 >
                   <button
                     type="button"
-                    onClick={() =>
-                      setCurrentPage((p) => Math.max(0, p - 1))
-                    }
+                    onClick={() => setCurrentPage((p) => Math.max(0, p - 1))}
                     disabled={safePage === 0}
                     className={cn(
                       "px-2 py-1 rounded-md border border-white/10",
-                      safePage === 0 &&
-                        "opacity-40 cursor-not-allowed",
+                      safePage === 0 && "opacity-40 cursor-not-allowed",
                       safePage !== 0 && "hover:bg-white/5"
                     )}
                   >
@@ -1402,9 +1404,7 @@ export default function TriviaCard({
                   <button
                     type="button"
                     onClick={() =>
-                      setCurrentPage((p) =>
-                        Math.min(totalPages - 1, p + 1)
-                      )
+                      setCurrentPage((p) => Math.min(totalPages - 1, p + 1))
                     }
                     disabled={safePage >= totalPages - 1}
                     className={cn(
@@ -1425,21 +1425,13 @@ export default function TriviaCard({
         {/* ---------------- LEADERBOARD ---------------- */}
         <Tabs.Content value="leaderboard" className={cn("mt-4", "space-y-3")}>
           {leaderboardLoading && (
-            <p className={cn("text-xs", "opacity-70")}>
-              Loading leaderboard…
-            </p>
+            <p className={cn("text-xs", "opacity-70")}>Loading leaderboard…</p>
           )}
 
           {!leaderboardLoading && leaderboard.length === 0 && (
-            <p
-              className={cn(
-                "text-sm",
-                "opacity-75",
-                "italic"
-              )}
-            >
-              No scores yet. Leaderboard will appear once
-              players start answering questions.
+            <p className={cn("text-sm", "opacity-75", "italic")}>
+              No scores yet. Leaderboard will appear once players start answering
+              questions.
             </p>
           )}
 
@@ -1460,13 +1452,7 @@ export default function TriviaCard({
                     "py-2"
                   )}
                 >
-                  <div
-                    className={cn(
-                      "flex",
-                      "items-center",
-                      "gap-3"
-                    )}
-                  >
+                  <div className={cn("flex", "items-center", "gap-3")}>
                     <div
                       className={cn(
                         "w-8",
@@ -1483,22 +1469,12 @@ export default function TriviaCard({
                       {idx + 1}
                     </div>
 
-                    <div
-                      className={cn(
-                        "text-sm",
-                        "font-semibold"
-                      )}
-                    >
+                    <div className={cn("text-sm", "font-semibold")}>
                       {row.label}
                     </div>
                   </div>
 
-                  <div
-                    className={cn(
-                      "text-lg",
-                      "font-bold"
-                    )}
-                  >
+                  <div className={cn("text-lg", "font-bold")}>
                     {row.totalPoints}
                   </div>
                 </div>
@@ -1510,7 +1486,7 @@ export default function TriviaCard({
         {/* ---------------- SETTINGS ONE ---------------- */}
         <Tabs.Content value="settings1" className={cn("mt-4")}>
           <div className={cn("space-y-5")}>
-            {/* Question Timer – now dropdown: 30, 15, 12, 10 */}
+            {/* Question Timer */}
             <div
               className={cn(
                 "flex",
@@ -1549,7 +1525,7 @@ export default function TriviaCard({
               </select>
             </div>
 
-            {/* Lobby Countdown Length */}
+            {/* Lobby Countdown */}
             <div
               className={cn(
                 "flex",
@@ -1706,7 +1682,9 @@ export default function TriviaCard({
               )}
             >
               <div>
-                <p className={cn("text-sm", "font-semibold")}>Show Ads / Sponsor Bar</p>
+                <p className={cn("text-sm", "font-semibold")}>
+                  Show Ads / Sponsor Bar
+                </p>
                 <p className={cn("text-xs", "opacity-70")}>
                   Turn on sponsor/ads integrations (where supported).
                 </p>
@@ -1740,7 +1718,7 @@ export default function TriviaCard({
 
         {/* ---------------- SETTINGS TWO ---------------- */}
         <Tabs.Content value="settings2" className={cn("mt-4", "space-y-4")}>
-          {/* Points Type (100s / 1000s / 10000s) */}
+          {/* Points Type */}
           <div
             className={cn(
               "flex",
@@ -1786,23 +1764,12 @@ export default function TriviaCard({
             )}
           >
             <div>
-              <p
-                className={cn(
-                  "text-sm",
-                  "font-semibold"
-                )}
-              >
+              <p className={cn("text-sm", "font-semibold")}>
                 Progressive Wrong-Answer Removal
               </p>
-              <p
-                className={cn(
-                  "text-xs",
-                  "opacity-70"
-                )}
-              >
-                At 50% elapsed time, one wrong answer is
-                removed. At 75%, another wrong answer is
-                removed.
+              <p className={cn("text-xs", "opacity-70")}>
+                At 50% elapsed time, one wrong answer is removed. At 75%, another
+                wrong answer is removed.
               </p>
             </div>
             <select
@@ -1835,22 +1802,9 @@ export default function TriviaCard({
             )}
           >
             <div>
-              <p
-                className={cn(
-                  "text-sm",
-                  "font-semibold"
-                )}
-              >
-                Highlight The Herd
-              </p>
-              <p
-                className={cn(
-                  "text-xs",
-                  "opacity-70"
-                )}
-              >
-                Highlights the most-chosen answer on the wall
-                during the question.
+              <p className={cn("text-sm", "font-semibold")}>Highlight The Herd</p>
+              <p className={cn("text-xs", "opacity-70")}>
+                Highlights the most-chosen answer on the wall during the question.
               </p>
             </div>
             <select
@@ -1883,22 +1837,10 @@ export default function TriviaCard({
             )}
           >
             <div>
-              <p
-                className={cn(
-                  "text-sm",
-                  "font-semibold"
-                )}
-              >
-                Streak Multiplier
-              </p>
-              <p
-                className={cn(
-                  "text-xs",
-                  "opacity-70"
-                )}
-              >
-                Rewards players with extra points as they build
-                longer correct-answer streaks.
+              <p className={cn("text-sm", "font-semibold")}>Streak Multiplier</p>
+              <p className={cn("text-xs", "opacity-70")}>
+                Rewards players with extra points as they build longer
+                correct-answer streaks.
               </p>
             </div>
             <select
@@ -1922,9 +1864,7 @@ export default function TriviaCard({
           </div>
 
           {savingSettings && (
-            <p className={cn("text-xs", "opacity-70")}>
-              Saving settings…
-            </p>
+            <p className={cn("text-xs", "opacity-70")}>Saving settings…</p>
           )}
         </Tabs.Content>
       </Tabs.Root>
