@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
-import { AnimatePresence, motion } from "framer-motion";
+import { motion } from "framer-motion";
 import { getSupabaseClient } from "@/lib/supabaseClient";
 
 const supabase = getSupabaseClient();
@@ -14,6 +14,7 @@ type LeaderRow = {
   name: string;
   selfieUrl?: string | null;
   points: number;
+  streak?: number; // 👈 NEW: current streak
 };
 
 function formatName(first?: string, last?: string) {
@@ -55,7 +56,8 @@ function sameRows(a: LeaderRow[], b: LeaderRow[]) {
       a[i].playerId !== b[i].playerId ||
       a[i].points !== b[i].points ||
       a[i].name !== b[i].name ||
-      (a[i].selfieUrl || "") !== (b[i].selfieUrl || "")
+      (a[i].selfieUrl || "") !== (b[i].selfieUrl || "") ||
+      (a[i].streak || 0) !== (b[i].streak || 0)
     ) {
       return false;
     }
@@ -219,7 +221,9 @@ export default function TriviaLeaderboardPage() {
 
       const { data: players, error: playersErr } = await supabase
         .from("trivia_players")
-        .select("id,status,guest_id,display_name,photo_url")
+        .select(
+          "id,status,guest_id,display_name,photo_url,current_streak" // 👈 include current_streak
+        )
         .eq("session_id", session.id)
         .eq("status", "approved");
 
@@ -253,7 +257,10 @@ export default function TriviaLeaderboardPage() {
         totals.set(a.player_id, (totals.get(a.player_id) || 0) + pts);
       }
 
-      const guestMap = new Map<string, { name: string; selfieUrl: string | null }>();
+      const guestMap = new Map<
+        string,
+        { name: string; selfieUrl: string | null }
+      >();
 
       if (guestIds.length > 0) {
         const { data: guests, error: guestsErr } = await supabase
@@ -273,7 +280,7 @@ export default function TriviaLeaderboardPage() {
         }
       }
 
-      const built = players
+      const built: LeaderRow[] = players
         .map((p: any) => {
           const guest = p.guest_id ? guestMap.get(p.guest_id) : undefined;
           const safeName = guest?.name || formatDisplayName(p.display_name);
@@ -286,10 +293,12 @@ export default function TriviaLeaderboardPage() {
             name: safeName,
             selfieUrl: safeSelfie,
             points: totals.get(p.id) || 0,
+            streak:
+              typeof p.current_streak === "number" ? p.current_streak : 0, // 👈 attach streak
           };
         })
-        .sort((a: any, b: any) => b.points - a.points)
-        .map((r: any, idx: number) => ({ ...r, rank: idx + 1 }));
+        .sort((a, b) => b.points - a.points)
+        .map((r, idx) => ({ ...r, rank: idx + 1 }));
 
       if (!cancelled && !sameRows(built, rowsRef.current)) {
         rowsRef.current = built;
@@ -311,8 +320,15 @@ export default function TriviaLeaderboardPage() {
 
   return (
     <>
-      <div style={{ width: "100vw", height: "100vh", position: "relative", overflow: "hidden" }}>
-        {/* ✅ background gets brightness, not the UI */}
+      <div
+        style={{
+          width: "100vw",
+          height: "100vh",
+          position: "relative",
+          overflow: "hidden",
+        }}
+      >
+        {/* ✅ background with brightness */}
         <div
           style={{
             position: "absolute",
@@ -345,7 +361,7 @@ export default function TriviaLeaderboardPage() {
             inset: 0,
             zIndex: 2,
             pointerEvents: "none",
-            opacity: 0.10,
+            opacity: 0.1,
             backgroundImage: `
               repeating-linear-gradient(
                 0deg,
@@ -416,7 +432,13 @@ export default function TriviaLeaderboardPage() {
             )}
 
             {!loading && rows.length > 0 && (
-              <div style={{ display: "flex", flexDirection: "column", gap: UI.rowGap }}>
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: UI.rowGap,
+                }}
+              >
                 {rows.slice(0, 10).map((r) => {
                   const isTop3 = r.rank <= 3;
                   const medal = medalFor(r.rank);
@@ -457,7 +479,17 @@ export default function TriviaLeaderboardPage() {
                         }}
                       />
 
-                      <div style={{ display: "flex", alignItems: "center", gap: 18, position: "relative", zIndex: 2 }}>
+                      {/* Left: avatar + name + streak */}
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 18,
+                          position: "relative",
+                          zIndex: 2,
+                        }}
+                      >
+                        {/* Avatar / rank circle */}
                         <div
                           style={{
                             width: UI.avatar,
@@ -466,9 +498,19 @@ export default function TriviaLeaderboardPage() {
                             overflow: "hidden",
                             background: "rgba(255,255,255,0.12)",
                             border: r.selfieUrl
-                              ? `3px solid ${isTop3 ? medal.ring : "rgba(255,255,255,0.45)"}`
-                              : `2px dashed ${isTop3 ? medal.ring : "rgba(255,255,255,0.45)"}`,
-                            boxShadow: isTop3 ? `0 0 18px ${medal.glow}` : "0 0 14px rgba(0,0,0,0.35)",
+                              ? `3px solid ${
+                                  isTop3
+                                    ? medal.ring
+                                    : "rgba(255,255,255,0.45)"
+                                }`
+                              : `2px dashed ${
+                                  isTop3
+                                    ? medal.ring
+                                    : "rgba(255,255,255,0.45)"
+                                }`,
+                            boxShadow: isTop3
+                              ? `0 0 18px ${medal.glow}`
+                              : "0 0 14px rgba(0,0,0,0.35)",
                             display: "flex",
                             alignItems: "center",
                             justifyContent: "center",
@@ -479,15 +521,25 @@ export default function TriviaLeaderboardPage() {
                             <img
                               src={r.selfieUrl}
                               alt={r.name}
-                              style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                              style={{
+                                width: "100%",
+                                height: "100%",
+                                objectFit: "cover",
+                              }}
                             />
                           ) : (
-                            <div style={{ fontWeight: 900, fontSize: "1.25rem", opacity: 0.95 }}>
+                            <div
+                              style={{
+                                fontWeight: 900,
+                                fontSize: "1.25rem",
+                                opacity: 0.95,
+                              }}
+                            >
                               {r.rank}
                             </div>
                           )}
 
-                          {/* rank badge stays same position */}
+                          {/* rank badge */}
                           {r.selfieUrl && (
                             <div
                               style={{
@@ -498,8 +550,14 @@ export default function TriviaLeaderboardPage() {
                                 height: 30,
                                 borderRadius: "50%",
                                 background: "rgba(0,0,0,0.75)",
-                                border: `1px solid ${isTop3 ? medal.badge : "rgba(255,255,255,0.25)"}`,
-                                boxShadow: isTop3 ? `0 0 14px ${medal.glow}` : "none",
+                                border: `1px solid ${
+                                  isTop3
+                                    ? medal.badge
+                                    : "rgba(255,255,255,0.25)"
+                                }`,
+                                boxShadow: isTop3
+                                  ? `0 0 14px ${medal.glow}`
+                                  : "none",
                                 display: "flex",
                                 alignItems: "center",
                                 justifyContent: "center",
@@ -511,23 +569,64 @@ export default function TriviaLeaderboardPage() {
                           )}
                         </div>
 
+                        {/* Name + streak pill */}
                         <div
                           style={{
-                            fontSize: "clamp(1.3rem,2.2vw,2.4rem)",
-                            fontWeight: 900,
-                            whiteSpace: "nowrap",
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: 4,
                             maxWidth: "65vw",
-                            textShadow: isTop3
-                              ? "0 10px 30px rgba(0,0,0,0.45), 0 0 18px rgba(255,255,255,0.12)"
-                              : "0 8px 22px rgba(0,0,0,0.40)",
                           }}
                         >
-                          {r.name}
+                          <div
+                            style={{
+                              fontSize: "clamp(1.3rem,2.2vw,2.4rem)",
+                              fontWeight: 900,
+                              whiteSpace: "nowrap",
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              textShadow: isTop3
+                                ? "0 10px 30px rgba(0,0,0,0.45), 0 0 18px rgba(255,255,255,0.12)"
+                                : "0 8px 22px rgba(0,0,0,0.40)",
+                            }}
+                          >
+                            {r.name}
+                          </div>
+
+                          {r.streak && r.streak >= 3 && (
+                            <div
+                              style={{
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: 6,
+                                padding: "2px 10px",
+                                borderRadius: 999,
+                                fontSize: "0.85rem",
+                                fontWeight: 700,
+                                letterSpacing: "0.03em",
+                                background:
+                                  r.streak >= 5
+                                    ? "linear-gradient(90deg, rgba(255,140,0,0.9), rgba(255,69,0,0.9))"
+                                    : "linear-gradient(90deg, rgba(255,215,0,0.85), rgba(255,165,0,0.85))",
+                                boxShadow:
+                                  r.streak >= 5
+                                    ? "0 0 20px rgba(255,69,0,0.6)"
+                                    : "0 0 14px rgba(255,215,0,0.5)",
+                                color: "#fff",
+                                textTransform: "uppercase",
+                              }}
+                            >
+                              <span>{r.streak >= 5 ? "🔥" : "✨"}</span>
+                              <span>
+                                {r.streak >= 5 ? "ON FIRE" : "HOT STREAK"} •{" "}
+                                {r.streak}x
+                              </span>
+                            </div>
+                          )}
                         </div>
                       </div>
 
+                      {/* Right: points */}
                       <div
                         style={{
                           fontSize: "clamp(1.6rem,2.6vw,3rem)",
@@ -549,60 +648,6 @@ export default function TriviaLeaderboardPage() {
           </motion.div>
         </div>
       </div>
-
-      <style>{`
-        /* title subtle shine */
-        .fiTitleShine {
-          position: relative;
-          display: inline-block;
-        }
-        .fiTitleShine::after {
-          content: "";
-          position: absolute;
-          top: 0;
-          bottom: 0;
-          width: 55%;
-          left: -70%;
-          background: linear-gradient(
-            90deg,
-            rgba(255,255,255,0),
-            rgba(255,255,255,0.18),
-            rgba(255,255,255,0)
-          );
-          filter: blur(0.5px);
-          opacity: 0.55;
-          animation: fiTitleSheen 4.5s ease-in-out infinite;
-          pointer-events: none;
-        }
-        @keyframes fiTitleSheen {
-          0% { transform: translateX(0%); }
-          55% { transform: translateX(240%); }
-          100% { transform: translateX(240%); }
-        }
-
-        /* top3 row slow sweep */
-        .fiTopRow::before {
-          content: "";
-          position: absolute;
-          inset: 0;
-          background: linear-gradient(
-            110deg,
-            rgba(255,255,255,0) 42%,
-            rgba(255,255,255,0.10) 50%,
-            rgba(255,255,255,0) 58%
-          );
-          transform: translateX(-140%);
-          opacity: 0.7;
-          animation: fiRowSweep 5.2s ease-in-out infinite;
-          pointer-events: none;
-          mix-blend-mode: screen;
-        }
-        @keyframes fiRowSweep {
-          0% { transform: translateX(-140%); }
-          55% { transform: translateX(140%); }
-          100% { transform: translateX(140%); }
-        }
-      `}</style>
     </>
   );
 }

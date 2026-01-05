@@ -20,6 +20,10 @@ type PodiumRow = {
   name: string;
   selfieUrl?: string | null;
   points: number;
+
+  // ✅ STREAK: extra info for display
+  currentStreak?: number;
+  bestStreak?: number;
 };
 
 /* ---------- DISPLAY CONSTANTS ---------- */
@@ -79,6 +83,17 @@ function pickPublicName(row: any): string {
   return "Trivia Game";
 }
 
+/* ---------- STREAK ENABLED HELPER ---------- */
+
+function readStreaksEnabled(row: any): boolean {
+  if (typeof row?.streaks_enabled !== "undefined") return !!row.streaks_enabled;
+  if (typeof row?.streak_enabled !== "undefined") return !!row.streak_enabled;
+  if (typeof row?.streak_display_enabled !== "undefined")
+    return !!row.streak_display_enabled;
+  if (typeof row?.show_streaks !== "undefined") return !!row.show_streaks;
+  return false;
+}
+
 /* ---------- PODIUM GLOW ---------- */
 
 function getPodiumGlow(place?: "1st" | "2nd" | "3rd") {
@@ -116,7 +131,7 @@ function getPodiumGlow(place?: "1st" | "2nd" | "3rd") {
   };
 }
 
-/* ---------- CONFETTI (more + slower + loop 5x + start higher) ---------- */
+/* ---------- CONFETTI ---------- */
 
 type ConfettiParticle = {
   id: string;
@@ -139,7 +154,7 @@ function makeConfetti(count: number): ConfettiParticle[] {
       leftPct: Math.random() * 100,
       size: 6 + Math.random() * 10,
       delay: Math.random() * 0.6,
-      duration: 2.8 + Math.random() * 2.0, // ✅ slower (2.8–4.8s)
+      duration: 2.8 + Math.random() * 2.0,
       drift: (Math.random() - 0.5) * 380,
       rotate: (Math.random() - 0.5) * 1080,
       color: colors[Math.floor(Math.random() * colors.length)],
@@ -213,6 +228,30 @@ const STYLE: Record<string, React.CSSProperties> = {
       -2px -2px 2px #000
     `,
   },
+
+  // ✅ STREAK badge under points
+  streak: {
+    fontSize: "clamp(1.2rem,1.8vw,2rem)",
+    fontWeight: 700,
+    color: "#fed7aa",
+    marginTop: "0.6vh",
+    padding: "8px 18px",
+    borderRadius: 999,
+    background:
+      "radial-gradient(circle at 0% 50%, rgba(248,113,113,0.45), rgba(30,64,175,0.3))",
+    border: "1px solid rgba(254,215,170,0.65)",
+    boxShadow:
+      "0 0 18px rgba(0,0,0,0.6), 0 0 28px rgba(251,146,60,0.55), 0 0 48px rgba(248,113,113,0.45)",
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    textShadow: `
+      2px 2px 2px #000,
+      -2px 2px 2px #000,
+      2px -2px 2px #000,
+      -2px -2px 2px #000
+    `,
+  },
 };
 
 /* ---------- COMPONENT ---------- */
@@ -229,6 +268,11 @@ export default function TriviaPodum({ trivia }: TriviaPodiumProps) {
   const [bg, setBg] = useState<string>(FALLBACK_BG);
   const [brightness, setBrightness] = useState<number>(
     trivia?.background_brightness ?? 100
+  );
+
+  // ✅ STREAK: feature flag
+  const [streaksEnabled, setStreaksEnabled] = useState<boolean>(() =>
+    readStreaksEnabled(trivia)
   );
 
   // confetti state
@@ -257,9 +301,12 @@ export default function TriviaPodum({ trivia }: TriviaPodiumProps) {
         ? trivia.background_brightness
         : 100
     );
+
+    // ✅ STREAK: sync from initial trivia row
+    setStreaksEnabled(readStreaksEnabled(trivia));
   }, [trivia]);
 
-  /* --- Live updates for title + background --- */
+  /* --- Live updates for title + background + streak flag --- */
   useEffect(() => {
     if (!trivia?.id) return;
 
@@ -290,6 +337,16 @@ export default function TriviaPodum({ trivia }: TriviaPodiumProps) {
               ? next.background_brightness
               : 100
           );
+
+          // ✅ STREAK: live toggle
+          if (
+            typeof (next as any).streaks_enabled !== "undefined" ||
+            typeof (next as any).streak_enabled !== "undefined" ||
+            typeof (next as any).streak_display_enabled !== "undefined" ||
+            typeof (next as any).show_streaks !== "undefined"
+          ) {
+            setStreaksEnabled(readStreaksEnabled(next));
+          }
         }
       )
       .subscribe();
@@ -325,7 +382,10 @@ export default function TriviaPodum({ trivia }: TriviaPodiumProps) {
 
         const { data: players, error: playersErr } = await supabase
           .from("trivia_players")
-          .select("id,status,guest_id,display_name,photo_url")
+          // ✅ STREAK: read current_streak + best_streak
+          .select(
+            "id,status,guest_id,display_name,photo_url,current_streak,best_streak"
+          )
           .eq("session_id", session.id)
           .eq("status", "approved");
 
@@ -386,6 +446,12 @@ export default function TriviaPodum({ trivia }: TriviaPodiumProps) {
             const safeName = guest?.name || formatDisplayName(p.display_name);
             const safeSelfie = guest?.selfieUrl || p.photo_url || null;
 
+            // ✅ STREAK: map DB → row
+            const currentStreak =
+              typeof p.current_streak === "number" ? p.current_streak : 0;
+            const bestStreak =
+              typeof p.best_streak === "number" ? p.best_streak : 0;
+
             return {
               rank: 0,
               playerId: p.id,
@@ -393,6 +459,8 @@ export default function TriviaPodum({ trivia }: TriviaPodiumProps) {
               name: safeName,
               selfieUrl: safeSelfie,
               points: totals.get(p.id) || 0,
+              currentStreak,
+              bestStreak,
             };
           })
           .sort((a: any, b: any) => b.points - a.points)
@@ -415,6 +483,8 @@ export default function TriviaPodum({ trivia }: TriviaPodiumProps) {
             name: top[0].name,
             selfieUrl: top[0].selfieUrl,
             points: top[0].points,
+            currentStreak: top[0].currentStreak,
+            bestStreak: top[0].bestStreak,
           });
         } else if (top.length === 2) {
           podium.push({
@@ -425,6 +495,8 @@ export default function TriviaPodum({ trivia }: TriviaPodiumProps) {
             name: top[1].name,
             selfieUrl: top[1].selfieUrl,
             points: top[1].points,
+            currentStreak: top[1].currentStreak,
+            bestStreak: top[1].bestStreak,
           });
           podium.push({
             placeLabel: "1st",
@@ -434,6 +506,8 @@ export default function TriviaPodum({ trivia }: TriviaPodiumProps) {
             name: top[0].name,
             selfieUrl: top[0].selfieUrl,
             points: top[0].points,
+            currentStreak: top[0].currentStreak,
+            bestStreak: top[0].bestStreak,
           });
         } else {
           podium.push({
@@ -444,6 +518,8 @@ export default function TriviaPodum({ trivia }: TriviaPodiumProps) {
             name: top[2].name,
             selfieUrl: top[2].selfieUrl,
             points: top[2].points,
+            currentStreak: top[2].currentStreak,
+            bestStreak: top[2].bestStreak,
           });
           podium.push({
             placeLabel: "2nd",
@@ -453,6 +529,8 @@ export default function TriviaPodum({ trivia }: TriviaPodiumProps) {
             name: top[1].name,
             selfieUrl: top[1].selfieUrl,
             points: top[1].points,
+            currentStreak: top[1].currentStreak,
+            bestStreak: top[1].bestStreak,
           });
           podium.push({
             placeLabel: "1st",
@@ -462,6 +540,8 @@ export default function TriviaPodum({ trivia }: TriviaPodiumProps) {
             name: top[0].name,
             selfieUrl: top[0].selfieUrl,
             points: top[0].points,
+            currentStreak: top[0].currentStreak,
+            bestStreak: top[0].bestStreak,
           });
         }
 
@@ -505,7 +585,7 @@ export default function TriviaPodum({ trivia }: TriviaPodiumProps) {
 
     const triggerBurst = () => {
       setConfettiKey((k) => k + 1);
-      setConfetti(makeConfetti(110)); // ✅ more confetti (tweak)
+      setConfetti(makeConfetti(110));
     };
 
     for (let i = 0; i < CONFETTI_BURSTS; i++) {
@@ -522,6 +602,20 @@ export default function TriviaPodum({ trivia }: TriviaPodiumProps) {
       timers.forEach((t) => window.clearTimeout(t));
     };
   }, [current?.playerId, current?.placeLabel]);
+
+  // ✅ STREAK: simple helper – choose which streak line to show
+  const streakText =
+    current && streaksEnabled
+      ? (() => {
+          const cs = current.currentStreak ?? 0;
+          const bs = current.bestStreak ?? 0;
+
+          // Prefer live streak if it's hot
+          if (cs >= 2) return `🔥 ${cs} in a row`;
+          if (bs >= 3) return `🔥 Longest streak: ${bs}`;
+          return "";
+        })()
+      : "";
 
   return (
     <div
@@ -637,7 +731,7 @@ export default function TriviaPodum({ trivia }: TriviaPodiumProps) {
                 {confetti.map((p) => (
                   <motion.span
                     key={p.id}
-                    initial={{ opacity: 0, y: -160, x: 0, rotate: 0 }} // ✅ start higher
+                    initial={{ opacity: 0, y: -160, x: 0, rotate: 0 }}
                     animate={{
                       opacity: [0, p.opacity, 0],
                       y: 980,
@@ -646,12 +740,12 @@ export default function TriviaPodum({ trivia }: TriviaPodiumProps) {
                     }}
                     transition={{
                       delay: p.delay,
-                      duration: p.duration, // ✅ slower
+                      duration: p.duration,
                       ease: "easeIn",
                     }}
                     style={{
                       position: "absolute",
-                      top: "0%", // ✅ start at frosted glass top border
+                      top: "0%",
                       left: `${p.leftPct}%`,
                       width: `${p.size}px`,
                       height: `${Math.max(6, p.size * 0.6)}px`,
@@ -766,7 +860,7 @@ export default function TriviaPodum({ trivia }: TriviaPodiumProps) {
             {/* GREY BAR */}
             <div style={STYLE.greyBar} />
 
-            {/* PLACE + NAME + POINTS */}
+            {/* PLACE + NAME + POINTS + STREAK */}
             <AnimatePresence mode="wait">
               {current && (
                 <motion.div
@@ -782,7 +876,7 @@ export default function TriviaPodum({ trivia }: TriviaPodiumProps) {
                     alignItems: "center",
                   }}
                 >
-                  {/* ✅ Removed "IN" */}
+                  {/* PLACE */}
                   <motion.p
                     style={STYLE.placeText}
                     initial={{ opacity: 0, y: 18, scale: 0.98 }}
@@ -793,6 +887,7 @@ export default function TriviaPodum({ trivia }: TriviaPodiumProps) {
                     {current.placeLabel.toUpperCase()} PLACE
                   </motion.p>
 
+                  {/* NAME */}
                   <motion.p
                     style={STYLE.name}
                     initial={{ opacity: 0, y: 18 }}
@@ -803,6 +898,7 @@ export default function TriviaPodum({ trivia }: TriviaPodiumProps) {
                     {current.name}
                   </motion.p>
 
+                  {/* POINTS */}
                   <motion.p
                     style={STYLE.points}
                     initial={{ opacity: 0, y: 18 }}
@@ -812,6 +908,22 @@ export default function TriviaPodum({ trivia }: TriviaPodiumProps) {
                   >
                     {current.points} pts
                   </motion.p>
+
+                  {/* ✅ STREAK BADGE (only when feature on + has streak) */}
+                  {streakText && (
+                    <motion.p
+                      style={STYLE.streak}
+                      initial={{ opacity: 0, y: 18, scale: 0.98 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: -14, scale: 0.98 }}
+                      transition={{ duration: 0.5, ease: "easeOut", delay: 0.45 }}
+                    >
+                      <span role="img" aria-label="fire">
+                        🔥
+                      </span>
+                      <span>{streakText.replace("🔥 ", "")}</span>
+                    </motion.p>
+                  )}
                 </motion.div>
               )}
             </AnimatePresence>
