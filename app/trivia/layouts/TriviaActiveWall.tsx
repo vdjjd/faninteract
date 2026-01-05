@@ -160,6 +160,26 @@ function pickPublicName(row: any): string {
   return "Trivia Game";
 }
 
+/* ---------------------------------------------------------
+   ✅ Highlight The Herd flag reader (supports either column name)
+--------------------------------------------------------- */
+function readHerdEnabled(row: any): boolean {
+  if (typeof row?.highlight_the_herd_enabled !== "undefined") {
+    return !!row.highlight_the_herd_enabled;
+  }
+  if (typeof row?.herd_highlight_enabled !== "undefined") {
+    return !!row.herd_highlight_enabled;
+  }
+  // tolerate a few other shapes
+  if (typeof row?.highlightTheHerdEnabled !== "undefined") {
+    return !!row.highlightTheHerdEnabled;
+  }
+  if (typeof row?.herdHighlightEnabled !== "undefined") {
+    return !!row.herdHighlightEnabled;
+  }
+  return false;
+}
+
 function sameTopRanks(a: TopRankRow[], b: TopRankRow[]) {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) {
@@ -282,22 +302,27 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
   const [progressiveWrongRemovalEnabled, setProgressiveWrongRemovalEnabled] =
     useState<boolean>(!!trivia?.progressive_wrong_removal_enabled);
 
-  // ✅ PATCH: herd highlight MUST be wall state (don’t rely on initial trivia prop)
+  // ✅ PATCH: herd highlight MUST be wall state (supports both column names)
   const [herdHighlightEnabled, setHerdHighlightEnabled] = useState<boolean>(
-    !!(trivia as any)?.herd_highlight_enabled
+    readHerdEnabled(trivia)
   );
 
-  // ✅ If env/schema lacks the column, stop selecting it (prevents spam)
-  const herdColumnUnsupportedRef = useRef(false);
+  // ✅ Track which DB column exists so we don’t spam errors
+  const herdFlagColRef = useRef<
+    "highlight_the_herd_enabled" | "herd_highlight_enabled" | null
+  >(null);
 
   useEffect(() => {
     setCardStatus(trivia?.status || "idle");
     setCardCountdownActive(!!trivia?.countdown_active);
     setProgressiveWrongRemovalEnabled(!!trivia?.progressive_wrong_removal_enabled);
 
-    // ✅ keep in sync only if the prop actually includes it
-    if (typeof (trivia as any)?.herd_highlight_enabled !== "undefined") {
-      setHerdHighlightEnabled(!!(trivia as any).herd_highlight_enabled);
+    // ✅ sync herd from prop if either column exists
+    if (
+      typeof (trivia as any)?.highlight_the_herd_enabled !== "undefined" ||
+      typeof (trivia as any)?.herd_highlight_enabled !== "undefined"
+    ) {
+      setHerdHighlightEnabled(readHerdEnabled(trivia));
     }
   }, [
     trivia?.id,
@@ -305,53 +330,79 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
     trivia?.countdown_active,
     trivia?.progressive_wrong_removal_enabled,
     (trivia as any)?.herd_highlight_enabled,
+    (trivia as any)?.highlight_the_herd_enabled,
   ]);
 
   useEffect(() => {
     if (!trivia?.id) return;
 
-    // ✅ reset on card change
-    herdColumnUnsupportedRef.current = false;
+    // reset column knowledge on card change
+    herdFlagColRef.current = null;
 
     let alive = true;
 
-    const poll = async () => {
-      const selectCols = herdColumnUnsupportedRef.current
-        ? "status,countdown_active,progressive_wrong_removal_enabled"
-        : "status,countdown_active,progressive_wrong_removal_enabled,herd_highlight_enabled";
+    const baseCols = "status,countdown_active,progressive_wrong_removal_enabled";
 
-      const { data, error } = await supabase
+    const trySelect = async (col: string | null) => {
+      const cols = col ? `${baseCols},${col}` : baseCols;
+      return supabase
         .from("trivia_cards")
-        .select(selectCols)
+        .select(cols)
         .eq("id", trivia.id)
         .maybeSingle();
+    };
+
+    const isMissingColumnError = (err: any, colName: string) => {
+      const code = String(err?.code || "");
+      const msg = String(err?.message || "").toLowerCase();
+      // Postgres: undefined_column is 42703
+      if (code === "42703") return true;
+      // supabase sometimes returns "column <x> does not exist"
+      if (msg.includes("does not exist") && msg.includes(colName.toLowerCase()))
+        return true;
+      return false;
+    };
+
+    const poll = async () => {
+      let res: any;
+
+      // If we already know which column exists, use it
+      if (herdFlagColRef.current === "highlight_the_herd_enabled") {
+        res = await trySelect("highlight_the_herd_enabled");
+      } else if (herdFlagColRef.current === "herd_highlight_enabled") {
+        res = await trySelect("herd_highlight_enabled");
+      } else {
+        // Prefer highlight_the_herd_enabled first
+        res = await trySelect("highlight_the_herd_enabled");
+
+        if (
+          res?.error &&
+          isMissingColumnError(res.error, "highlight_the_herd_enabled")
+        ) {
+          // fallback to herd_highlight_enabled
+          res = await trySelect("herd_highlight_enabled");
+          if (!res?.error) herdFlagColRef.current = "herd_highlight_enabled";
+        } else if (!res?.error) {
+          herdFlagColRef.current = "highlight_the_herd_enabled";
+        } else {
+          // Some other error; don't flip modes, just bail
+          return;
+        }
+      }
 
       if (!alive) return;
 
-      const msg = String((error as any)?.message || "").toLowerCase();
-      const code = String((error as any)?.code || "");
-
-      // ✅ If older schema: mark unsupported ONCE and continue without it.
-      if (
-        error &&
-        !herdColumnUnsupportedRef.current &&
-        (code === "42703" ||
-          msg.includes("does not exist") ||
-          msg.includes("herd_highlight_enabled"))
-      ) {
-        herdColumnUnsupportedRef.current = true;
-        return;
-      }
-
+      const { data, error } = res || {};
       if (error || !data) return;
 
       setCardStatus((data as any).status);
       setCardCountdownActive(!!(data as any).countdown_active);
-      setProgressiveWrongRemovalEnabled(!!(data as any).progressive_wrong_removal_enabled);
+      setProgressiveWrongRemovalEnabled(
+        !!(data as any).progressive_wrong_removal_enabled
+      );
 
-      if (typeof (data as any).herd_highlight_enabled !== "undefined") {
-        setHerdHighlightEnabled(!!(data as any).herd_highlight_enabled);
-      }
+      // ✅ Read herd from whichever col we got back
+      setHerdHighlightEnabled(readHerdEnabled(data));
     };
 
     poll();
@@ -432,9 +483,12 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
             setProgressiveWrongRemovalEnabled(!!next.progressive_wrong_removal_enabled);
           }
 
-          // ✅ PATCH: herd toggle can change live
-          if (typeof next.herd_highlight_enabled !== "undefined") {
-            setHerdHighlightEnabled(!!next.herd_highlight_enabled);
+          // ✅ PATCH: herd toggle can change live (supports both column names)
+          if (
+            typeof (next as any).highlight_the_herd_enabled !== "undefined" ||
+            typeof (next as any).herd_highlight_enabled !== "undefined"
+          ) {
+            setHerdHighlightEnabled(readHerdEnabled(next));
           }
         }
       )
