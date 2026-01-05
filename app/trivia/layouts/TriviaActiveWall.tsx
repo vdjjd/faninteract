@@ -55,7 +55,7 @@ const LOGO_CTRL = {
 };
 
 /* ---------------------------------------------------- */
-/* RANKINGS CONTROL (ADJUST HERE)                        */
+/* RANKINGS CONTROL (ADJUST HERE)                       */
 /* ---------------------------------------------------- */
 const RANKINGS_CTRL = {
   bottom: "10.5vh",
@@ -80,6 +80,15 @@ const LEADER_UI = {
   rowHeight: 86,
   avatar: 64,
 };
+
+/* ---------------------------------------------------- */
+/* QUESTION FONT AUTOFIT                                */
+/* ---------------------------------------------------- */
+const QUESTION_FONT_SIZES = [
+  "clamp(2.4rem,3.5vw,4.5rem)", // default / largest
+  "clamp(2.0rem,2.9vw,3.7rem)", // medium
+  "clamp(1.7rem,2.4vw,3.1rem)", // smallest
+];
 
 /* ---------------------------------------------------- */
 /* TEMP HOST LOGO STUB                                  */
@@ -317,9 +326,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
   const [revealAnswer, setRevealAnswer] = useState(false);
 
   const questionRef = useRef<HTMLDivElement | null>(null);
-
-  // ✅ track if question is long (> ~4 lines) to shrink font
-  const [isLongQuestion, setIsLongQuestion] = useState(false);
+  const [questionFontMode, setQuestionFontMode] = useState<number>(0);
 
   const [topRanks, setTopRanks] = useState<TopRankRow[]>([]);
   const topRanksRef = useRef<TopRankRow[]>([]);
@@ -582,6 +589,49 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
       : false;
 
   /* -------------------------------------------------- */
+  /* ✅ Reset question font when question changes         */
+  /* -------------------------------------------------- */
+  useEffect(() => {
+    setQuestionFontMode(0);
+  }, [currentQuestionNumber, trivia?.id]);
+
+  /* -------------------------------------------------- */
+  /* ✅ Auto-fit question text to ~4 lines                */
+  /* -------------------------------------------------- */
+  useEffect(() => {
+    const el = questionRef.current;
+    if (!el || !question?.question_text || view !== "question") return;
+
+    const handle = window.setTimeout(() => {
+      const style = window.getComputedStyle(el);
+      const fontSizePx = parseFloat(style.fontSize || "0");
+      const lineHeightRaw = parseFloat(style.lineHeight || "0");
+      const lineHeightPx =
+        !Number.isNaN(lineHeightRaw) && lineHeightRaw > 0
+          ? lineHeightRaw
+          : fontSizePx * 1.2;
+
+      const maxHeight = lineHeightPx * 4; // target: 4 lines
+      const actual = el.scrollHeight;
+
+      const maxMode = QUESTION_FONT_SIZES.length - 1;
+
+      // Too tall → bump down a font mode
+      if (actual > maxHeight + 1 && questionFontMode < maxMode) {
+        setQuestionFontMode(questionFontMode + 1);
+        return;
+      }
+
+      // Way under limit → we can bump it back up one
+      if (actual < maxHeight * 0.85 && questionFontMode > 0) {
+        setQuestionFontMode(questionFontMode - 1);
+      }
+    }, 0);
+
+    return () => window.clearTimeout(handle);
+  }, [question?.question_text, view, questionFontMode]);
+
+  /* -------------------------------------------------- */
   /* ✅ UI follows wall_phase ONLY                        */
   /* -------------------------------------------------- */
   useEffect(() => {
@@ -595,38 +645,6 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
     if (isPaused) setLocked(true);
     else setLocked(wallPhase !== "question");
   }, [wallPhase, isPaused]);
-
-  /* -------------------------------------------------- */
-  /* ✅ Auto-detect long questions (> ~4 lines)           */
-  /* -------------------------------------------------- */
-  useEffect(() => {
-    const el = questionRef.current;
-    if (!el || !question?.question_text || view !== "question") {
-      setIsLongQuestion(false);
-      return;
-    }
-
-    const handle = window.setTimeout(() => {
-      const style = window.getComputedStyle(el);
-      const fontSizePx = parseFloat(style.fontSize || "0");
-      const lineHeightRaw = parseFloat(style.lineHeight || "0");
-      const lineHeightPx =
-        !Number.isNaN(lineHeightRaw) && lineHeightRaw > 0
-          ? lineHeightRaw
-          : fontSizePx * 1.2;
-
-      const maxHeight = lineHeightPx * 4; // target ~4 lines
-      const actual = el.scrollHeight;
-
-      if (actual > maxHeight + 4) {
-        setIsLongQuestion(true);
-      } else {
-        setIsLongQuestion(false);
-      }
-    }, 0);
-
-    return () => window.clearTimeout(handle);
-  }, [question?.question_text, view]);
 
   /* -------------------------------------------------- */
   /* ✅ QUESTION TIMER                                    */
@@ -1306,9 +1324,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                             wordBreak: "break-word",
                             overflowWrap: "anywhere",
                             textShadow: "0 10px 40px rgba(0,0,0,0.65)",
-                            fontSize: isLongQuestion
-                              ? "clamp(2rem,2.7vw,3.2rem)"
-                              : "clamp(2.4rem,3.5vw,4.5rem)",
+                            fontSize: QUESTION_FONT_SIZES[questionFontMode],
                             lineHeight: 1.12,
                           }}
                         >
@@ -1442,7 +1458,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                           : null}
                       </div>
 
-                      {/* ⬇️ "Current Rankings" label was here — intentionally removed */}
+                      {/* (no "Current Rankings" label here anymore) */}
                     </div>
 
                     {/* ANSWER OVERLAY */}
@@ -1863,23 +1879,24 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
             </div>
           )}
 
-          {/* Question X of Y label (centered under rankings, outside glass) */}
+          {/* QUESTION INDEX: under rankings, outside frosted glass */}
           {view === "question" &&
+            isActiveGame &&
             currentQuestionNumber != null &&
             totalQuestions != null &&
             totalQuestions > 0 && (
               <div
                 style={{
                   position: "absolute",
-                  bottom: "5.4vh", // under RANKINGS_CTRL.bottom
+                  bottom: "4vh",
                   left: "50%",
                   transform: "translateX(-50%)",
-                  zIndex: 19,
+                  color: "#fff",
+                  fontWeight: 800,
+                  fontSize: "clamp(1.2rem,1.6vw,1.8rem)",
+                  textShadow: "0 8px 20px rgba(0,0,0,0.7)",
+                  zIndex: 20,
                   pointerEvents: "none",
-                  color: "rgba(255,255,255,0.9)",
-                  fontWeight: 700,
-                  fontSize: "clamp(1.1rem,1.5vw,1.7rem)",
-                  textShadow: "0 2px 10px rgba(0,0,0,0.7)",
                 }}
               >
                 Question {currentQuestionNumber} of {totalQuestions}
