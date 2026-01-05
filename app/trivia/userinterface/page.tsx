@@ -6,6 +6,9 @@ import { getSupabaseClient } from "@/lib/supabaseClient";
 import { computeTriviaPoints } from "@/lib/trivia/triviaScoringEngine";
 import { useTriviaCardFlags } from "@/lib/trivia/hooks/useTriviaCardFlags";
 
+// ✅ NEW: herd highlight (same hook the wall uses)
+import { useHerdHighlight } from "@/lib/trivia/wall/useHerdHighlight";
+
 const supabase = getSupabaseClient();
 
 /* ---------------------------------------------------------
@@ -111,6 +114,26 @@ function sameLeaderRows(a: LeaderRow[], b: LeaderRow[]) {
 }
 
 /* ---------------------------------------------------------
+   ✅ Highlight The Herd flag reader (supports either column name)
+--------------------------------------------------------- */
+function readHerdEnabled(row: any): boolean {
+  if (typeof row?.highlight_the_herd_enabled !== "undefined") {
+    return !!row.highlight_the_herd_enabled;
+  }
+  if (typeof row?.herd_highlight_enabled !== "undefined") {
+    return !!row.herd_highlight_enabled;
+  }
+  // tolerate a few other shapes
+  if (typeof row?.highlightTheHerdEnabled !== "undefined") {
+    return !!row.highlightTheHerdEnabled;
+  }
+  if (typeof row?.herdHighlightEnabled !== "undefined") {
+    return !!row.herdHighlightEnabled;
+  }
+  return false;
+}
+
+/* ---------------------------------------------------------
    ✅ QUESTION ORDERING (MATCH WALL LOGIC)
 --------------------------------------------------------- */
 type QuestionOrderMode = "question_number" | "round_number" | "created_at";
@@ -128,9 +151,7 @@ function normalizeQuestions(qsRaw: any[]): {
       Number.isFinite(q.question_number)
   );
   const hasAllRN = list.every(
-    (q) =>
-      typeof q?.round_number === "number" &&
-      Number.isFinite(q.round_number)
+    (q) => typeof q?.round_number === "number" && Number.isFinite(q.round_number)
   );
 
   const mode: QuestionOrderMode = hasAllQN
@@ -268,7 +289,7 @@ export default function TriviaUserInterfacePage() {
 
   const gameId = searchParams.get("game"); // trivia_cards.id
 
-  // ✅ NEW: central flags hook (replaces trivia_cards subscription + ads poll)
+  // ✅ central flags hook
   const { flags } = useTriviaCardFlags(gameId, {
     realtime: true,
     pollMs: 2000,
@@ -304,9 +325,7 @@ export default function TriviaUserInterfacePage() {
   const [leaderLoading, setLeaderLoading] = useState(false);
 
   // DB-anchored start time
-  const [questionStartedAt, setQuestionStartedAt] = useState<string | null>(
-    null
-  );
+  const [questionStartedAt, setQuestionStartedAt] = useState<string | null>(null);
 
   const timerIntervalRef = useRef<number | null>(null);
 
@@ -343,6 +362,26 @@ export default function TriviaUserInterfacePage() {
   const countdownSeconds = flags?.countdownSeconds ?? 10;
   const countdownActive = flags?.countdownActive ?? false;
   const countdownStartedAt = flags?.countdownStartedAt ?? null;
+
+  // ✅ NEW: Highlight The Herd (try to read from flags, but we’ll also fallback-load from DB)
+  const herdEnabledFromFlags = useMemo(() => {
+    const f: any = flags as any;
+    return (
+      readHerdEnabled(f) ||
+      readHerdEnabled(f?.new) || // tolerate odd shapes
+      false
+    );
+  }, [flags]);
+
+  const [highlightTheHerdEnabled, setHighlightTheHerdEnabled] =
+    useState<boolean>(false);
+
+  // Prefer flags when present (live updates)
+  useEffect(() => {
+    if (typeof herdEnabledFromFlags === "boolean") {
+      setHighlightTheHerdEnabled(herdEnabledFromFlags);
+    }
+  }, [herdEnabledFromFlags]);
 
   /* ---------------------------------------------------------
      ✅ COUNTDOWN TIMER (LOCKED TO INACTIVE WALL)
@@ -454,6 +493,32 @@ export default function TriviaUserInterfacePage() {
       }
 
       setTrivia(card);
+
+      // ✅ Herd flag fallback-load (safe: won’t break if column missing)
+      // (If flags hook supplies it, the flags effect will override this anyway.)
+      try {
+        const { data: herd1, error: e1 } = await supabase
+          .from("trivia_cards")
+          .select("highlight_the_herd_enabled")
+          .eq("id", gameId)
+          .maybeSingle();
+
+        if (!cancelled && !e1 && herd1) {
+          setHighlightTheHerdEnabled(!!(herd1 as any).highlight_the_herd_enabled);
+        } else {
+          const { data: herd2, error: e2 } = await supabase
+            .from("trivia_cards")
+            .select("herd_highlight_enabled")
+            .eq("id", gameId)
+            .maybeSingle();
+
+          if (!cancelled && !e2 && herd2) {
+            setHighlightTheHerdEnabled(!!(herd2 as any).herd_highlight_enabled);
+          }
+        }
+      } catch {
+        // ignore
+      }
 
       // 2) host row (logo + master_id + injector_enabled)
       let logo = "/faninteractlogo.png";
@@ -931,6 +996,52 @@ export default function TriviaUserInterfacePage() {
   ]);
 
   /* ---------------------------------------------------------
+     ✅ Highlight The Herd (same as wall)
+  --------------------------------------------------------- */
+  const herd = useHerdHighlight({
+    enabled: highlightTheHerdEnabled,
+
+    sessionId: session?.id ?? null,
+    questionId: currentQuestion?.id ?? null,
+    optionsLen: Array.isArray(currentQuestion?.options)
+      ? currentQuestion.options.length
+      : 0,
+
+    active:
+      isRunning &&
+      wallPhase === "question" &&
+      !isCountdownRunning &&
+      !isSessionOver,
+
+    paused: isPaused,
+    revealAnswer,
+
+    removed: removedWrongIndices,
+    pollMs: 600,
+  });
+
+  const herdTopIndex = useMemo(() => {
+    if (!highlightTheHerdEnabled) return null;
+
+    const p = herd?.percents || [];
+    if (!Array.isArray(p) || p.length === 0) return null;
+
+    let best = -1;
+    let bestVal = -1;
+
+    for (let i = 0; i < p.length; i++) {
+      if (removedWrongIndices.has(i)) continue;
+      const v = Number(p[i] || 0);
+      if (v > bestVal) {
+        bestVal = v;
+        best = i;
+      }
+    }
+
+    return bestVal > 0 && best >= 0 ? best : null;
+  }, [highlightTheHerdEnabled, herd?.percents, removedWrongIndices]);
+
+  /* ---------------------------------------------------------
      If refresh mid-question, reflect existing answer
   --------------------------------------------------------- */
   useEffect(() => {
@@ -1322,6 +1433,15 @@ export default function TriviaUserInterfacePage() {
       ? trivia.background_brightness
       : 100;
 
+  // ✅ Herd chip should only show during active question phase (matches wall behavior)
+  const herdUiActive =
+    highlightTheHerdEnabled &&
+    isRunning &&
+    wallPhase === "question" &&
+    !revealAnswer &&
+    !isCountdownRunning &&
+    !isSessionOver;
+
   return (
     <>
       <div
@@ -1592,6 +1712,17 @@ export default function TriviaUserInterfacePage() {
                 isPaused ||
                 isRemoved;
 
+              // ✅ Herd label + top highlight (matches wall behavior)
+              const herdLabel =
+                herdUiActive && !isRemoved ? herd.labelForIndex(idx) : "";
+
+              const isHerdTop =
+                herdUiActive &&
+                herdTopIndex === idx &&
+                !isRemoved &&
+                !chosen &&
+                !revealAnswer;
+
               let bgBtn = "rgba(15,23,42,0.85)";
               let border = "1px solid rgba(148,163,184,0.4)";
               let opacityBtn = 1;
@@ -1640,6 +1771,12 @@ export default function TriviaUserInterfacePage() {
                 }
               } else if (disabled && !chosen) {
                 opacityBtn = Math.min(opacityBtn, 0.7);
+              }
+
+              // ✅ Herd top glow (only during question)
+              if (isHerdTop) {
+                border = "2px solid rgba(190,242,100,0.85)";
+                boxShadow = "0 0 18px rgba(190,242,100,0.45)";
               }
 
               return (
@@ -1699,6 +1836,26 @@ export default function TriviaUserInterfacePage() {
                     }}
                   >
                     {isRemoved ? "Removed" : opt}
+
+                    {!!herdLabel && (
+                      <div style={{ marginTop: 6 }}>
+                        <span
+                          style={{
+                            display: "inline-block",
+                            padding: "4px 10px",
+                            borderRadius: 999,
+                            fontSize: "0.75rem",
+                            fontWeight: 800,
+                            letterSpacing: 0.2,
+                            background: "rgba(255,255,255,0.10)",
+                            border: "1px solid rgba(255,255,255,0.18)",
+                            opacity: 0.95,
+                          }}
+                        >
+                          {herdLabel}
+                        </span>
+                      </div>
+                    )}
                   </span>
                 </button>
               );
