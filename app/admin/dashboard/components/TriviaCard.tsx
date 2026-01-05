@@ -35,7 +35,6 @@ function getTriviaCardBackground(trivia: any) {
       ? trivia.background_value
       : DEFAULT_TRIVIA_GRADIENT;
 
-  // Image background
   if (type === "image" && value.startsWith("http")) {
     return {
       backgroundImage: `url(${value})`,
@@ -44,17 +43,11 @@ function getTriviaCardBackground(trivia: any) {
     };
   }
 
-  // Gradient string
   if (value.includes("gradient(")) {
-    return {
-      backgroundImage: value,
-    };
+    return { backgroundImage: value };
   }
 
-  // Solid color
-  return {
-    background: value || "#1b2638",
-  };
+  return { background: value || "#1b2638" };
 }
 
 export default function TriviaCard({
@@ -88,7 +81,6 @@ export default function TriviaCard({
     trivia?.timer_seconds ?? 30
   );
 
-  // Countdown timer setting (trivia_cards.countdown_seconds)
   const COUNTDOWN_OPTIONS: Array<{ label: string; value: number }> = [
     { label: "10 seconds", value: 10 },
     { label: "30 seconds", value: 30 },
@@ -128,8 +120,11 @@ export default function TriviaCard({
     trivia?.require_selfie ?? true
   );
 
-  // Ads toggle for phone UI
   const [adsEnabled, setAdsEnabled] = useState<boolean>(!!trivia?.ads_enabled);
+
+  // ✅ NEW: progressive wrong-answer removal setting
+  const [progressiveWrongRemovalEnabled, setProgressiveWrongRemovalEnabled] =
+    useState<boolean>(!!trivia?.progressive_wrong_removal_enabled);
 
   const [savingSettings, setSavingSettings] = useState(false);
 
@@ -177,7 +172,7 @@ export default function TriviaCard({
      ACTIVE TAB
  ------------------------------------------------------------ */
   const [activeTab, setActiveTab] = useState<
-    "menu" | "questions" | "leaderboard" | "settings"
+    "menu" | "questions" | "leaderboard" | "settings1" | "settings2"
   >("menu");
 
   /* ------------------------------------------------------------
@@ -191,6 +186,9 @@ export default function TriviaCard({
     setRequireSelfie(trivia?.require_selfie ?? true);
     setAdsEnabled(!!trivia?.ads_enabled);
 
+    // ✅ NEW: keep synced
+    setProgressiveWrongRemovalEnabled(!!trivia?.progressive_wrong_removal_enabled);
+
     setCardStatus(trivia?.status);
     setCardCountdownActive(!!trivia?.countdown_active);
   }, [
@@ -201,6 +199,7 @@ export default function TriviaCard({
     trivia?.scoring_mode,
     trivia?.require_selfie,
     trivia?.ads_enabled,
+    trivia?.progressive_wrong_removal_enabled,
     trivia?.status,
     trivia?.countdown_active,
   ]);
@@ -235,7 +234,7 @@ export default function TriviaCard({
       const { data, error } = await supabase
         .from("trivia_cards")
         .select(
-          "status, countdown_active, countdown_seconds, background_type, background_value, ads_enabled"
+          "status, countdown_active, countdown_seconds, background_type, background_value, ads_enabled, progressive_wrong_removal_enabled"
         )
         .eq("id", trivia.id)
         .maybeSingle();
@@ -250,15 +249,18 @@ export default function TriviaCard({
       setCardCountdownActive(!!data.countdown_active);
       setAdsEnabled(!!data.ads_enabled);
 
+      // ✅ NEW: sync
+      setProgressiveWrongRemovalEnabled(!!(data as any).progressive_wrong_removal_enabled);
+
       setCountdownSeconds(
         normalizeCountdownSeconds((data as any).countdown_seconds ?? 10)
       );
 
-      // keep background synced
       trivia.background_type = data.background_type;
       trivia.background_value = data.background_value;
       trivia.ads_enabled = data.ads_enabled;
       trivia.countdown_seconds = (data as any).countdown_seconds;
+      trivia.progressive_wrong_removal_enabled = (data as any).progressive_wrong_removal_enabled;
     };
 
     pollCard();
@@ -277,6 +279,7 @@ export default function TriviaCard({
     scoring_mode?: string;
     require_selfie?: boolean;
     ads_enabled?: boolean;
+    progressive_wrong_removal_enabled?: boolean; // ✅ NEW
   }) {
     try {
       setSavingSettings(true);
@@ -326,6 +329,13 @@ export default function TriviaCard({
     const value = e.target.value === "on";
     setAdsEnabled(value);
     await updateTriviaSettings({ ads_enabled: value });
+  }
+
+  // ✅ NEW
+  async function handleProgressiveWrongRemovalChange(e: any) {
+    const value = e.target.value === "on";
+    setProgressiveWrongRemovalEnabled(value);
+    await updateTriviaSettings({ progressive_wrong_removal_enabled: value });
   }
 
   /* ------------------------------------------------------------
@@ -569,11 +579,7 @@ export default function TriviaCard({
       .channel(`dashboard-trivia-answers-${trivia.id}`)
       .on(
         "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "trivia_answers",
-        },
+        { event: "*", schema: "public", table: "trivia_answers" },
         (payload: any) => {
           const qid =
             payload?.new?.question_id ?? payload?.old?.question_id ?? null;
@@ -665,11 +671,7 @@ export default function TriviaCard({
 
   /* ------------------------------------------------------------
      ✅ PAUSE / RESUME TRIVIA
-     Requirements:
-       - trivia_cards.status uses "paused"
-       - trivia_sessions.status uses "paused"
-       - trivia_sessions.paused_at column exists (timestamptz)
- ------------------------------------------------------------ */
+  ------------------------------------------------------------ */
   const canPause =
     !cardCountdownActive &&
     (cardStatus === "running" || cardStatus === "paused") &&
@@ -681,7 +683,6 @@ export default function TriviaCard({
 
     setPauseBusy(true);
     try {
-      // latest non-finished session (running or paused)
       const { data: session, error: sessionErr } = await supabase
         .from("trivia_sessions")
         .select("id,status,paused_at,question_started_at,wall_phase_started_at")
@@ -699,12 +700,8 @@ export default function TriviaCard({
       const nowIso = await getServerIsoNow();
       const nowMs = new Date(nowIso).getTime();
 
-      // PAUSE
       if (cardStatus === "running") {
-        await supabase
-          .from("trivia_cards")
-          .update({ status: "paused" })
-          .eq("id", trivia.id);
+        await supabase.from("trivia_cards").update({ status: "paused" }).eq("id", trivia.id);
 
         await supabase
           .from("trivia_sessions")
@@ -715,7 +712,6 @@ export default function TriviaCard({
         return;
       }
 
-      // RESUME
       if (cardStatus === "paused") {
         const pausedAtIso = (session.paused_at ?? null) as string | null;
 
@@ -733,10 +729,7 @@ export default function TriviaCard({
           nextWallPhaseStartedAt = shiftIso(nextWallPhaseStartedAt);
         }
 
-        await supabase
-          .from("trivia_cards")
-          .update({ status: "running" })
-          .eq("id", trivia.id);
+        await supabase.from("trivia_cards").update({ status: "running" }).eq("id", trivia.id);
 
         await supabase
           .from("trivia_sessions")
@@ -757,8 +750,7 @@ export default function TriviaCard({
   }
 
   /* ------------------------------------------------------------
-     ▶️ PLAY TRIVIA (ONLY: start game & seed first question)
-     ✅ Uses Supabase server_time for ALL timestamps
+     ▶️ PLAY TRIVIA
   ------------------------------------------------------------ */
   async function handlePlayTrivia() {
     if (playLockRef.current) return;
@@ -767,23 +759,19 @@ export default function TriviaCard({
     playLockRef.current = true;
 
     try {
-      // 1) Make sure there are active questions
       const { count: qCount, error: qCountErr } = await supabase
         .from("trivia_questions")
         .select("*", { count: "exact", head: true })
         .eq("trivia_card_id", trivia.id)
         .eq("is_active", true);
 
-      if (qCountErr) {
-        console.warn("⚠️ trivia_questions count error:", qCountErr);
-      }
+      if (qCountErr) console.warn("⚠️ trivia_questions count error:", qCountErr);
 
       if (!qCount || qCount < 1) {
         alert("This trivia has no ACTIVE questions yet.");
         return;
       }
 
-      // 2) Find latest non-finished session (same as before)
       const { data: session, error: sessionErr } = await supabase
         .from("trivia_sessions")
         .select("id,status,created_at")
@@ -801,15 +789,12 @@ export default function TriviaCard({
 
       setActiveSessionId(session.id);
 
-      // 3) Require at least one approved player (same as before)
       const { data: players, error: playersErr } = await supabase
         .from("trivia_players")
         .select("id,status")
         .eq("session_id", session.id);
 
-      if (playersErr) {
-        console.error("❌ trivia_players check error:", playersErr);
-      }
+      if (playersErr) console.error("❌ trivia_players check error:", playersErr);
 
       const hasApproved =
         (players || []).some((p) => p.status === "approved") || false;
@@ -819,7 +804,6 @@ export default function TriviaCard({
         return;
       }
 
-      // 4) SERVER-SYNCED countdown start time
       const countdownStartIso = await getServerIsoNow();
 
       await supabase
@@ -835,7 +819,6 @@ export default function TriviaCard({
       setCardCountdownActive(true);
       setCardStatus("waiting");
 
-      // Clear any old timers
       if (playTimeoutRef.current) {
         window.clearTimeout(playTimeoutRef.current);
         playTimeoutRef.current = null;
@@ -843,10 +826,8 @@ export default function TriviaCard({
 
       const ms = Math.max(1, countdownSeconds) * 1000;
 
-      // 5) AFTER countdown → SERVER-SYNCED question start time
       playTimeoutRef.current = window.setTimeout(async () => {
         try {
-          // Mark card as running + turn off countdown
           await supabase
             .from("trivia_cards")
             .update({
@@ -855,7 +836,6 @@ export default function TriviaCard({
             })
             .eq("id", trivia.id);
 
-          // Use server time again for Q1
           const questionStartIso = await getServerIsoNow();
 
           const { error: sessionUpdateErr } = await supabase
@@ -882,7 +862,6 @@ export default function TriviaCard({
         }
       }, ms);
     } finally {
-      // If we bailed out BEFORE starting countdown, unlock the button
       if (!cardCountdownActive && cardStatus !== "waiting") {
         playLockRef.current = false;
       }
@@ -946,7 +925,9 @@ export default function TriviaCard({
       <Tabs.Root
         value={activeTab}
         onValueChange={(val) =>
-          setActiveTab(val as "menu" | "questions" | "leaderboard" | "settings")
+          setActiveTab(
+            val as "menu" | "questions" | "leaderboard" | "settings1" | "settings2"
+          )
         }
       >
         <Tabs.List
@@ -963,7 +944,8 @@ export default function TriviaCard({
             { value: "menu", label: "Home" },
             { value: "questions", label: "Questions" },
             { value: "leaderboard", label: "Leaderboard" },
-            { value: "settings", label: "Trivia Settings" },
+            { value: "settings1", label: "Settings One" },
+            { value: "settings2", label: "Settings Two" },
           ].map((tab) => (
             <Tabs.Trigger
               key={tab.value}
@@ -984,17 +966,13 @@ export default function TriviaCard({
 
         {/* ---------------- HOME ---------------- */}
         <Tabs.Content value="menu">
-          <div
-            className={cn("grid", "grid-cols-3", "gap-2", "mb-4", "items-center")}
-          >
+          <div className={cn("grid", "grid-cols-3", "gap-2", "mb-4", "items-center")}>
             <div>
               <p className={cn("text-sm", "opacity-70")}>Difficulty</p>
               <p className="font-semibold">{trivia.difficulty}</p>
             </div>
             <div className="text-center">
-              <p className={cn("text-lg", "font-semibold")}>
-                {trivia.public_name}
-              </p>
+              <p className={cn("text-lg", "font-semibold")}>{trivia.public_name}</p>
               {(cardStatus === "paused" || cardStatus === "waiting") && (
                 <p className={cn("text-xs", "opacity-80", "mt-0.5")}>
                   {cardStatus === "paused" ? "PAUSED" : "Starting soon…"}
@@ -1010,26 +988,14 @@ export default function TriviaCard({
           <div className={cn("grid", "grid-cols-3", "gap-3", "mt-4")}>
             <button
               onClick={() => onLaunch(trivia.id)}
-              className={cn(
-                "bg-blue-600",
-                "hover:bg-blue-700",
-                "py-2",
-                "rounded-lg",
-                "font-semibold"
-              )}
+              className={cn("bg-blue-600", "hover:bg-blue-700", "py-2", "rounded-lg", "font-semibold")}
             >
               Launch
             </button>
 
             <button
               onClick={() => onOpenOptions(trivia)}
-              className={cn(
-                "bg-gray-700",
-                "hover:bg-gray-600",
-                "py-2",
-                "rounded-lg",
-                "font-semibold"
-              )}
+              className={cn("bg-gray-700", "hover:bg-gray-600", "py-2", "rounded-lg", "font-semibold")}
             >
               Options
             </button>
@@ -1068,13 +1034,7 @@ export default function TriviaCard({
 
               <button
                 onClick={handleStopTrivia}
-                className={cn(
-                  "bg-red-600",
-                  "hover:bg-red-700",
-                  "py-2",
-                  "rounded-lg",
-                  "font-semibold"
-                )}
+                className={cn("bg-red-600", "hover:bg-red-700", "py-2", "rounded-lg", "font-semibold")}
               >
                 ⏹ Stop
               </button>
@@ -1097,26 +1057,12 @@ export default function TriviaCard({
             </div>
 
             <div className={cn("flex", "flex-col", "gap-2")}>
-              <div
-                className={cn(
-                  "py-2",
-                  "rounded-lg",
-                  "font-semibold",
-                  "opacity-0",
-                  "pointer-events-none"
-                )}
-              >
+              <div className={cn("py-2", "rounded-lg", "font-semibold", "opacity-0", "pointer-events-none")}>
                 spacer
               </div>
               <button
                 onClick={handleDeleteTrivia}
-                className={cn(
-                  "bg-red-700",
-                  "hover:bg-red-800",
-                  "py-2",
-                  "rounded-lg",
-                  "font-semibold"
-                )}
+                className={cn("bg-red-700", "hover:bg-red-800", "py-2", "rounded-lg", "font-semibold")}
               >
                 ❌ Delete
               </button>
@@ -1149,9 +1095,7 @@ export default function TriviaCard({
         {/* ---------------- QUESTIONS ---------------- */}
         <Tabs.Content value="questions" className={cn("mt-4", "space-y-3")}>
           <div className={cn("flex", "items-center", "justify-between")}>
-            <div className={cn("text-xs", "opacity-70")}>
-              Total questions: {questions.length}
-            </div>
+            <div className={cn("text-xs", "opacity-70")}>Total questions: {questions.length}</div>
 
             <button
               type="button"
@@ -1176,14 +1120,7 @@ export default function TriviaCard({
 
           {!loadingQuestions && questions.length > 0 && (
             <>
-              <div
-                className={cn(
-                  "max-h-80",
-                  "overflow-y-auto",
-                  "space-y-3",
-                  "pr-1"
-                )}
-              >
+              <div className={cn("max-h-80", "overflow-y-auto", "space-y-3", "pr-1")}>
                 {visibleQuestions.map((q) => {
                   const isActive = !!q.is_active;
 
@@ -1192,20 +1129,10 @@ export default function TriviaCard({
                       key={q.id}
                       className={cn(
                         "border rounded-lg p-4 bg-gray-900/70 backdrop-blur-sm",
-                        isActive
-                          ? "border-green-500/40"
-                          : "border-red-500/40 opacity-80"
+                        isActive ? "border-green-500/40" : "border-red-500/40 opacity-80"
                       )}
                     >
-                      <div
-                        className={cn(
-                          "flex",
-                          "items-start",
-                          "justify-between",
-                          "gap-2",
-                          "mb-2"
-                        )}
-                      >
+                      <div className={cn("flex", "items-start", "justify-between", "gap-2", "mb-2")}>
                         <div>
                           <p className={cn("font-semibold")}>
                             R{q.round_number}. {q.question_text}
@@ -1276,24 +1203,14 @@ export default function TriviaCard({
               </div>
 
               {questions.length > PAGE_SIZE && (
-                <div
-                  className={cn(
-                    "flex",
-                    "items-center",
-                    "justify-between",
-                    "mt-2",
-                    "text-xs"
-                  )}
-                >
+                <div className={cn("flex", "items-center", "justify-between", "mt-2", "text-xs")}>
                   <button
                     type="button"
                     onClick={() => setCurrentPage((p) => Math.max(0, p - 1))}
                     disabled={safePage === 0}
                     className={cn(
                       "px-2 py-1 rounded-md border border-white/10",
-                      safePage === 0
-                        ? "opacity-40 cursor-not-allowed"
-                        : "hover:bg-white/5"
+                      safePage === 0 ? "opacity-40 cursor-not-allowed" : "hover:bg-white/5"
                     )}
                   >
                     ◀ Prev 5
@@ -1305,9 +1222,7 @@ export default function TriviaCard({
 
                   <button
                     type="button"
-                    onClick={() =>
-                      setCurrentPage((p) => Math.min(totalPages - 1, p + 1))
-                    }
+                    onClick={() => setCurrentPage((p) => Math.min(totalPages - 1, p + 1))}
                     disabled={safePage >= totalPages - 1}
                     className={cn(
                       "px-2 py-1 rounded-md border border-white/10",
@@ -1326,14 +1241,11 @@ export default function TriviaCard({
 
         {/* ---------------- LEADERBOARD ---------------- */}
         <Tabs.Content value="leaderboard" className={cn("mt-4", "space-y-3")}>
-          {leaderboardLoading && (
-            <p className={cn("text-xs", "opacity-70")}>Loading leaderboard…</p>
-          )}
+          {leaderboardLoading && <p className={cn("text-xs", "opacity-70")}>Loading leaderboard…</p>}
 
           {!leaderboardLoading && leaderboard.length === 0 && (
             <p className={cn("text-sm", "opacity-75", "italic")}>
-              No scores yet. Leaderboard will appear once players start answering
-              questions.
+              No scores yet. Leaderboard will appear once players start answering questions.
             </p>
           )}
 
@@ -1371,25 +1283,19 @@ export default function TriviaCard({
                       {idx + 1}
                     </div>
 
-                    <div className={cn("text-sm", "font-semibold")}>
-                      {row.label}
-                    </div>
+                    <div className={cn("text-sm", "font-semibold")}>{row.label}</div>
                   </div>
 
-                  <div className={cn("text-lg", "font-bold")}>
-                    {row.totalPoints}
-                  </div>
+                  <div className={cn("text-lg", "font-bold")}>{row.totalPoints}</div>
                 </div>
               ))}
             </div>
           )}
         </Tabs.Content>
 
-        {/* ---------------- SETTINGS ---------------- */}
-        <Tabs.Content value="settings" className={cn("mt-4", "space-y-4")}>
-          <div
-            className={cn("flex", "items-center", "justify-between", "gap-4")}
-          >
+        {/* ---------------- SETTINGS ONE ---------------- */}
+        <Tabs.Content value="settings1" className={cn("mt-4", "space-y-4")}>
+          <div className={cn("flex", "items-center", "justify-between", "gap-4")}>
             <div>
               <p className={cn("text-sm", "font-semibold")}>Countdown Timer</p>
               <p className={cn("text-xs", "opacity-70")}>
@@ -1556,9 +1462,41 @@ export default function TriviaCard({
             </select>
           </div>
 
-          {savingSettings && (
-            <p className={cn("text-xs", "opacity-70")}>Saving settings…</p>
-          )}
+          {savingSettings && <p className={cn("text-xs", "opacity-70")}>Saving settings…</p>}
+        </Tabs.Content>
+
+        {/* ---------------- SETTINGS TWO ---------------- */}
+        <Tabs.Content value="settings2" className={cn("mt-4", "space-y-4")}>
+          <div className={cn("flex", "items-center", "justify-between", "gap-4")}>
+            <div>
+              <p className={cn("text-sm", "font-semibold")}>
+                Progressive Wrong-Answer Removal
+              </p>
+              <p className={cn("text-xs", "opacity-70")}>
+                At 50% elapsed time, one wrong answer is removed. At 75%, another wrong answer is removed.
+              </p>
+            </div>
+            <select
+              value={progressiveWrongRemovalEnabled ? "on" : "off"}
+              onChange={handleProgressiveWrongRemovalChange}
+              className={cn(
+                "bg-gray-800",
+                "border",
+                "border-white/20",
+                "rounded-md",
+                "px-3",
+                "py-1.5",
+                "text-sm",
+                "outline-none",
+                "focus:border-blue-400"
+              )}
+            >
+              <option value="on">On</option>
+              <option value="off">Off</option>
+            </select>
+          </div>
+
+          {savingSettings && <p className={cn("text-xs", "opacity-70")}>Saving settings…</p>}
         </Tabs.Content>
       </Tabs.Root>
     </div>

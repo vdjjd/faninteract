@@ -176,6 +176,36 @@ function pickQuestionForCurrent(
 }
 
 /* ---------------------------------------------------------
+   ✅ Progressive wrong-answer removal (50% + 75%)
+   - Deterministic per question.id so phone + wall match
+--------------------------------------------------------- */
+function fnv1a32(str: string) {
+  // 32-bit FNV-1a
+  let h = 0x811c9dc5;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
+}
+
+function pickTwoWrongRemovals(optsLen: number, correctIndex: number, questionId: string) {
+  const wrong: number[] = [];
+  for (let i = 0; i < optsLen; i++) if (i !== correctIndex) wrong.push(i);
+  if (wrong.length < 2) return { first: wrong[0] ?? null, second: null };
+
+  const h = fnv1a32(questionId || "q");
+  const firstIdx = h % wrong.length;
+  const first = wrong[firstIdx];
+
+  const remaining = wrong.filter((x) => x !== first);
+  const secondIdx = ((h >>> 8) % remaining.length) >>> 0;
+  const second = remaining[secondIdx];
+
+  return { first, second };
+}
+
+/* ---------------------------------------------------------
    Constants
 --------------------------------------------------------- */
 const FALLBACK_BG =
@@ -243,6 +273,10 @@ export default function TriviaUserInterfacePage() {
 
   // per-game trivia switch (poll this)
   const [adsEnabled, setAdsEnabled] = useState<boolean>(false);
+
+  // ✅ NEW: progressive wrong-answer removal toggle (card-level)
+  const [progressiveWrongRemovalEnabled, setProgressiveWrongRemovalEnabled] =
+    useState<boolean>(false);
 
   // lock ad to question number (prevents mid-question jumping)
   const [adLockedQuestion, setAdLockedQuestion] = useState<number>(1);
@@ -340,7 +374,7 @@ export default function TriviaUserInterfacePage() {
       setLoading(true);
       setLoadingMessage("Loading trivia game…");
 
-      // 1) trivia card (includes ads_enabled)
+      // 1) trivia card (includes ads_enabled + progressive wrong removal toggle)
       const { data: card, error: cardErr } = await supabase
         .from("trivia_cards")
         .select(
@@ -356,7 +390,8 @@ export default function TriviaUserInterfacePage() {
           ads_enabled,
           countdown_seconds,
           countdown_active,
-          countdown_started_at
+          countdown_started_at,
+          progressive_wrong_removal_enabled
         `
         )
         .eq("id", gameId)
@@ -373,6 +408,11 @@ export default function TriviaUserInterfacePage() {
 
       setTrivia(card);
       setAdsEnabled(Boolean((card as any).ads_enabled));
+
+      // ✅ NEW: enable progressive wrong-removal if configured on card
+      setProgressiveWrongRemovalEnabled(
+        Boolean((card as any).progressive_wrong_removal_enabled)
+      );
 
       // ✅ countdown state seed (locks to inactive wall)
       setCountdownSeconds(
@@ -484,6 +524,7 @@ export default function TriviaUserInterfacePage() {
 
   /* ---------------------------------------------------------
      ✅ Subscribe to trivia_cards countdown fields (LOCKS TO INACTIVE WALL)
+     + progressive wrong-removal toggle (so it can be flipped mid-game)
   --------------------------------------------------------- */
   useEffect(() => {
     if (!gameId) return;
@@ -507,6 +548,13 @@ export default function TriviaUserInterfacePage() {
           }
           setCountdownActive(next.countdown_active === true);
           setCountdownStartedAt(next.countdown_started_at ?? null);
+
+          // ✅ progressive wrong-removal toggle can change live
+          if (typeof next.progressive_wrong_removal_enabled !== "undefined") {
+            setProgressiveWrongRemovalEnabled(
+              Boolean(next.progressive_wrong_removal_enabled)
+            );
+          }
         }
       )
       .subscribe();
@@ -683,21 +731,16 @@ export default function TriviaUserInterfacePage() {
   --------------------------------------------------------- */
   const isLastQuestion = currentQuestionIndex === questions.length - 1;
 
-  // Show after the LAST question when the wall reaches leaderboard/podium,
-  // OR when host marks session finished.
   const isSessionOver =
     session?.status === "finished" ||
     wallPhase === "podium" ||
     (isLastQuestion && wallPhase === "leaderboard");
 
   function handleCloseTab() {
-    // Best-effort close (some browsers only allow this if the tab was opened by script)
     try {
       window.open("", "_self");
       window.close();
     } catch {}
-
-    // Fallback: if close is blocked, blank the page so it *feels* closed.
     setTimeout(() => {
       try {
         window.location.href = "about:blank";
@@ -725,7 +768,6 @@ export default function TriviaUserInterfacePage() {
     if (!adsEnabled) return;
     if (!ads || ads.length === 0) return;
 
-    // ad for question N is ads[(N-1) % ads.length]
     const nextIdx =
       ((adLockedQuestion - 1) % ads.length + ads.length) % ads.length;
 
@@ -742,7 +784,6 @@ export default function TriviaUserInterfacePage() {
     setShowAnswerOverlay(wallPhase === "overlay");
     setRevealAnswer(wallPhase === "reveal");
 
-    // ✅ lock when NOT in question phase OR paused OR countdown running OR session over
     setLocked(
       wallPhase !== "question" || isPaused || isCountdownRunning || isSessionOver
     );
@@ -750,7 +791,6 @@ export default function TriviaUserInterfacePage() {
 
   /* ---------------------------------------------------------
      When question changes → reset local answer state
-     (IMPORTANT: do NOT depend on wallPhase here, or we wipe selection on reveal)
   --------------------------------------------------------- */
   useEffect(() => {
     if (!currentQuestion?.id) return;
@@ -765,25 +805,18 @@ export default function TriviaUserInterfacePage() {
     setProgress(1);
     setSecondsLeft(timerSeconds);
 
-    // ✅ reset snapshot each new question
     timerSnapshotRef.current = null;
   }, [currentQuestion?.id, timerSeconds]);
 
   /* ---------------------------------------------------------
-     TIMER: source of truth = questionStartedAt
-     ✅ Pause/resume support:
-       - If paused (status !== running), compute once and freeze
-       - If running, tick normally
-     (8s grace on FIRST question, same total timerSeconds)
+     TIMER (same as your existing logic)
   --------------------------------------------------------- */
   useEffect(() => {
-    // clear any previous interval
     if (timerIntervalRef.current !== null) {
       window.clearInterval(timerIntervalRef.current);
       timerIntervalRef.current = null;
     }
 
-    // if we aren't in the question phase, timer is irrelevant
     if (wallPhase !== "question") {
       timerSnapshotRef.current = null;
       setProgress(0);
@@ -791,7 +824,6 @@ export default function TriviaUserInterfacePage() {
       return;
     }
 
-    // no question loaded yet
     if (!currentQuestion || !questionStartedAt) {
       timerSnapshotRef.current = null;
       setProgress(1);
@@ -810,9 +842,9 @@ export default function TriviaUserInterfacePage() {
         const delayEnd = startedMs + FIRST_QUESTION_EXTRA_MS;
 
         if (nowMs < delayEnd) {
-          effectiveElapsed = 0; // grace: bar stays full
+          effectiveElapsed = 0;
         } else {
-          effectiveElapsed = nowMs - delayEnd; // subtract grace
+          effectiveElapsed = nowMs - delayEnd;
         }
       }
 
@@ -838,7 +870,6 @@ export default function TriviaUserInterfacePage() {
       if (snap.remainingMs <= 0) setLocked(true);
     };
 
-    // ✅ PAUSED: compute ONCE and freeze (no interval)
     if (isPaused || !isRunning || isCountdownRunning || isSessionOver) {
       const nowMs = Date.now() + serverOffsetMs;
       apply(computeRemaining(nowMs));
@@ -846,7 +877,6 @@ export default function TriviaUserInterfacePage() {
       return;
     }
 
-    // ✅ RUNNING: live ticking interval
     const tick = () => {
       const nowMs = Date.now() + serverOffsetMs;
       apply(computeRemaining(nowMs));
@@ -873,6 +903,60 @@ export default function TriviaUserInterfacePage() {
     wallPhase,
     session?.current_question,
   ]);
+
+  /* ---------------------------------------------------------
+     ✅ Progressive wrong-answer removal derived state
+     - At 50% elapsed: remove 1 wrong
+     - At 75% elapsed: remove another wrong
+     - Deterministic per question.id so it can match wall logic
+     - Never "hide" a user's already-selected option (avoid confusion)
+  --------------------------------------------------------- */
+  const wrongRemovalLevel = useMemo(() => {
+    if (!progressiveWrongRemovalEnabled) return 0;
+    if (!currentQuestion?.id) return 0;
+    if (wallPhase !== "question") return 0;
+    if (!isRunning || isPaused || isCountdownRunning || isSessionOver) return 0;
+    if (revealAnswer) return 0;
+
+    // progress is "remaining fraction". elapsed is 1 - progress.
+    const elapsed = 1 - Math.max(0, Math.min(1, progress || 0));
+    if (elapsed >= 0.75) return 2;
+    if (elapsed >= 0.5) return 1;
+    return 0;
+  }, [
+    progressiveWrongRemovalEnabled,
+    currentQuestion?.id,
+    wallPhase,
+    isRunning,
+    isPaused,
+    isCountdownRunning,
+    isSessionOver,
+    revealAnswer,
+    progress,
+  ]);
+
+  const removedWrongIndices = useMemo(() => {
+    if (!currentQuestion?.id) return new Set<number>();
+    const optsLen = Array.isArray(currentQuestion?.options)
+      ? currentQuestion.options.length
+      : 0;
+
+    const correct =
+      typeof currentQuestion.correct_index === "number"
+        ? currentQuestion.correct_index
+        : -1;
+
+    if (optsLen <= 0 || correct < 0) return new Set<number>();
+    if (wrongRemovalLevel <= 0) return new Set<number>();
+
+    const { first, second } = pickTwoWrongRemovals(optsLen, correct, currentQuestion.id);
+
+    const s = new Set<number>();
+    if (wrongRemovalLevel >= 1 && typeof first === "number") s.add(first);
+    if (wrongRemovalLevel >= 2 && typeof second === "number") s.add(second);
+
+    return s;
+  }, [currentQuestion?.id, currentQuestion?.options, currentQuestion?.correct_index, wrongRemovalLevel]);
 
   /* ---------------------------------------------------------
      If refresh mid-question, reflect existing answer
@@ -991,7 +1075,6 @@ export default function TriviaUserInterfacePage() {
         }
       }
 
-      // Build rows, then FILTER points > 0
       const built: LeaderRow[] = players
         .map((p: any) => {
           const guest = p.guest_id ? guestMap.get(p.guest_id) : undefined;
@@ -1005,7 +1088,7 @@ export default function TriviaUserInterfacePage() {
             selfieUrl: safeSelfie,
           };
         })
-        .filter((r) => r.points > 0) // ✅ ONLY players with points
+        .filter((r) => r.points > 0)
         .sort((a, b) => b.points - a.points)
         .map((r, idx) => ({ ...r, rank: idx + 1 }));
 
@@ -1043,7 +1126,7 @@ export default function TriviaUserInterfacePage() {
     let dir: 1 | -1 = 1;
     let pauseUntil = 0;
 
-    const stepPx = 1.2; // speed
+    const stepPx = 1.2;
     const tickMs = 22;
 
     const tick = () => {
@@ -1055,7 +1138,6 @@ export default function TriviaUserInterfacePage() {
       const max = el.scrollHeight - el.clientHeight;
       const next = el.scrollTop + dir * stepPx;
 
-      // bottom
       if (next >= max) {
         el.scrollTop = max;
         dir = -1;
@@ -1063,7 +1145,6 @@ export default function TriviaUserInterfacePage() {
         return;
       }
 
-      // top
       if (next <= 0) {
         el.scrollTop = 0;
         dir = 1;
@@ -1089,17 +1170,14 @@ export default function TriviaUserInterfacePage() {
     if (!currentQuestion) return;
     if (!playerId) return;
 
-    // ✅ pause lock
     if (isPaused || !isRunning) return;
-
     if (hasAnswered || locked) return;
     if (wallPhase !== "question") return;
-
-    // ✅ countdown lock (prevents answering during pre-game countdown)
     if (isCountdownRunning) return;
-
-    // ✅ if session is over, ignore taps
     if (isSessionOver) return;
+
+    // ✅ If this option is removed, ignore taps (unless already selected — but we prevent that anyway)
+    if (removedWrongIndices.has(idx) && selectedIndex !== idx) return;
 
     setSelectedIndex(idx);
     setHasAnswered(true);
@@ -1244,6 +1322,10 @@ export default function TriviaUserInterfacePage() {
     footerText = "Here’s the correct answer. Waiting for leaderboard…";
   } else if (hasAnswered) {
     footerText = "Answer submitted. You can’t change it for this question.";
+  } else if (wrongRemovalLevel === 1) {
+    footerText = "One wrong answer has been removed.";
+  } else if (wrongRemovalLevel === 2) {
+    footerText = "Two wrong answers have been removed.";
   } else {
     footerText = "Tap an answer to lock in your choice.";
   }
@@ -1388,7 +1470,7 @@ export default function TriviaUserInterfacePage() {
             minHeight: 0,
             overflowY: "auto",
             paddingRight: 2,
-            alignContent: "flex-start", // ✅ keep single row at top
+            alignContent: "flex-start",
           }}
         >
           {view === "leaderboard" && (
@@ -1516,26 +1598,38 @@ export default function TriviaUserInterfacePage() {
                 typeof currentQuestion.correct_index === "number" &&
                 idx === currentQuestion.correct_index;
 
+              const isRemoved =
+                removedWrongIndices.has(idx) && !chosen && !revealAnswer;
+
               const disabled =
                 hasAnswered ||
                 locked ||
                 wallPhase !== "question" ||
                 isCountdownRunning ||
                 isSessionOver ||
-                isPaused;
+                isPaused ||
+                isRemoved;
 
               let bgBtn = "rgba(15,23,42,0.85)";
               let border = "1px solid rgba(148,163,184,0.4)";
               let opacityBtn = 1;
               let boxShadow = "none";
 
-              // badge (A/B/C/D circle)
               let badgeBg = chosen
                 ? "rgba(15,23,42,0.2)"
                 : "rgba(15,23,42,0.7)";
               let badgeBorder = "1px solid rgba(226,232,240,0.8)";
 
               const gotItRightPulse = revealAnswer && chosen && isCorrectChoice;
+
+              // ✅ removed option UI (greyed + “Removed”)
+              if (isRemoved) {
+                bgBtn = "rgba(2,6,23,0.55)";
+                border = "1px dashed rgba(148,163,184,0.55)";
+                opacityBtn = 0.45;
+                badgeBg = "rgba(2,6,23,0.55)";
+                badgeBorder = "1px dashed rgba(148,163,184,0.55)";
+              }
 
               // BEFORE reveal: highlight chosen in green
               if (!revealAnswer && chosen) {
@@ -1547,7 +1641,6 @@ export default function TriviaUserInterfacePage() {
               // AFTER reveal: correct -> green, chosen wrong -> red
               if (revealAnswer) {
                 if (isCorrectChoice) {
-                  // ✅ correct answer is green
                   bgBtn = "linear-gradient(90deg,#22c55e,#16a34a)";
                   border = "2px solid rgba(74,222,128,1)";
                   boxShadow = gotItRightPulse
@@ -1557,7 +1650,6 @@ export default function TriviaUserInterfacePage() {
                   badgeBg = "rgba(22,163,74,0.2)";
                   badgeBorder = "2px solid rgba(74,222,128,1)";
                 } else if (chosen && !isCorrectChoice) {
-                  // ❌ user's wrong choice goes red
                   bgBtn = "linear-gradient(90deg,#ef4444,#b91c1c)";
                   border = "2px solid rgba(248,113,113,1)";
                   boxShadow = "0 0 16px rgba(248,113,113,0.9)";
@@ -1565,11 +1657,10 @@ export default function TriviaUserInterfacePage() {
                   badgeBg = "rgba(127,29,29,0.8)";
                   badgeBorder = "2px solid rgba(248,113,113,1)";
                 } else {
-                  // everything else fades
                   opacityBtn = 0.4;
                 }
               } else if (disabled && !chosen) {
-                opacityBtn = 0.7;
+                opacityBtn = Math.min(opacityBtn, 0.7);
               }
 
               return (
@@ -1598,6 +1689,7 @@ export default function TriviaUserInterfacePage() {
                     animation: gotItRightPulse
                       ? "fiCorrectPulse 1.25s ease-in-out infinite alternate"
                       : "none",
+                    cursor: disabled ? "not-allowed" : "pointer",
                   }}
                 >
                   <span
@@ -1616,15 +1708,18 @@ export default function TriviaUserInterfacePage() {
                   >
                     {String.fromCharCode(65 + idx)}
                   </span>
+
                   <span
                     style={{
                       flex: 1,
                       lineHeight: 1.3,
                       wordWrap: "break-word",
                       whiteSpace: "normal",
+                      opacity: isRemoved ? 0.9 : 1,
+                      textDecoration: isRemoved ? "line-through" : "none",
                     }}
                   >
-                    {opt}
+                    {isRemoved ? "Removed" : opt}
                   </span>
                 </button>
               );
@@ -1786,7 +1881,7 @@ export default function TriviaUserInterfacePage() {
         )}
       </div>
 
-      {/* ✅ SESSION OVER OVERLAY (renders OUTSIDE filtered div so it stays truly tinted) */}
+      {/* ✅ SESSION OVER OVERLAY */}
       {isSessionOver && (
         <div
           style={{
