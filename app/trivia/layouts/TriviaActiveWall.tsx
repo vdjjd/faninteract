@@ -6,6 +6,11 @@ import { AnimatePresence, motion } from "framer-motion";
 import { getSupabaseClient } from "@/lib/supabaseClient";
 import TriviaPodum from "@/app/trivia/layouts/triviapodum";
 
+// ✅ NEW (modular)
+import AnswerGrid from "@/components/trivia/wall/AnswerGrid";
+import { useProgressiveWrongRemoval } from "@/lib/trivia/wall/useProgressiveWrongRemoval";
+import { useHerdHighlight } from "@/lib/trivia/wall/useHerdHighlight";
+
 const supabase = getSupabaseClient();
 
 /* ---------- TYPES ---------- */
@@ -246,40 +251,6 @@ function pickQuestionForCurrent(
   return qs[idx] ?? null;
 }
 
-/* ---------------------------------------------------------
-   ✅ Progressive wrong-answer removal (50% + 75%)
-   - Deterministic per question.id so phone + wall match
---------------------------------------------------------- */
-function fnv1a32(str: string) {
-  // 32-bit FNV-1a
-  let h = 0x811c9dc5;
-  for (let i = 0; i < str.length; i++) {
-    h ^= str.charCodeAt(i);
-    h = Math.imul(h, 0x01000193);
-  }
-  return h >>> 0;
-}
-
-function pickTwoWrongRemovals(
-  optsLen: number,
-  correctIndex: number,
-  questionId: string
-) {
-  const wrong: number[] = [];
-  for (let i = 0; i < optsLen; i++) if (i !== correctIndex) wrong.push(i);
-  if (wrong.length < 2) return { first: wrong[0] ?? null, second: null };
-
-  const h = fnv1a32(questionId || "q");
-  const firstIdx = h % wrong.length;
-  const first = wrong[firstIdx];
-
-  const remaining = wrong.filter((x) => x !== first);
-  const secondIdx = ((h >>> 8) % remaining.length) >>> 0;
-  const second = remaining[secondIdx];
-
-  return { first, second };
-}
-
 /* -------------------------------------------------------------------------- */
 /* 🎮 TRIVIA ACTIVE WALL                                                       */
 /* -------------------------------------------------------------------------- */
@@ -306,15 +277,23 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
     !!trivia?.countdown_active
   );
 
-  // ✅ NEW: card-level progressive wrong removal toggle
+  // ✅ card-level progressive wrong removal toggle
   const [progressiveWrongRemovalEnabled, setProgressiveWrongRemovalEnabled] =
     useState<boolean>(!!trivia?.progressive_wrong_removal_enabled);
+
+  // ✅ herd highlight toggle (no DB polling here to avoid “unknown column” errors)
+  const herdHighlightEnabled = !!trivia?.herd_highlight_enabled;
 
   useEffect(() => {
     setCardStatus(trivia?.status || "idle");
     setCardCountdownActive(!!trivia?.countdown_active);
     setProgressiveWrongRemovalEnabled(!!trivia?.progressive_wrong_removal_enabled);
-  }, [trivia?.id, trivia?.status, trivia?.countdown_active, trivia?.progressive_wrong_removal_enabled]);
+  }, [
+    trivia?.id,
+    trivia?.status,
+    trivia?.countdown_active,
+    trivia?.progressive_wrong_removal_enabled,
+  ]);
 
   useEffect(() => {
     if (!trivia?.id) return;
@@ -406,10 +385,12 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
           if (typeof next.countdown_active === "boolean")
             setCardCountdownActive(!!next.countdown_active);
 
-          // ✅ NEW: progressive wrong-removal toggle can change live
+          // ✅ progressive wrong-removal toggle can change live
           if (typeof next.progressive_wrong_removal_enabled !== "undefined") {
             setProgressiveWrongRemovalEnabled(!!next.progressive_wrong_removal_enabled);
           }
+
+          // (herdHighlightEnabled is read from trivia prop to avoid unknown-column selects)
         }
       )
       .subscribe();
@@ -1117,53 +1098,6 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
 
   const options: string[] = Array.isArray(question?.options) ? question.options : [];
 
-  /* ---------------------------------------------------------
-     ✅ Progressive wrong-answer removal (WALL)
-     - Uses the SAME timing + deterministic pick as phone UI
-     - progress is "remaining fraction", so elapsed = 1 - progress
-  --------------------------------------------------------- */
-  const wrongRemovalLevel = useMemo(() => {
-    if (!progressiveWrongRemovalEnabled) return 0;
-    if (!question?.id) return 0;
-    if (wallPhase !== "question") return 0;
-    if (!isActiveGame || isPaused) return 0;
-    if (revealAnswer) return 0;
-
-    const elapsed = 1 - Math.max(0, Math.min(1, progress || 0));
-    if (elapsed >= 0.75) return 2;
-    if (elapsed >= 0.5) return 1;
-    return 0;
-  }, [
-    progressiveWrongRemovalEnabled,
-    question?.id,
-    wallPhase,
-    isActiveGame,
-    isPaused,
-    revealAnswer,
-    progress,
-  ]);
-
-  const removedWrongIndices = useMemo(() => {
-    const optsLen = options.length;
-    const correct =
-      typeof question?.correct_index === "number" ? question.correct_index : -1;
-
-    if (!question?.id) return new Set<number>();
-    if (optsLen <= 0 || correct < 0) return new Set<number>();
-    if (wrongRemovalLevel <= 0) return new Set<number>();
-
-    const { first, second } = pickTwoWrongRemovals(optsLen, correct, question.id);
-
-    const s = new Set<number>();
-    if (wrongRemovalLevel >= 1 && typeof first === "number") s.add(first);
-    if (wrongRemovalLevel >= 2 && typeof second === "number") s.add(second);
-
-    // safety: never remove correct
-    s.delete(correct);
-
-    return s;
-  }, [question?.id, question?.correct_index, options.length, wrongRemovalLevel]);
-
   const baseBgColors = [
     "rgba(239, 68, 68, 0.30)",
     "rgba(59, 130, 246, 0.30)",
@@ -1191,6 +1125,38 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
     "rgba(74, 222, 128, 0.9)",
     "rgba(253, 224, 71, 0.9)",
   ];
+
+  // ✅ NEW: progressive wrong removal from hook
+  const { removed: removedWrongIndices } = useProgressiveWrongRemoval({
+    enabled: progressiveWrongRemovalEnabled,
+    questionId: question?.id ?? null,
+    optionsLen: options.length,
+    correctIndex:
+      typeof question?.correct_index === "number" ? question.correct_index : null,
+
+    wallPhase,
+    isRunning: isActiveGame,
+    isPaused,
+    isSessionOver: sessionStatus === "finished",
+    revealAnswer,
+
+    progressRemaining01: progress,
+  });
+
+  // ✅ NEW: herd highlight (returns “42% (17 votes)” labels)
+  const herd = useHerdHighlight({
+    enabled: herdHighlightEnabled,
+    sessionId,
+    questionId: question?.id ?? null,
+    optionsLen: options.length,
+
+    active: isActiveGame && wallPhase === "question",
+    paused: isPaused,
+    revealAnswer,
+
+    removed: removedWrongIndices,
+    pollMs: 600,
+  });
 
   const origin =
     typeof window !== "undefined"
@@ -1463,113 +1429,25 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                         </div>
                       </div>
 
-                      {/* ANSWERS */}
-                      <div
-                        style={{
-                          width: "100%",
-                          display: "grid",
-                          gridTemplateColumns: "1fr 1fr",
-                          gap: "2.5vh",
-                        }}
-                      >
-                        {options.length > 0
-                          ? options.map((opt, idx) => {
-                              const isCorrect = idx === question?.correct_index;
-
-                              // ✅ removed wrong option (only during question phase, before reveal)
-                              const isRemoved =
-                                wallPhase === "question" &&
-                                !revealAnswer &&
-                                removedWrongIndices.has(idx);
-
-                              let bgc =
-                                baseBgColors[idx] ?? "rgba(255,255,255,0.12)";
-                              let border =
-                                baseBorders[idx] ??
-                                "1px solid rgba(255,255,255,0.18)";
-                              let opacity = 1;
-                              let boxShadow = "none";
-                              let transform = "scale(1)";
-                              let animation: string | undefined;
-
-                              // ✅ removed option styling
-                              if (isRemoved) {
-                                bgc = "rgba(255,255,255,0.04)";
-                                border = "1px dashed rgba(255,255,255,0.22)";
-                                opacity = 0.22;
-                                boxShadow = "none";
-                                transform = "scale(0.985)";
-                              }
-
-                              if (revealAnswer) {
-                                if (isCorrect) {
-                                  border = highlightBorders[idx] ?? border;
-                                  boxShadow = `0 0 40px 8px ${
-                                    glowColors[idx] ??
-                                    "rgba(255,255,255,0.9)"
-                                  }`;
-                                  transform = "scale(1.04)";
-                                  animation =
-                                    "fiCorrectPulse 1.2s ease-in-out infinite";
-                                } else {
-                                  opacity = 0.35;
-                                }
-                              }
-
-                              return (
-                                <div
-                                  key={idx}
-                                  style={{
-                                    padding: "2.4vh 2.6vw",
-                                    minHeight: "14vh",
-                                    display: "flex",
-                                    alignItems: "center",
-                                    justifyContent: "center",
-                                    borderRadius: 18,
-                                    background: bgc,
-                                    border,
-                                    fontSize: "clamp(1.6rem,2vw,2.4rem)",
-                                    fontWeight: 700,
-                                    textAlign: "center",
-                                    opacity,
-                                    boxShadow,
-                                    transform,
-                                    animation,
-                                    transition: isPaused
-                                      ? "none"
-                                      : "opacity 0.3s ease, border 0.3s ease, background 0.3s ease, box-shadow 0.4s ease, transform 0.4s ease",
-                                    position: "relative",
-                                    overflow: "hidden",
-                                  }}
-                                >
-                                  <div
-                                    style={{
-                                      position: "absolute",
-                                      inset: 0,
-                                      pointerEvents: "none",
-                                      background:
-                                        "linear-gradient(180deg, rgba(255,255,255,0.08), rgba(255,255,255,0.02) 55%, rgba(0,0,0,0.06) 100%)",
-                                      opacity: 0.75,
-                                    }}
-                                  />
-                                  <div
-                                    style={{
-                                      position: "relative",
-                                      zIndex: 2,
-                                      textDecoration: isRemoved ? "line-through" : "none",
-                                      opacity: isRemoved ? 0.9 : 1,
-                                    }}
-                                  >
-                                    {String.fromCharCode(65 + idx)}.{" "}
-                                    {isRemoved ? "Removed" : opt}
-                                  </div>
-                                </div>
-                              );
-                            })
-                          : null}
-                      </div>
-
-                      {/* (no "Current Rankings" label here anymore) */}
+                      {/* ✅ ANSWERS (MODULAR) */}
+                      <AnswerGrid
+                        options={options}
+                        correctIndex={
+                          typeof question?.correct_index === "number"
+                            ? question.correct_index
+                            : null
+                        }
+                        revealAnswer={revealAnswer}
+                        wallPhase={wallPhase}
+                        removedWrongIndices={removedWrongIndices}
+                        herdEnabled={herdHighlightEnabled}
+                        herdPercents={herd.percents}
+                        herdLabelForIndex={herd.labelForIndex}
+                        baseBgColors={baseBgColors}
+                        baseBorders={baseBorders}
+                        highlightBorders={highlightBorders}
+                        glowColors={glowColors}
+                      />
                     </div>
 
                     {/* ANSWER OVERLAY */}

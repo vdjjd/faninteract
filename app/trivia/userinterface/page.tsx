@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { getSupabaseClient } from "@/lib/supabaseClient";
 import { computeTriviaPoints } from "@/lib/trivia/triviaScoringEngine";
+import { useTriviaCardFlags } from "@/lib/trivia/hooks/useTriviaCardFlags";
 
 const supabase = getSupabaseClient();
 
@@ -267,6 +268,12 @@ export default function TriviaUserInterfacePage() {
 
   const gameId = searchParams.get("game"); // trivia_cards.id
 
+  // ✅ NEW: central flags hook (replaces trivia_cards subscription + ads poll)
+  const { flags } = useTriviaCardFlags(gameId, {
+    realtime: true,
+    pollMs: 2000,
+  });
+
   const [profile, setProfile] = useState<any>(null);
   const [trivia, setTrivia] = useState<any>(null);
   const [session, setSession] = useState<TriviaSession | null>(null);
@@ -318,13 +325,6 @@ export default function TriviaUserInterfacePage() {
   const [ads, setAds] = useState<SlideAd[]>([]);
   const [adsLoading, setAdsLoading] = useState(false);
 
-  // per-game trivia switch (poll this)
-  const [adsEnabled, setAdsEnabled] = useState<boolean>(false);
-
-  // ✅ NEW: progressive wrong-answer removal toggle (card-level)
-  const [progressiveWrongRemovalEnabled, setProgressiveWrongRemovalEnabled] =
-    useState<boolean>(false);
-
   // lock ad to question number (prevents mid-question jumping)
   const [adLockedQuestion, setAdLockedQuestion] = useState<number>(1);
   const [lockedAdIndex, setLockedAdIndex] = useState<number>(0);
@@ -334,14 +334,19 @@ export default function TriviaUserInterfacePage() {
   const leaderScrollRef = useRef<HTMLDivElement | null>(null);
 
   /* ---------------------------------------------------------
+     ✅ FLAGS (from hook) — single source of truth
+  --------------------------------------------------------- */
+  const adsEnabled = flags?.adsEnabled ?? false;
+  const progressiveWrongRemovalEnabled =
+    flags?.progressiveWrongRemovalEnabled ?? false;
+
+  const countdownSeconds = flags?.countdownSeconds ?? 10;
+  const countdownActive = flags?.countdownActive ?? false;
+  const countdownStartedAt = flags?.countdownStartedAt ?? null;
+
+  /* ---------------------------------------------------------
      ✅ COUNTDOWN TIMER (LOCKED TO INACTIVE WALL)
   --------------------------------------------------------- */
-  const [countdownSeconds, setCountdownSeconds] = useState<number>(10);
-  const [countdownActive, setCountdownActive] = useState<boolean>(false);
-  const [countdownStartedAt, setCountdownStartedAt] = useState<string | null>(
-    null
-  );
-
   const countdownRemaining = useMemo(() => {
     if (!countdownActive || !countdownStartedAt) return 0;
 
@@ -421,7 +426,7 @@ export default function TriviaUserInterfacePage() {
       setLoading(true);
       setLoadingMessage("Loading trivia game…");
 
-      // 1) trivia card (includes ads_enabled + progressive wrong removal toggle)
+      // 1) trivia card (keep for host_id + background + timer/scoring display)
       const { data: card, error: cardErr } = await supabase
         .from("trivia_cards")
         .select(
@@ -433,12 +438,7 @@ export default function TriviaUserInterfacePage() {
           host_id,
           background_type,
           background_value,
-          background_brightness,
-          ads_enabled,
-          countdown_seconds,
-          countdown_active,
-          countdown_started_at,
-          progressive_wrong_removal_enabled
+          background_brightness
         `
         )
         .eq("id", gameId)
@@ -454,21 +454,6 @@ export default function TriviaUserInterfacePage() {
       }
 
       setTrivia(card);
-      setAdsEnabled(Boolean((card as any).ads_enabled));
-
-      // ✅ NEW: enable progressive wrong-removal if configured on card
-      setProgressiveWrongRemovalEnabled(
-        Boolean((card as any).progressive_wrong_removal_enabled)
-      );
-
-      // ✅ countdown state seed (locks to inactive wall)
-      setCountdownSeconds(
-        typeof (card as any).countdown_seconds === "number"
-          ? (card as any).countdown_seconds
-          : 10
-      );
-      setCountdownActive(Boolean((card as any).countdown_active));
-      setCountdownStartedAt((card as any).countdown_started_at ?? null);
 
       // 2) host row (logo + master_id + injector_enabled)
       let logo = "/faninteractlogo.png";
@@ -568,77 +553,6 @@ export default function TriviaUserInterfacePage() {
       cancelled = true;
     };
   }, [gameId, profile?.id, router]);
-
-  /* ---------------------------------------------------------
-     ✅ Subscribe to trivia_cards countdown fields (LOCKS TO INACTIVE WALL)
-     + progressive wrong-removal toggle (so it can be flipped mid-game)
-  --------------------------------------------------------- */
-  useEffect(() => {
-    if (!gameId) return;
-
-    const ch = supabase
-      .channel(`trivia-cards-ui-${gameId}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "UPDATE",
-          schema: "public",
-          table: "trivia_cards",
-          filter: `id=eq.${gameId}`,
-        },
-        (payload: any) => {
-          const next = payload?.new;
-          if (!next) return;
-
-          if (typeof next.countdown_seconds === "number") {
-            setCountdownSeconds(next.countdown_seconds);
-          }
-          setCountdownActive(next.countdown_active === true);
-          setCountdownStartedAt(next.countdown_started_at ?? null);
-
-          // ✅ progressive wrong-removal toggle can change live
-          if (typeof next.progressive_wrong_removal_enabled !== "undefined") {
-            setProgressiveWrongRemovalEnabled(
-              Boolean(next.progressive_wrong_removal_enabled)
-            );
-          }
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(ch);
-    };
-  }, [gameId]);
-
-  /* ---------------------------------------------------------
-     Poll trivia_cards.ads_enabled every 5 seconds (mid-game toggle)
-  --------------------------------------------------------- */
-  useEffect(() => {
-    if (!gameId) return;
-    let cancelled = false;
-
-    const poll = async () => {
-      const { data, error } = await supabase
-        .from("trivia_cards")
-        .select("ads_enabled")
-        .eq("id", gameId)
-        .maybeSingle();
-
-      if (cancelled) return;
-      if (error || !data) return;
-
-      setAdsEnabled(Boolean((data as any).ads_enabled));
-    };
-
-    poll();
-    const id = window.setInterval(poll, 5000);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(id);
-    };
-  }, [gameId]);
 
   /* ---------------------------------------------------------
      Load Slide Ads when allowed (GLOBAL + TRIVIA)
@@ -953,7 +867,6 @@ export default function TriviaUserInterfacePage() {
     serverOffsetMs,
     wallPhase,
     session?.current_question,
-    // ✅ IMPORTANT: makes effective start update correctly
     countdownStartedAt,
     countdownSeconds,
   ]);
@@ -1223,7 +1136,7 @@ export default function TriviaUserInterfacePage() {
   }, [view, leaderRows.length]);
 
   /* ---------------------------------------------------------
-     Answer submission (patched scoring for Q1)
+     Answer submission (patched scoring to match effective start)
   --------------------------------------------------------- */
   async function handleSelectAnswer(idx: number) {
     if (!currentQuestion) return;
@@ -1255,60 +1168,44 @@ export default function TriviaUserInterfacePage() {
     const isCorrect = idx === currentQuestion.correct_index;
 
     const points = isCorrect
-  ? (() => {
-      const nowMs = Date.now() + serverOffsetMs;
+      ? (() => {
+          const nowMs = Date.now() + serverOffsetMs;
 
-      // ✅ inline effective start calc so scoring matches your UI timer behavior
-      const durationMs = (timerSeconds || 30) * 1000;
+          const effectiveStartMs =
+            getEffectiveQuestionStartMs({
+              questionStartedAt,
+              currentQuestionNumber: session?.current_question ?? null,
+              countdownStartedAt,
+              countdownSeconds,
+            }) ?? nowMs;
 
-      const startedMsRaw = questionStartedAt
-        ? new Date(questionStartedAt).getTime()
-        : NaN;
+          // clamp: if user answers during countdown/grace, treat elapsed as 0
+          const safeNowMs = Math.max(nowMs, effectiveStartMs);
 
-      // If DB time is missing/invalid, fall back to now (prevents NaN scoring)
-      const startedMs = Number.isFinite(startedMsRaw) ? startedMsRaw : nowMs;
+          try {
+            return computeTriviaPoints({
+              scoringMode,
+              timerSeconds,
+              questionStartedAt: new Date(effectiveStartMs).toISOString(),
+              nowMs: safeNowMs,
+            } as any);
+          } catch {
+            return computeTriviaPoints({
+              scoringMode,
+              timerSeconds,
+              questionStartedAt: new Date(effectiveStartMs).toISOString(),
+            } as any);
+          }
+        })()
+      : 0;
 
-      // ✅ Match UI timer behavior: first question has an extra grace window
-      const isFirstQuestion = (session?.current_question ?? 0) === 1;
-
-      // NOTE: Your UI timer currently uses FIRST_QUESTION_EXTRA_MS (8s).
-      // We must score using the same effective "start" or Q1 feels unscored.
-      const effectiveStartMs = isFirstQuestion
-        ? startedMs + FIRST_QUESTION_EXTRA_MS
-        : startedMs;
-
-      // ✅ clamp: if user answers during the grace window, treat elapsed as 0
-      const safeNowMs = Math.max(nowMs, effectiveStartMs);
-
-      try {
-        // Prefer numeric start if your scoring engine supports it later
-        return computeTriviaPoints({
-          scoringMode,
-          timerSeconds,
-          questionStartedAt: new Date(effectiveStartMs).toISOString(), // keeps engine compatible
-          nowMs: safeNowMs,
-        } as any);
-      } catch {
-        return computeTriviaPoints({
-          scoringMode,
-          timerSeconds,
-          questionStartedAt: new Date(effectiveStartMs).toISOString(),
-        } as any);
-      }
-    })()
-  : 0;
-
-const { error: insertErr } = await supabase.from("trivia_answers").insert({
-  player_id: playerId,
-  question_id: currentQuestion.id,
-  selected_index: idx,
-  is_correct: isCorrect,
-  points,
-});
-
-if (insertErr) {
-  console.error("❌ trivia_answers insert error:", insertErr);
-}
+    const { error: insertErr } = await supabase.from("trivia_answers").insert({
+      player_id: playerId,
+      question_id: currentQuestion.id,
+      selected_index: idx,
+      is_correct: isCorrect,
+      points,
+    });
 
     if (insertErr) {
       console.error("❌ trivia_answers insert error:", insertErr);
@@ -1558,8 +1455,6 @@ if (insertErr) {
             alignContent: "flex-start",
           }}
         >
-          {/* ... REST OF YOUR RENDER (UNCHANGED) ... */}
-          {/* NOTE: I’m leaving your render identical; only logic above was patched */}
           {view === "leaderboard" && (
             <>
               {leaderLoading && (
