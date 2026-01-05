@@ -281,18 +281,25 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
   const [progressiveWrongRemovalEnabled, setProgressiveWrongRemovalEnabled] =
     useState<boolean>(!!trivia?.progressive_wrong_removal_enabled);
 
-  // ✅ herd highlight toggle (no DB polling here to avoid “unknown column” errors)
-  const herdHighlightEnabled = !!trivia?.herd_highlight_enabled;
+  // ✅ PATCH: herd highlight toggle MUST be state on wall too
+  const [herdHighlightEnabled, setHerdHighlightEnabled] = useState<boolean>(
+    !!trivia?.herd_highlight_enabled
+  );
+
+  // ✅ if some env lacks the column, stop selecting it (prevents spam)
+  const herdColumnUnsupportedRef = useRef(false);
 
   useEffect(() => {
     setCardStatus(trivia?.status || "idle");
     setCardCountdownActive(!!trivia?.countdown_active);
     setProgressiveWrongRemovalEnabled(!!trivia?.progressive_wrong_removal_enabled);
+    setHerdHighlightEnabled(!!trivia?.herd_highlight_enabled);
   }, [
     trivia?.id,
     trivia?.status,
     trivia?.countdown_active,
     trivia?.progressive_wrong_removal_enabled,
+    trivia?.herd_highlight_enabled,
   ]);
 
   useEffect(() => {
@@ -300,18 +307,37 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
     let alive = true;
 
     const poll = async () => {
+      const selectCols = herdColumnUnsupportedRef.current
+        ? "status,countdown_active,progressive_wrong_removal_enabled"
+        : "status,countdown_active,progressive_wrong_removal_enabled,herd_highlight_enabled";
+
       const { data, error } = await supabase
         .from("trivia_cards")
-        .select("status,countdown_active,progressive_wrong_removal_enabled")
+        .select(selectCols)
         .eq("id", trivia.id)
         .maybeSingle();
 
       if (!alive) return;
+
+      // If older schema: mark unsupported ONCE and continue without it.
+      if (
+        error &&
+        !herdColumnUnsupportedRef.current &&
+        String((error as any)?.message || "").toLowerCase().includes("herd_highlight_enabled")
+      ) {
+        herdColumnUnsupportedRef.current = true;
+        return;
+      }
+
       if (error || !data) return;
 
-      setCardStatus(data.status);
-      setCardCountdownActive(!!data.countdown_active);
-      setProgressiveWrongRemovalEnabled(!!data.progressive_wrong_removal_enabled);
+      setCardStatus((data as any).status);
+      setCardCountdownActive(!!(data as any).countdown_active);
+      setProgressiveWrongRemovalEnabled(!!(data as any).progressive_wrong_removal_enabled);
+
+      if (typeof (data as any).herd_highlight_enabled !== "undefined") {
+        setHerdHighlightEnabled(!!(data as any).herd_highlight_enabled);
+      }
     };
 
     poll();
@@ -380,6 +406,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
         (payload: any) => {
           const next = payload?.new;
           if (!next) return;
+
           setPublicName(pickPublicName(next));
           if (typeof next.status === "string") setCardStatus(next.status);
           if (typeof next.countdown_active === "boolean")
@@ -390,7 +417,10 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
             setProgressiveWrongRemovalEnabled(!!next.progressive_wrong_removal_enabled);
           }
 
-          // (herdHighlightEnabled is read from trivia prop to avoid unknown-column selects)
+          // ✅ PATCH: herd toggle can change live
+          if (typeof next.herd_highlight_enabled !== "undefined") {
+            setHerdHighlightEnabled(!!next.herd_highlight_enabled);
+          }
         }
       )
       .subscribe();
@@ -643,13 +673,11 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
 
       const maxMode = QUESTION_FONT_SIZES.length - 1;
 
-      // Too tall → bump down a font mode
       if (actual > maxHeight + 1 && questionFontMode < maxMode) {
         setQuestionFontMode(questionFontMode + 1);
         return;
       }
 
-      // Way under limit → we can bump it back up one
       if (actual < maxHeight * 0.85 && questionFontMode > 0) {
         setQuestionFontMode(questionFontMode - 1);
       }
@@ -1337,7 +1365,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                       borderRadius: 24,
                       position: "relative",
                       overflow: "hidden",
-                      padding: "1vh 4vw", // tightened top padding
+                      padding: "1vh 4vw",
                       color: "#fff",
                       boxShadow: "0 25px 90px rgba(0,0,0,0.35)",
                     }}
@@ -1365,7 +1393,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                         flexDirection: "column",
                       }}
                     >
-                      {/* QUESTION AREA – pinned near top */}
+                      {/* QUESTION AREA */}
                       <div
                         style={{
                           maxWidth: "92%",
@@ -1513,6 +1541,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                     justifyContent: "center",
                   }}
                 >
+                  {/* ... unchanged ... */}
                   <div
                     style={{
                       position: "absolute",
@@ -1580,6 +1609,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                                 overflow: "hidden",
                               }}
                             >
+                              {/* ... unchanged ... */}
                               <div
                                 style={{
                                   position: "absolute",
@@ -1771,6 +1801,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                 pointerEvents: "none",
               }}
             >
+              {/* ... unchanged ... */}
               {[1, 2, 3].map((place) => {
                 const row = topRanks.find((r) => r.place === place);
                 const hasSelfie = !!row?.selfieUrl;
@@ -1867,7 +1898,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
             </div>
           )}
 
-          {/* QUESTION INDEX: under rankings, outside frosted glass */}
+          {/* QUESTION INDEX */}
           {view === "question" &&
             isActiveGame &&
             currentQuestionNumber != null &&
