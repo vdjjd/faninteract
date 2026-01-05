@@ -110,6 +110,68 @@ function sameLeaderRows(a: LeaderRow[], b: LeaderRow[]) {
 }
 
 /* ---------------------------------------------------------
+   ✅ QUESTION ORDERING (MATCHES ACTIVE WALL)
+--------------------------------------------------------- */
+type QuestionOrderMode = "question_number" | "round_number" | "created_at";
+
+function normalizeQuestions(qsRaw: any[]): {
+  list: any[];
+  mode: QuestionOrderMode;
+} {
+  const list = Array.isArray(qsRaw) ? [...qsRaw] : [];
+  if (!list.length) return { list: [], mode: "created_at" };
+
+  const hasAllQN = list.every(
+    (q) =>
+      typeof q?.question_number === "number" &&
+      Number.isFinite(q.question_number)
+  );
+  const hasAllRN = list.every(
+    (q) =>
+      typeof q?.round_number === "number" && Number.isFinite(q.round_number)
+  );
+
+  const mode: QuestionOrderMode = hasAllQN
+    ? "question_number"
+    : hasAllRN
+    ? "round_number"
+    : "created_at";
+
+  const time = (v: any) => {
+    const t = new Date(v || 0).getTime();
+    return Number.isFinite(t) ? t : 0;
+  };
+
+  list.sort((a, b) => {
+    if (mode === "question_number") return a.question_number - b.question_number;
+    if (mode === "round_number") return a.round_number - b.round_number;
+    return time(a?.created_at) - time(b?.created_at);
+  });
+
+  return { list, mode };
+}
+
+function pickQuestionForCurrent(
+  qs: any[],
+  currentQuestion: number,
+  mode: QuestionOrderMode
+): any | null {
+  if (!qs?.length || !currentQuestion || currentQuestion < 1) return null;
+
+  if (mode === "question_number") {
+    const hit = qs.find((q) => q?.question_number === currentQuestion);
+    if (hit) return hit;
+  }
+  if (mode === "round_number") {
+    const hit = qs.find((q) => q?.round_number === currentQuestion);
+    if (hit) return hit;
+  }
+
+  const idx = Math.max(0, Math.min(qs.length - 1, currentQuestion - 1));
+  return qs[idx] ?? null;
+}
+
+/* ---------------------------------------------------------
    Component
 --------------------------------------------------------- */
 const FALLBACK_BG =
@@ -129,6 +191,8 @@ export default function TriviaUserInterfacePage() {
   const [session, setSession] = useState<TriviaSession | null>(null);
   const [playerId, setPlayerId] = useState<string | null>(null);
   const [questions, setQuestions] = useState<any[]>([]);
+  const [questionOrderMode, setQuestionOrderMode] =
+    useState<QuestionOrderMode>("created_at");
   const [hostLogoUrl, setHostLogoUrl] = useState<string | null>(null);
 
   const [loading, setLoading] = useState(true);
@@ -382,29 +446,29 @@ export default function TriviaUserInterfacePage() {
 
       setPlayerId((playerRow as any).id);
 
-      // 5) questions
+      // 5) questions — ✅ MATCH ACTIVE WALL (NO is_active FILTER + NORMALIZE)
       setLoadingMessage("Loading questions…");
 
-      const { data: qs, error: qErr } = await supabase
+      const { data: qsRaw, error: qErr } = await supabase
         .from("trivia_questions")
         .select(
-          "id, round_number, question_text, options, correct_index, is_active"
+          "id, round_number, question_number, question_text, options, correct_index, is_active, created_at"
         )
-        .eq("trivia_card_id", gameId)
-        .eq("is_active", true)
-        .order("round_number", { ascending: true })
-        .order("created_at", { ascending: true });
+        .eq("trivia_card_id", gameId);
 
       if (cancelled) return;
 
-      if (qErr || !qs) {
+      if (qErr || !qsRaw) {
         console.error("❌ trivia_questions fetch error (UI):", qErr);
         setLoadingMessage("No questions are available for this game.");
         setLoading(false);
         return;
       }
 
-      setQuestions(qs);
+      const { list, mode } = normalizeQuestions(qsRaw || []);
+      setQuestions(list);
+      setQuestionOrderMode(mode);
+
       setLoading(false);
     }
 
@@ -581,18 +645,24 @@ export default function TriviaUserInterfacePage() {
   }, [session?.id, gameId]);
 
   /* ---------------------------------------------------------
-     Derived current question
+     Derived current question  ✅ MATCHES ACTIVE WALL
   --------------------------------------------------------- */
   const timerSeconds: number = trivia?.timer_seconds ?? 30;
   const scoringMode: string = trivia?.scoring_mode ?? "100s";
 
-  const currentQuestionIndex =
-    session?.current_question && questions.length > 0
-      ? Math.min(
-          questions.length - 1,
-          Math.max(0, (session.current_question || 1) - 1)
-        )
-      : 0;
+  const currentQuestionIndex = useMemo(() => {
+    if (!session?.current_question || questions.length === 0) return 0;
+
+    const picked = pickQuestionForCurrent(
+      questions,
+      session.current_question,
+      questionOrderMode
+    );
+    if (!picked) return 0;
+
+    const idx = questions.findIndex((q) => q.id === picked.id);
+    return idx === -1 ? 0 : idx;
+  }, [session?.current_question, questions, questionOrderMode]);
 
   const currentQuestion = questions[currentQuestionIndex] || null;
   const isRunning = session?.status === "running";
