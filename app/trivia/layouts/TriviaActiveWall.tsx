@@ -1792,29 +1792,18 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                                 </div>
                               </div>
 
-                              {/* ✅ Points + streak pill */}
+                              {/* ✅ Points + streak pill (inline: fire left of points) */}
                               <div
                                 style={{
                                   position: "relative",
                                   zIndex: 2,
                                   display: "flex",
-                                  flexDirection: "column",
-                                  alignItems: "flex-end",
-                                  gap: 4,
+                                  flexDirection: "row",
+                                  alignItems: "center",
+                                  gap: 10,
                                   textAlign: "right",
                                 }}
                               >
-                                <div
-                                  style={{
-                                    fontSize: "clamp(1.6rem,2.6vw,3rem)",
-                                    fontWeight: 900,
-                                    textShadow:
-                                      "0 10px 30px rgba(0,0,0,0.55)",
-                                  }}
-                                >
-                                  {r.points}
-                                </div>
-
                                 {(r.currentStreak ?? 0) > 1 && (
                                   <div
                                     style={{
@@ -1832,14 +1821,27 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                                       display: "inline-flex",
                                       alignItems: "center",
                                       gap: 6,
+                                      whiteSpace: "nowrap",
                                     }}
                                   >
                                     <span>🔥</span>
-                                    <span>
-                                      {r.currentStreak} in a row
-                                    </span>
+                                    <span>{r.currentStreak} in a row</span>
                                   </div>
                                 )}
+
+                                <div
+                                  style={{
+                                    fontSize:
+                                      "clamp(1.6rem,2.6vw,3rem)",
+                                    fontWeight: 900,
+                                    textShadow:
+                                      "0 10px 30px rgba(0,0,0,0.55)",
+                                    minWidth: "3ch",
+                                    textAlign: "right",
+                                  }}
+                                >
+                                  {r.points}
+                                </div>
                               </div>
                             </div>
                           );
