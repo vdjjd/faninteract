@@ -1,7 +1,7 @@
 "use client";
 
 import { QRCodeCanvas } from "qrcode.react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { getSupabaseClient } from "@/lib/supabaseClient";
 
@@ -78,7 +78,7 @@ function CountdownDisplay({
     return { m: mm, s: ss, wholeRemaining: Math.ceil(remaining) };
   }, [countdownActive, countdownStartedAt, now, serverOffsetMs, totalSeconds]);
 
-  // ✅ tick pop on each whole second change
+  // tick pop on each whole second change (can be used for effects)
   useEffect(() => {
     if (!countdownActive) return;
     if (lastWhole === null) {
@@ -100,7 +100,7 @@ function CountdownDisplay({
           exit={{ opacity: 0, scale: 1.06 }}
           transition={{ duration: 0.22, ease: "easeOut" }}
           style={{
-            fontSize: "clamp(6rem,8vw,9rem)",
+            fontSize: "clamp(4rem,6vw,7.5rem)",
             fontWeight: 900,
             color: "#fff",
             textShadow:
@@ -218,7 +218,7 @@ export default function TriviaInactiveWall({ trivia }: TriviaInactiveWallProps) 
     applyBackgroundFromRow(trivia);
   }, [trivia]);
 
-  // 🔁 Live updates from DB
+  // Live updates from DB
   useEffect(() => {
     if (!trivia?.id) return;
 
@@ -279,16 +279,16 @@ export default function TriviaInactiveWall({ trivia }: TriviaInactiveWallProps) 
 
   return (
     <>
-      {/* Root wrapper with background layers (NO layout changes to your panel) */}
+      {/* Root wrapper */}
       <div
         style={{
-          width: "100%",
+          width: "100vw",
           height: "100vh",
           overflow: "hidden",
           position: "relative",
         }}
       >
-        {/* ✅ Background ONLY gets brightness */}
+        {/* Background */}
         <div
           style={{
             position: "absolute",
@@ -300,7 +300,7 @@ export default function TriviaInactiveWall({ trivia }: TriviaInactiveWallProps) 
           }}
         />
 
-        {/* ✅ Vignette overlay */}
+        {/* Vignette */}
         <div
           style={{
             position: "absolute",
@@ -314,14 +314,14 @@ export default function TriviaInactiveWall({ trivia }: TriviaInactiveWallProps) 
           }}
         />
 
-        {/* ✅ subtle grain */}
+        {/* Grain */}
         <div
           style={{
             position: "absolute",
             inset: 0,
             pointerEvents: "none",
             zIndex: 2,
-            opacity: 0.10,
+            opacity: 0.1,
             backgroundImage: `
               repeating-linear-gradient(
                 0deg,
@@ -335,7 +335,7 @@ export default function TriviaInactiveWall({ trivia }: TriviaInactiveWallProps) 
           }}
         />
 
-        {/* Foreground content (your original layout) */}
+        {/* Foreground content */}
         <div
           style={{
             position: "relative",
@@ -345,33 +345,34 @@ export default function TriviaInactiveWall({ trivia }: TriviaInactiveWallProps) 
             display: "flex",
             flexDirection: "column",
             alignItems: "center",
-            overflow: "hidden",
+            justifyContent: "flex-start",
             paddingTop: "3vh",
           }}
         >
-          {/* Title (TOP) */}
+          {/* Title */}
           <h1
             style={{
               color: "#fff",
               fontSize: "clamp(2.5rem,4vw,5rem)",
               fontWeight: 900,
-              marginBottom: "1vh",
+              marginBottom: "1.5vh",
               textShadow: `
                 2px 2px 2px #000,
                 -2px 2px 2px #000,
                 2px -2px 2px #000,
                 -2px -2px 2px #000
               `,
+              textAlign: "center",
+              padding: "0 2vw",
             }}
           >
             {wallState.publicName}
           </h1>
 
-          {/* Main Panel */}
+          {/* Main 16:9 Panel */}
           <div
             style={{
-              width: "90vw",
-              height: "78vh",
+              width: "92vw",
               maxWidth: "1800px",
               aspectRatio: "16 / 9",
               background: "rgba(255,255,255,0.08)",
@@ -380,11 +381,15 @@ export default function TriviaInactiveWall({ trivia }: TriviaInactiveWallProps) 
               borderRadius: 24,
               position: "relative",
               overflow: "hidden",
-              display: "flex",
               boxShadow: "0 25px 90px rgba(0,0,0,0.35)",
+              display: "grid",
+              gridTemplateColumns: "minmax(0, 1.05fr) minmax(0, 1fr)",
+              padding: "2.5vh 3vw",
+              columnGap: "2.5vw",
+              alignItems: "stretch",
             }}
           >
-            {/* ✅ glass depth overlay */}
+            {/* Glass depth */}
             <div
               style={{
                 position: "absolute",
@@ -397,24 +402,20 @@ export default function TriviaInactiveWall({ trivia }: TriviaInactiveWallProps) 
               }}
             />
 
-            {/* QR SECTION */}
+            {/* LEFT: QR */}
             <div
               style={{
-                position: "absolute",
-                top: "5%",
-                left: "3%",
-                width: "47%",
-                height: "90%",
+                position: "relative",
+                zIndex: 2,
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                zIndex: 2,
               }}
             >
-              {/* ✅ QR frame/glow (same size/position) */}
               <div
                 style={{
                   width: "100%",
+                  maxWidth: "100%",
                   height: "100%",
                   borderRadius: 28,
                   padding: "14px",
@@ -424,6 +425,9 @@ export default function TriviaInactiveWall({ trivia }: TriviaInactiveWallProps) 
                     "0 0 24px rgba(255,255,255,0.10), 0 0 60px rgba(70,140,255,0.10)",
                   position: "relative",
                   overflow: "hidden",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
                 }}
               >
                 <div className="fi-qr-sheen" />
@@ -447,100 +451,115 @@ export default function TriviaInactiveWall({ trivia }: TriviaInactiveWallProps) 
               </div>
             </div>
 
-            {/* TEXT + LOGO AREA */}
+            {/* RIGHT: Logo + Text + Timer */}
             <div
               style={{
                 position: "relative",
-                flexGrow: 1,
-                marginLeft: "44%",
                 zIndex: 2,
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                justifyContent: "space-between",
+                padding: "1vh 1vw 2vh",
+                gap: "1.6vh",
               }}
             >
-              {/* LOGO */}
+              {/* Logo */}
               <div
                 style={{
-                  position: "absolute",
-                  top: "2%",
-                  left: "53%",
-                  transform: "translateX(-50%)",
-                  width: "clamp(300px,27vw,400px)",
-                  height: "clamp(300px,12vw,260px)",
+                  width: "100%",
                   display: "flex",
-                  justifyContent: "center",
                   alignItems: "center",
-                  overflow: "hidden",
+                  justifyContent: "center",
+                  paddingTop: "0.5vh",
+                  paddingBottom: "0.5vh",
                 }}
               >
-                <img
-                  src={displayLogo}
+                <div
                   style={{
-                    width: "100%",
-                    height: "100%",
-                    objectFit: "contain",
-                    filter: "drop-shadow(0 0 12px rgba(0,0,0,0.6))",
-                    animation: "fiLogoBreathe 3.5s ease-in-out infinite",
+                    width: "clamp(220px, 80%, 420px)",
+                    maxHeight: "clamp(130px, 18vh, 260px)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
                   }}
-                />
+                >
+                  <img
+                    src={displayLogo}
+                    style={{
+                      width: "100%",
+                      height: "100%",
+                      objectFit: "contain",
+                      filter: "drop-shadow(0 0 12px rgba(0,0,0,0.6))",
+                      animation: "fiLogoBreathe 3.5s ease-in-out infinite",
+                    }}
+                  />
+                </div>
               </div>
 
-              {/* GREY DIVIDER — UNTOUCHED */}
+              {/* Middle: Grey bar + "Trivia Game" */}
               <div
                 style={{
-                  position: "absolute",
-                  top: "50%",
-                  left: "53%",
-                  transform: "translateX(-50%)",
-                  width: "75%",
-                  height: "1.4vh",
-                  borderRadius: 6,
-                  background: "linear-gradient(to right,#000,#444)",
-                }}
-              />
-
-              {/* MAIN TEXT (CENTER) — MUST STAY "Trivia Game" */}
-              <p
-                style={{
-                  position: "absolute",
-                  top: "56%",
-                  left: "53%",
-                  transform: "translateX(-50%)",
-                  color: "#fff",
-                  fontSize: "clamp(2em,3.5vw,6rem)",
-                  fontWeight: 900,
-                  textAlign: "center",
-                  textShadow: "0 0 14px rgba(0,0,0,0.6)",
+                  width: "100%",
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: "1.4vh",
+                  marginTop: "0.5vh",
+                  marginBottom: "0.5vh",
                 }}
               >
-                Trivia Game
-              </p>
+                {/* Grey divider */}
+                <div
+                  style={{
+                    width: "75%",
+                    height: "1.4vh",
+                    borderRadius: 6,
+                    background: "linear-gradient(to right,#000,#444)",
+                  }}
+                />
 
-              {/* STARTING SOON */}
-              <p
-                style={{
-                  position: "absolute",
-                  top: "67%",
-                  left: "53%",
-                  transform: "translateX(-50%)",
-                  color: "#bcd9ff",
-                  fontSize: "clamp(2.8rem,2.4vw,3.2rem)",
-                  fontWeight: 700,
-                  textAlign: "center",
-                  margin: 0,
-                  textShadow: "0 0 18px rgba(90,160,255,0.35)",
-                }}
-              >
-                <span className="fi-starting-soon">Starting Soon!!</span>
-              </p>
+                <p
+                  style={{
+                    color: "#fff",
+                    fontSize: "clamp(1.6rem, 2.8vw, 3.4rem)",
+                    fontWeight: 900,
+                    textAlign: "center",
+                    margin: 0,
+                    textShadow: "0 0 14px rgba(0,0,0,0.6)",
+                  }}
+                >
+                  Trivia Game
+                </p>
+              </div>
 
-              {/* COUNTDOWN */}
+              {/* "Starting Soon" + Timer */}
               <div
                 style={{
-                  position: "absolute",
-                  top: "73%",
-                  left: "53%",
-                  transform: "translateX(-50%)",
+                  width: "100%",
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  justifyContent: "flex-end",
+                  gap: "1.2vh",
+                  paddingBottom: "1vh",
+                  flexGrow: 1,
                 }}
               >
+                <p
+                  style={{
+                    color: "#bcd9ff",
+                    fontSize: "clamp(1.4rem, 2.1vw, 2.6rem)",
+                    fontWeight: 700,
+                    textAlign: "center",
+                    margin: 0,
+                    textShadow: "0 0 18px rgba(90,160,255,0.35)",
+                  }}
+                >
+                  <span className="fi-starting-soon">Starting Soon!!</span>
+                </p>
+
                 <CountdownDisplay
                   totalSeconds={wallState.countdownSeconds}
                   countdownActive={wallState.countdownActive}
@@ -553,7 +572,7 @@ export default function TriviaInactiveWall({ trivia }: TriviaInactiveWallProps) 
         </div>
       </div>
 
-      {/* Animations (visual only) */}
+      {/* Animations */}
       <style>{`
         /* QR sheen sweep */
         .fi-qr-sheen {
