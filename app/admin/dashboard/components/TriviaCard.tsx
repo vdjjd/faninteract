@@ -79,7 +79,6 @@ export default function TriviaCard({
   /* ------------------------------------------------------------
      TRIVIA SETTINGS STATE
   ------------------------------------------------------------ */
-
   const TIMER_OPTIONS = [30, 15, 12, 10];
 
   const normalizeTimerSeconds = (n: any) => {
@@ -1158,9 +1157,8 @@ export default function TriviaCard({
               </button>
 
               <button
-                onClick={() => {
-                  if (onRegenerateQuestions) onRegenerateQuestions(trivia);
-                }}
+                onClick={() => onRegenerateQuestions?.(trivia)}
+                disabled={!onRegenerateQuestions}
                 className={cn(
                   "py-2",
                   "rounded-lg",
@@ -1169,9 +1167,11 @@ export default function TriviaCard({
                   "flex",
                   "items-center",
                   "justify-center",
-                  "whitespace-nowrap",
                   "text-xs",
-                  "bg-orange-500 hover:bg-orange-600 text-black"
+                  "whitespace-nowrap",
+                  onRegenerateQuestions
+                    ? "bg-orange-500 hover:bg-orange-600 text-black"
+                    : "bg-gray-700/60 cursor-not-allowed opacity-60"
                 )}
               >
                 New Questions Or Topic
@@ -1241,13 +1241,7 @@ export default function TriviaCard({
 
         {/* ---------------- QUESTIONS ---------------- */}
         <Tabs.Content value="questions" className={cn("mt-4", "space-y-3")}>
-          <div
-            className={cn(
-              "flex",
-              "items-center",
-              "justify-between"
-            )}
-          >
+          <div className={cn("flex", "items-center", "justify-between")}>
             <div className={cn("text-xs", "opacity-70")}>
               Total questions: {questions.length}
             </div>
@@ -1405,7 +1399,9 @@ export default function TriviaCard({
                   <button
                     type="button"
                     onClick={() =>
-                      setCurrentPage((p) => Math.min(totalPages - 1, p + 1))
+                      setCurrentPage((p) =>
+                        Math.min(totalPages - 1, p + 1)
+                      )
                     }
                     disabled={safePage >= totalPages - 1}
                     className={cn(
