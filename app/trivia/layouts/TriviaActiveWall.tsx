@@ -1,6 +1,7 @@
+// app/trivia/layouts/TriviaActiveWall.tsx
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { QRCodeCanvas } from "qrcode.react";
 import { AnimatePresence, motion } from "framer-motion";
 import { getSupabaseClient } from "@/lib/supabaseClient";
@@ -281,29 +282,37 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
   const [progressiveWrongRemovalEnabled, setProgressiveWrongRemovalEnabled] =
     useState<boolean>(!!trivia?.progressive_wrong_removal_enabled);
 
-  // ✅ PATCH: herd highlight toggle MUST be state on wall too
+  // ✅ PATCH: herd highlight MUST be wall state (don’t rely on initial trivia prop)
   const [herdHighlightEnabled, setHerdHighlightEnabled] = useState<boolean>(
-    !!trivia?.herd_highlight_enabled
+    !!(trivia as any)?.herd_highlight_enabled
   );
 
-  // ✅ if some env lacks the column, stop selecting it (prevents spam)
+  // ✅ If env/schema lacks the column, stop selecting it (prevents spam)
   const herdColumnUnsupportedRef = useRef(false);
 
   useEffect(() => {
     setCardStatus(trivia?.status || "idle");
     setCardCountdownActive(!!trivia?.countdown_active);
     setProgressiveWrongRemovalEnabled(!!trivia?.progressive_wrong_removal_enabled);
-    setHerdHighlightEnabled(!!trivia?.herd_highlight_enabled);
+
+    // ✅ keep in sync only if the prop actually includes it
+    if (typeof (trivia as any)?.herd_highlight_enabled !== "undefined") {
+      setHerdHighlightEnabled(!!(trivia as any).herd_highlight_enabled);
+    }
   }, [
     trivia?.id,
     trivia?.status,
     trivia?.countdown_active,
     trivia?.progressive_wrong_removal_enabled,
-    trivia?.herd_highlight_enabled,
+    (trivia as any)?.herd_highlight_enabled,
   ]);
 
   useEffect(() => {
     if (!trivia?.id) return;
+
+    // ✅ reset on card change
+    herdColumnUnsupportedRef.current = false;
+
     let alive = true;
 
     const poll = async () => {
@@ -319,11 +328,16 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
 
       if (!alive) return;
 
-      // If older schema: mark unsupported ONCE and continue without it.
+      const msg = String((error as any)?.message || "").toLowerCase();
+      const code = String((error as any)?.code || "");
+
+      // ✅ If older schema: mark unsupported ONCE and continue without it.
       if (
         error &&
         !herdColumnUnsupportedRef.current &&
-        String((error as any)?.message || "").toLowerCase().includes("herd_highlight_enabled")
+        (code === "42703" ||
+          msg.includes("does not exist") ||
+          msg.includes("herd_highlight_enabled"))
       ) {
         herdColumnUnsupportedRef.current = true;
         return;
@@ -342,6 +356,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
 
     poll();
     const id = window.setInterval(poll, 1000);
+
     return () => {
       alive = false;
       window.clearInterval(id);
@@ -1541,7 +1556,6 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                     justifyContent: "center",
                   }}
                 >
-                  {/* ... unchanged ... */}
                   <div
                     style={{
                       position: "absolute",
@@ -1609,7 +1623,6 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                                 overflow: "hidden",
                               }}
                             >
-                              {/* ... unchanged ... */}
                               <div
                                 style={{
                                   position: "absolute",
@@ -1645,8 +1658,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                                     alignItems: "center",
                                     justifyContent: "center",
                                     position: "relative",
-                                    boxShadow:
-                                      "0 0 16px rgba(0,0,0,0.35)",
+                                    boxShadow: "0 0 16px rgba(0,0,0,0.35)",
                                   }}
                                 >
                                   {r.selfieUrl ? (
@@ -1680,10 +1692,8 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                                         width: 30,
                                         height: 30,
                                         borderRadius: "50%",
-                                        background:
-                                          "rgba(0,0,0,0.75)",
-                                        border:
-                                          "1px solid rgba(255,255,255,0.25)",
+                                        background: "rgba(0,0,0,0.75)",
+                                        border: "1px solid rgba(255,255,255,0.25)",
                                         display: "flex",
                                         alignItems: "center",
                                         justifyContent: "center",
@@ -1697,15 +1707,13 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
 
                                 <div
                                   style={{
-                                    fontSize:
-                                      "clamp(1.3rem,2.2vw,2.4rem)",
+                                    fontSize: "clamp(1.3rem,2.2vw,2.4rem)",
                                     fontWeight: 900,
                                     whiteSpace: "nowrap",
                                     overflow: "hidden",
                                     textOverflow: "ellipsis",
                                     maxWidth: "65vw",
-                                    textShadow:
-                                      "0 10px 30px rgba(0,0,0,0.55)",
+                                    textShadow: "0 10px 30px rgba(0,0,0,0.55)",
                                   }}
                                 >
                                   {r.name}
@@ -1714,13 +1722,11 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
 
                               <div
                                 style={{
-                                  fontSize:
-                                    "clamp(1.6rem,2.6vw,3rem)",
+                                  fontSize: "clamp(1.6rem,2.6vw,3rem)",
                                   fontWeight: 900,
                                   position: "relative",
                                   zIndex: 2,
-                                  textShadow:
-                                    "0 10px 30px rgba(0,0,0,0.55)",
+                                  textShadow: "0 10px 30px rgba(0,0,0,0.55)",
                                 }}
                               >
                                 {r.points}
@@ -1801,7 +1807,6 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                 pointerEvents: "none",
               }}
             >
-              {/* ... unchanged ... */}
               {[1, 2, 3].map((place) => {
                 const row = topRanks.find((r) => r.place === place);
                 const hasSelfie = !!row?.selfieUrl;
