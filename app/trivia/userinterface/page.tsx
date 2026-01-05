@@ -110,7 +110,7 @@ function sameLeaderRows(a: LeaderRow[], b: LeaderRow[]) {
 }
 
 /* ---------------------------------------------------------
-   ✅ QUESTION ORDERING (MATCHES ACTIVE WALL)
+   ✅ QUESTION ORDERING (MATCH WALL LOGIC)
 --------------------------------------------------------- */
 type QuestionOrderMode = "question_number" | "round_number" | "created_at";
 
@@ -128,7 +128,8 @@ function normalizeQuestions(qsRaw: any[]): {
   );
   const hasAllRN = list.every(
     (q) =>
-      typeof q?.round_number === "number" && Number.isFinite(q.round_number)
+      typeof q?.round_number === "number" &&
+      Number.isFinite(q.round_number)
   );
 
   const mode: QuestionOrderMode = hasAllQN
@@ -143,8 +144,10 @@ function normalizeQuestions(qsRaw: any[]): {
   };
 
   list.sort((a, b) => {
-    if (mode === "question_number") return a.question_number - b.question_number;
-    if (mode === "round_number") return a.round_number - b.round_number;
+    if (mode === "question_number")
+      return (a.question_number || 0) - (b.question_number || 0);
+    if (mode === "round_number")
+      return (a.round_number || 0) - (b.round_number || 0);
     return time(a?.created_at) - time(b?.created_at);
   });
 
@@ -162,6 +165,7 @@ function pickQuestionForCurrent(
     const hit = qs.find((q) => q?.question_number === currentQuestion);
     if (hit) return hit;
   }
+
   if (mode === "round_number") {
     const hit = qs.find((q) => q?.round_number === currentQuestion);
     if (hit) return hit;
@@ -172,7 +176,7 @@ function pickQuestionForCurrent(
 }
 
 /* ---------------------------------------------------------
-   Component
+   Constants
 --------------------------------------------------------- */
 const FALLBACK_BG =
   "radial-gradient(circle at top,#1d4ed8 0,#020617 55%,#000 100%)";
@@ -446,15 +450,14 @@ export default function TriviaUserInterfacePage() {
 
       setPlayerId((playerRow as any).id);
 
-      // 5) questions — ✅ MATCH ACTIVE WALL (NO is_active FILTER + NORMALIZE)
+      // 5) questions
       setLoadingMessage("Loading questions…");
 
       const { data: qsRaw, error: qErr } = await supabase
         .from("trivia_questions")
-        .select(
-          "id, round_number, question_number, question_text, options, correct_index, is_active, created_at"
-        )
-        .eq("trivia_card_id", gameId);
+        .select("*")
+        .eq("trivia_card_id", gameId)
+        .eq("is_active", true);
 
       if (cancelled) return;
 
@@ -465,10 +468,10 @@ export default function TriviaUserInterfacePage() {
         return;
       }
 
-      const { list, mode } = normalizeQuestions(qsRaw || []);
+      // ✅ Make question ordering + mode match wall logic
+      const { list, mode } = normalizeQuestions(qsRaw);
       setQuestions(list);
       setQuestionOrderMode(mode);
-
       setLoading(false);
     }
 
@@ -645,24 +648,24 @@ export default function TriviaUserInterfacePage() {
   }, [session?.id, gameId]);
 
   /* ---------------------------------------------------------
-     Derived current question  ✅ MATCHES ACTIVE WALL
+     Derived current question (MATCHES WALL'S SELECTION)
   --------------------------------------------------------- */
   const timerSeconds: number = trivia?.timer_seconds ?? 30;
   const scoringMode: string = trivia?.scoring_mode ?? "100s";
 
-  const currentQuestionIndex = useMemo(() => {
-    if (!session?.current_question || questions.length === 0) return 0;
-
-    const picked = pickQuestionForCurrent(
-      questions,
-      session.current_question,
-      questionOrderMode
-    );
-    if (!picked) return 0;
-
-    const idx = questions.findIndex((q) => q.id === picked.id);
-    return idx === -1 ? 0 : idx;
-  }, [session?.current_question, questions, questionOrderMode]);
+  const currentQuestionIndex =
+    session?.current_question && questions.length > 0
+      ? (() => {
+          const picked = pickQuestionForCurrent(
+            questions,
+            session.current_question || 1,
+            questionOrderMode
+          );
+          if (!picked) return 0;
+          const idx = questions.findIndex((q) => q.id === picked.id);
+          return idx === -1 ? 0 : idx;
+        })()
+      : 0;
 
   const currentQuestion = questions[currentQuestionIndex] || null;
   const isRunning = session?.status === "running";
