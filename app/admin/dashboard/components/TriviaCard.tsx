@@ -1158,8 +1158,9 @@ export default function TriviaCard({
               </button>
 
               <button
-                onClick={() => onRegenerateQuestions?.(trivia)}
-                disabled={!onRegenerateQuestions}
+                onClick={() => {
+                  if (onRegenerateQuestions) onRegenerateQuestions(trivia);
+                }}
                 className={cn(
                   "py-2",
                   "rounded-lg",
@@ -1168,9 +1169,9 @@ export default function TriviaCard({
                   "flex",
                   "items-center",
                   "justify-center",
-                  onRegenerateQuestions
-                    ? "bg-orange-500 hover:bg-orange-600 text-black"
-                    : "bg-gray-700/60 cursor-not-allowed opacity-60"
+                  "whitespace-nowrap",
+                  "text-xs",
+                  "bg-orange-500 hover:bg-orange-600 text-black"
                 )}
               >
                 New Questions Or Topic
