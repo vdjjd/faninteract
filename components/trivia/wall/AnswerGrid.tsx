@@ -77,7 +77,7 @@ export default function AnswerGrid({
           !revealAnswer &&
           !isRemoved;
 
-        const herdLabel = herdLabelForIndex
+        const herdLabel = showHerd && herdLabelForIndex
           ? herdLabelForIndex(idx)
           : undefined;
 
@@ -106,26 +106,6 @@ export default function AnswerGrid({
               herdPercent={herdPercents?.[idx] ?? 0}
               herdLabel={herdLabel}
             />
-
-            {/* ✅ Herd highlight label INSIDE the tile near the bottom (no layout shift) */}
-            {showHerd && herdLabel && (
-              <div
-                style={{
-                  position: "absolute",
-                  left: 0,
-                  right: 0,
-                  bottom: 14,
-                  textAlign: "center",
-                  pointerEvents: "none",
-                  fontSize: "clamp(1.05rem,1.3vw,1.45rem)",
-                  fontWeight: 900,
-                  opacity: 0.9,
-                  textShadow: "0 10px 30px rgba(0,0,0,0.65)",
-                }}
-              >
-                {herdLabel}
-              </div>
-            )}
           </div>
         );
       })}
