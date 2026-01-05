@@ -5,7 +5,8 @@ import { getSupabaseClient } from "@/lib/supabaseClient";
 import { cn } from "@/lib/utils";
 
 import TriviaCard from "./TriviaCard";
-import OptionsModalTrivia from "@/components/OptionsModalTrivia"; // ⬅️ NEW
+import OptionsModalTrivia from "@/components/OptionsModalTrivia";
+import TriviaRegenerateModal from "@/components/TriviaRegenerateModal"; // ⬅️ NEW
 
 const supabase = getSupabaseClient();
 
@@ -14,7 +15,6 @@ interface TriviaGridProps {
   host: any;
   refreshTrivia: () => Promise<void>;
   onOpenOptions: (trivia: any) => void;
-  // ✅ moderation handler
   onOpenModeration: (trivia: any) => void;
 }
 
@@ -26,7 +26,8 @@ export default function TriviaGrid({
   onOpenModeration,
 }: TriviaGridProps) {
   const [localTrivia, setLocalTrivia] = useState<any[]>([]);
-  const [optionsTrivia, setOptionsTrivia] = useState<any | null>(null); // ⬅️ NEW
+  const [optionsTrivia, setOptionsTrivia] = useState<any | null>(null);
+  const [regenerateTrivia, setRegenerateTrivia] = useState<any | null>(null); // ⬅️ NEW
 
   /* ------------------------------------------------------------
      Sync props → local state
@@ -87,8 +88,45 @@ export default function TriviaGrid({
      Open Options modal (local) + still call parent handler
   ------------------------------------------------------------ */
   function handleOpenOptionsLocal(triviaItem: any) {
-    setOptionsTrivia(triviaItem);      // open modal
-    onOpenOptions?.(triviaItem);      // keep parent behavior if needed
+    setOptionsTrivia(triviaItem);
+    onOpenOptions?.(triviaItem);
+  }
+
+  /* ------------------------------------------------------------
+     Open REGENERATE modal (local)
+  ------------------------------------------------------------ */
+  function handleOpenRegenerate(triviaItem: any) {
+    setRegenerateTrivia(triviaItem);
+  }
+
+  /* ------------------------------------------------------------
+     Handle REGENERATE submit from modal
+  ------------------------------------------------------------ */
+  async function handleRegenerateSubmit(payload: {
+    triviaId: string;
+    newPublicName: string;
+    topicPrompt: string;
+    numQuestions: number;
+    difficulty: string;
+  }) {
+    try {
+      // 🔁 Call your API / Edge function that asks AI for new questions
+      // Adjust this endpoint to match however you did initial creation.
+      await fetch("/api/trivia/regenerate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...payload,
+          hostId: host?.id ?? null,
+        }),
+      });
+
+      setRegenerateTrivia(null);
+      await refreshTrivia();
+    } catch (err) {
+      console.error("❌ Error regenerating trivia:", err);
+      // you could keep the modal open on error if you want
+    }
   }
 
   /* ------------------------------------------------------------
@@ -109,10 +147,11 @@ export default function TriviaGrid({
           <TriviaCard
             key={triviaItem.id}
             trivia={triviaItem}
-            onOpenOptions={handleOpenOptionsLocal}   // ⬅️ use local handler
+            onOpenOptions={handleOpenOptionsLocal}
             onDelete={handleDelete}
             onLaunch={() => handleLaunch(triviaItem.id)}
             onOpenModeration={onOpenModeration}
+            onRegenerateQuestions={handleOpenRegenerate} // ⬅️ WIRE BUTTON
           />
         ))}
       </div>
@@ -124,6 +163,16 @@ export default function TriviaGrid({
           hostId={host.id}
           onClose={() => setOptionsTrivia(null)}
           refreshTrivia={refreshTrivia}
+        />
+      )}
+
+      {/* ✅ REGENERATE MODAL (NEW QUESTIONS / TOPIC) */}
+      {regenerateTrivia && (
+        <TriviaRegenerateModal
+          isOpen={!!regenerateTrivia}
+          trivia={regenerateTrivia}
+          onClose={() => setRegenerateTrivia(null)}
+          onRegenerate={handleRegenerateSubmit}
         />
       )}
     </div>
