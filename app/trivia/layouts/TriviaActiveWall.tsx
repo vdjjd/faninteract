@@ -36,6 +36,10 @@ type LeaderRow = {
   name: string;
   selfieUrl?: string | null;
   points: number;
+
+  // ✅ NEW: streaks for leaderboard
+  currentStreak?: number;
+  bestStreak?: number;
 };
 
 // ✅ wall authority phases
@@ -203,7 +207,10 @@ function sameLeaderRows(a: LeaderRow[], b: LeaderRow[]) {
       a[i].playerId !== b[i].playerId ||
       a[i].points !== b[i].points ||
       a[i].name !== b[i].name ||
-      (a[i].selfieUrl || "") !== (b[i].selfieUrl || "")
+      (a[i].selfieUrl || "") !== (b[i].selfieUrl || "") ||
+      // ✅ also compare streaks to trigger updates when streaks change
+      (a[i].currentStreak ?? 0) !== (b[i].currentStreak ?? 0) ||
+      (a[i].bestStreak ?? 0) !== (b[i].bestStreak ?? 0)
     ) {
       return false;
     }
@@ -1100,7 +1107,10 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
 
       const { data: players, error: playersErr } = await supabase
         .from("trivia_players")
-        .select("id,status,guest_id,display_name,photo_url")
+        .select(
+          // ✅ include streak columns
+          "id,status,guest_id,display_name,photo_url,current_streak,best_streak"
+        )
         .eq("session_id", session.id)
         .eq("status", "approved");
 
@@ -1155,11 +1165,17 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
         }
       }
 
-      const built = players
+      const built: LeaderRow[] = players
         .map((p: any) => {
           const guest = p.guest_id ? guestMap.get(p.guest_id) : undefined;
           const safeName = guest?.name || formatDisplayName(p.display_name);
           const safeSelfie = guest?.selfieUrl || p.photo_url || null;
+
+          // ✅ read streaks from DB, default 0
+          const currentStreak =
+            typeof p.current_streak === "number" ? p.current_streak : 0;
+          const bestStreak =
+            typeof p.best_streak === "number" ? p.best_streak : 0;
 
           return {
             rank: 0,
@@ -1168,6 +1184,8 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
             name: safeName,
             selfieUrl: safeSelfie,
             points: totals.get(p.id) || 0,
+            currentStreak,
+            bestStreak,
           };
         })
         .sort((a: any, b: any) => b.points - a.points)
@@ -1774,16 +1792,54 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                                 </div>
                               </div>
 
+                              {/* ✅ Points + streak pill */}
                               <div
                                 style={{
-                                  fontSize: "clamp(1.6rem,2.6vw,3rem)",
-                                  fontWeight: 900,
                                   position: "relative",
                                   zIndex: 2,
-                                  textShadow: "0 10px 30px rgba(0,0,0,0.55)",
+                                  display: "flex",
+                                  flexDirection: "column",
+                                  alignItems: "flex-end",
+                                  gap: 4,
+                                  textAlign: "right",
                                 }}
                               >
-                                {r.points}
+                                <div
+                                  style={{
+                                    fontSize: "clamp(1.6rem,2.6vw,3rem)",
+                                    fontWeight: 900,
+                                    textShadow:
+                                      "0 10px 30px rgba(0,0,0,0.55)",
+                                  }}
+                                >
+                                  {r.points}
+                                </div>
+
+                                {(r.currentStreak ?? 0) > 1 && (
+                                  <div
+                                    style={{
+                                      fontSize:
+                                        "clamp(0.95rem,1.4vw,1.6rem)",
+                                      fontWeight: 700,
+                                      padding: "4px 10px",
+                                      borderRadius: 999,
+                                      background: "rgba(0,0,0,0.45)",
+                                      border:
+                                        "1px solid rgba(255,255,255,0.25)",
+                                      color: "rgba(255,255,255,0.96)",
+                                      textShadow:
+                                        "0 6px 16px rgba(0,0,0,0.7)",
+                                      display: "inline-flex",
+                                      alignItems: "center",
+                                      gap: 6,
+                                    }}
+                                  >
+                                    <span>🔥</span>
+                                    <span>
+                                      {r.currentStreak} in a row
+                                    </span>
+                                  </div>
+                                )}
                               </div>
                             </div>
                           );

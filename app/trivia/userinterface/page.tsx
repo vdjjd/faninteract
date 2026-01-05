@@ -1222,17 +1222,17 @@ export default function TriviaUserInterfacePage() {
       }
 
       // ✅ streaks computed from latest answered question in your questions[] order
-const streaks = new Map<string, number>();
+      const streaks = new Map<string, number>();
 
-byPlayer.forEach((arr, pid) => {
-  streaks.set(
-    pid,
-    computeStreakEndingAtLatestAnswered({
-      answers: (arr as any) || [],
-      questions,
-    })
-  );
-});
+      byPlayer.forEach((arr, pid) => {
+        streaks.set(
+          pid,
+          computeStreakEndingAtLatestAnswered({
+            answers: (arr as any) || [],
+            questions,
+          })
+        );
+      });
 
       const guestMap = new Map<
         string,
@@ -1735,88 +1735,126 @@ byPlayer.forEach((arr, pid) => {
               )}
 
               {!leaderLoading &&
-                leaderRows.map((row) => (
-                  <div
-                    key={`${row.rank}-${row.name}`}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 12,
-                      padding: "10px 12px",
-                      borderRadius: 18,
-                      background: "rgba(15,23,42,0.85)",
-                      border: "1px solid rgba(148,163,184,0.35)",
-                    }}
-                  >
+                leaderRows.map((row) => {
+                  const hasHotStreak =
+                    row.points > 0 && (row.streak ?? 0) >= 2;
+
+                  return (
                     <div
+                      key={`${row.rank}-${row.name}`}
                       style={{
-                        width: 34,
-                        height: 34,
-                        borderRadius: 999,
                         display: "flex",
                         alignItems: "center",
-                        justifyContent: "center",
-                        fontWeight: 900,
-                        background: "rgba(59,130,246,0.35)",
-                        border: "1px solid rgba(147,197,253,0.55)",
-                        flexShrink: 0,
+                        gap: 12,
+                        padding: "10px 12px",
+                        borderRadius: 18,
+                        background: "rgba(15,23,42,0.85)",
+                        border: "1px solid rgba(148,163,184,0.35)",
                       }}
                     >
-                      {row.rank}
-                    </div>
-
-                    <div
-                      style={{
-                        width: 44,
-                        height: 44,
-                        borderRadius: 999,
-                        overflow: "hidden",
-                        border: "1px solid rgba(226,232,240,0.6)",
-                        background: "rgba(2,6,23,0.6)",
-                        flexShrink: 0,
-                      }}
-                    >
-                      {row.selfieUrl ? (
-                        <img
-                          src={row.selfieUrl}
-                          alt=""
-                          style={{
-                            width: "100%",
-                            height: "100%",
-                            objectFit: "cover",
-                          }}
-                        />
-                      ) : null}
-                    </div>
-
-                    <div style={{ flex: 1, minWidth: 0 }}>
                       <div
                         style={{
-                          fontWeight: 800,
-                          fontSize: "0.95rem",
-                          whiteSpace: "nowrap",
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
+                          width: 34,
+                          height: 34,
+                          borderRadius: 999,
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          fontWeight: 900,
+                          background: "rgba(59,130,246,0.35)",
+                          border: "1px solid rgba(147,197,253,0.55)",
+                          flexShrink: 0,
                         }}
                       >
-                        {row.name}
+                        {row.rank}
                       </div>
-                      <div style={{ fontSize: "0.75rem", opacity: 0.75 }}>
-                        Points
-                      </div>
-                    </div>
 
-                    <div
-                      style={{
-                        fontWeight: 900,
-                        fontSize: "1.1rem",
-                        letterSpacing: 0.2,
-                      }}
-                    >
-                      {row.points}
+                      <div
+                        style={{
+                          width: 44,
+                          height: 44,
+                          borderRadius: 999,
+                          overflow: "hidden",
+                          border: "1px solid rgba(226,232,240,0.6)",
+                          background: "rgba(2,6,23,0.6)",
+                          flexShrink: 0,
+                        }}
+                      >
+                        {row.selfieUrl ? (
+                          <img
+                            src={row.selfieUrl}
+                            alt=""
+                            style={{
+                              width: "100%",
+                              height: "100%",
+                              objectFit: "cover",
+                            }}
+                          />
+                        ) : null}
+                      </div>
+
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div
+                          style={{
+                            fontWeight: 800,
+                            fontSize: "0.95rem",
+                            whiteSpace: "nowrap",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                          }}
+                        >
+                          {row.name}
+                        </div>
+
+                        <div
+                          style={{
+                            fontSize: "0.75rem",
+                            opacity: 0.75,
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 6,
+                            marginTop: 2,
+                          }}
+                        >
+                          <span>Points</span>
+
+                          {hasHotStreak && (
+                            <span
+                              style={{
+                                padding: "2px 8px",
+                                borderRadius: 999,
+                                border:
+                                  "1px solid rgba(251,191,36,0.75)",
+                                background:
+                                  "rgba(251,191,36,0.15)",
+                                fontSize: "0.7rem",
+                                fontWeight: 800,
+                                letterSpacing: 0.4,
+                                textTransform: "uppercase",
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: 4,
+                              }}
+                            >
+                              <span aria-hidden="true">🔥</span>
+                              <span>{row.streak}x Streak</span>
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      <div
+                        style={{
+                          fontWeight: 900,
+                          fontSize: "1.1rem",
+                          letterSpacing: 0.2,
+                        }}
+                      >
+                        {row.points}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
             </>
           )}
 
