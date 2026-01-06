@@ -991,8 +991,11 @@ export default function TriviaCard({
   }
 
   /* ------------------------------------------------------------
-     STOP TRIVIA (go back to Inactive wall, keep players,
-     CLEAR ANSWERS, mark session as "stopped" for phone UI)
+     STOP TRIVIA
+     - Go back to Inactive wall
+     - KEEP PLAYERS (same session id)
+     - CLEAR ANSWERS → reset points & streaks to zero
+     - Do NOT touch trivia_sessions.status (avoids enum/RLS issues)
   ------------------------------------------------------------ */
   async function handleStopTrivia() {
     // cancel any pending auto-start
@@ -1011,9 +1014,8 @@ export default function TriviaCard({
       .limit(1)
       .maybeSingle();
 
-    // 2) If we have a session, clear all answers & set status = "stopped"
+    // 2) If we have a session, clear all answers → reset scoreboard & streaks
     if (!sessionErr && session?.id) {
-      // 2a. Clear all answers for this session → reset scoreboard
       const { data: players, error: playersErr } = await supabase
         .from("trivia_players")
         .select("id")
@@ -1034,18 +1036,12 @@ export default function TriviaCard({
         }
       }
 
-      // 2b. Mark session as stopped so phone UI can redirect to /thanks
-      const { error: sessUpErr } = await supabase
-        .from("trivia_sessions")
-        .update({
-          status: "stopped",
-          paused_at: null,
-        })
-        .eq("id", session.id);
-
-      if (sessUpErr) {
-        console.error("❌ stop: update trivia_sessions error:", sessUpErr);
-      }
+      // NOTE:
+      // We deliberately do NOT update trivia_sessions.status here.
+      // Your DB enum/constraints likely don't allow "stopped",
+      // which is why you were seeing an empty {} error.
+      // If later you decide to use status="finished" here,
+      // make sure it matches your enum and dashboard logic.
     }
 
     // 3) Flip card back to inactive (and stop any countdowns)
