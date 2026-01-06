@@ -48,6 +48,23 @@ async function recordVisit({
 const DEFAULT_WHEEL_POPUP_MESSAGE =
   "We want everyone to be a winner! Show this screen at the merchandise table for $10 off and pick your free poster.";
 
+function normalizeType(t: string) {
+  const x = (t || "").toLowerCase().trim();
+  if (
+    ["wheel", "prizewheel", "prize_wheel", "prizewheels", "prize_wheels"].includes(
+      x
+    )
+  )
+    return "wheel";
+  if (["poll", "polls"].includes(x)) return "poll";
+  if (["wall", "fanwall", "fan_wall", "fan_walls"].includes(x)) return "wall";
+  if (["basketball", "bb", "bbgame", "bb_games"].includes(x)) return "basketball";
+  if (["trivia", "triviacard", "trivia_cards"].includes(x)) return "trivia";
+  return x;
+}
+
+type ThankType = "basketball" | "trivia" | "poll" | "wheel" | "wall" | "lead";
+
 /* ---------------------------------------------------------
    Component
 --------------------------------------------------------- */
@@ -66,31 +83,30 @@ export default function ThankYouPage() {
 
   const rawType = searchParams.get("type");
 
-  const path = typeof window !== "undefined" ? window.location.pathname : "";
+  const path =
+    typeof window !== "undefined" ? window.location.pathname : "";
 
-  // Auto-detect type from URL path, then allow ?type= override
-  let detectedType =
-    path.includes("/basketball/")
-      ? "basketball"
-      : path.includes("/trivia/")
-      ? "trivia"
-      : path.includes("/polls/")
-      ? "poll"
-      : path.includes("/prizewheel/")
-      ? "wheel"
-      : path.includes("/wall/")
-      ? "wall"
-      : "lead";
+  const isThanksPath =
+    typeof window !== "undefined" ? window.location.pathname.includes("/thanks/") : false;
 
-  if (rawType) detectedType = rawType.toLowerCase();
+  // Initial detection from path (non-/thanks routes) + optional ?type override
+  const initialType: ThankType = (() => {
+    if (typeof window === "undefined") return "lead";
 
-  const type = detectedType as
-    | "basketball"
-    | "trivia"
-    | "poll"
-    | "wheel"
-    | "wall"
-    | "lead";
+    let detected: ThankType =
+      path.includes("/basketball/") ? "basketball" :
+      path.includes("/trivia/") ? "trivia" :
+      path.includes("/polls/") ? "poll" :
+      path.includes("/prizewheel/") ? "wheel" :
+      path.includes("/wall/") ? "wall" :
+      "lead";
+
+    if (rawType) detected = normalizeType(rawType) as ThankType;
+    return detected;
+  })();
+
+  // ✅ Make type stateful so /thanks can “upgrade” from lead → wheel/etc
+  const [type, setType] = useState<ThankType>(initialType);
 
   const [data, setData] = useState<any>(null);
   const [profile, setProfile] = useState<any>(null);
@@ -114,6 +130,59 @@ export default function ThankYouPage() {
   const [serverOffsetMs, setServerOffsetMs] = useState<number>(0);
 
   /* ---------------------------------------------------------
+     Keep type in sync if ?type changes
+  --------------------------------------------------------- */
+  useEffect(() => {
+    if (!rawType) return;
+    setType(normalizeType(rawType) as ThankType);
+  }, [rawType]);
+
+  /* ---------------------------------------------------------
+     /thanks autodetect (no ?type)
+     Probe tables to determine what this id represents.
+  --------------------------------------------------------- */
+  useEffect(() => {
+    if (!isThanksPath) return;
+    if (!gameId) return;
+    if (rawType) return; // query param wins
+    if (type !== "lead") return; // already known
+
+    let cancelled = false;
+
+    (async () => {
+      const candidates: Array<{ t: ThankType; table: string }> = [
+        { t: "wheel", table: "prize_wheels" },
+        { t: "poll", table: "polls" },
+        { t: "trivia", table: "trivia_cards" },
+        { t: "basketball", table: "bb_games" },
+        { t: "wall", table: "fan_walls" },
+      ];
+
+      for (const c of candidates) {
+        const { data: hit, error } = await supabase
+          .from(c.table)
+          .select("id")
+          .eq("id", gameId)
+          .maybeSingle();
+
+        if (cancelled) return;
+        if (error) continue;
+        if (hit?.id) {
+          setType(c.t);
+          return;
+        }
+      }
+
+      // If nothing matched, stay "lead"
+      setType("lead");
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isThanksPath, gameId, rawType, type, supabase]);
+
+  /* ---------------------------------------------------------
      Load guest profile
   --------------------------------------------------------- */
   useEffect(() => {
@@ -121,13 +190,19 @@ export default function ThankYouPage() {
   }, []);
 
   /* ---------------------------------------------------------
-     Load host + background (with FK-based join)
-     NOTE: hosts only has branding_logo_url, not logo_url
+     Load host + background (FK-based join)
+     NOTE: hosts only has branding_logo_url
   --------------------------------------------------------- */
   useEffect(() => {
     if (!gameId) return;
 
     (async () => {
+      // If this is /thanks and we haven't determined type yet, wait
+      if (isThanksPath && type === "lead" && !rawType) {
+        setData(null);
+        return;
+      }
+
       if (type === "lead") {
         setData({ background_value: null, host: null });
         return;
@@ -196,7 +271,7 @@ export default function ThankYouPage() {
 
       setData(data);
     })();
-  }, [gameId, type, supabase]);
+  }, [gameId, type, supabase, isThanksPath, rawType]);
 
   /* ---------------------------------------------------------
      Normalize host (embedded joins can return array)
@@ -238,7 +313,7 @@ export default function ThankYouPage() {
           );
         }
       } catch {
-        // Safari / unsupported — ignore
+        // ignore
       }
     }
 
@@ -294,7 +369,7 @@ export default function ThankYouPage() {
   }, [type, profile, gameId, supabase, router]);
 
   /* ---------------------------------------------------------
-     Trivia server-time sync (same approach as inactive wall)
+     Trivia server-time sync
   --------------------------------------------------------- */
   useEffect(() => {
     if (type !== "trivia") return;
@@ -330,7 +405,7 @@ export default function ThankYouPage() {
 
   /* ---------------------------------------------------------
      Trivia: watch trivia_cards for countdown / running state
---------------------------------------------------------- */
+  --------------------------------------------------------- */
   useEffect(() => {
     if (type !== "trivia" || !gameId) return;
 
@@ -345,25 +420,20 @@ export default function ThankYouPage() {
       const totalSeconds =
         typeof card.countdown_seconds === "number" && card.countdown_seconds > 0
           ? card.countdown_seconds
-          : 10; // sane fallback
+          : 10;
 
-      // Countdown ON
       if (card.countdown_active) {
         setTriviaPhase("countdown");
         setTriviaCountdownSeconds(totalSeconds);
 
         if (card.countdown_started_at) {
-          setCountdownStartedAtMs(
-            new Date(card.countdown_started_at).getTime()
-          );
+          setCountdownStartedAtMs(new Date(card.countdown_started_at).getTime());
         } else {
-          // Fallback if somehow missing
           setCountdownStartedAtMs(Date.now());
         }
         return;
       }
 
-      // Game RUNNING → go to trivia user interface
       if (card.status === "running") {
         setTriviaPhase("playing");
         setCountdownStartedAtMs(null);
@@ -372,7 +442,6 @@ export default function ThankYouPage() {
         return;
       }
 
-      // Any other state → waiting
       setTriviaPhase("waiting");
       setCountdownStartedAtMs(null);
       setTriviaCountdownSeconds(null);
@@ -381,9 +450,7 @@ export default function ThankYouPage() {
     async function loadInitialCard() {
       const { data: card, error } = await supabase
         .from("trivia_cards")
-        .select(
-          "status,countdown_active,countdown_started_at,countdown_seconds"
-        )
+        .select("status,countdown_active,countdown_started_at,countdown_seconds")
         .eq("id", gameId as string)
         .maybeSingle();
 
@@ -393,7 +460,6 @@ export default function ThankYouPage() {
 
     loadInitialCard();
 
-    // 🔔 Realtime subscription
     const channel = supabase
       .channel(`trivia-card-${gameId}`)
       .on(
@@ -406,14 +472,11 @@ export default function ThankYouPage() {
         },
         (payload) => {
           if (!mounted) return;
-          const card = payload.new as any;
-          console.log("🔔 trivia_cards update on thanks:", card);
-          applyCardState(card);
+          applyCardState(payload.new as any);
         }
       )
       .subscribe();
 
-    // ⏱ Polling fallback: check every 1s
     let prevCountdownActive: boolean | null = null;
     let prevStatus: string | null = null;
 
@@ -422,9 +485,7 @@ export default function ThankYouPage() {
 
       const { data: card, error } = await supabase
         .from("trivia_cards")
-        .select(
-          "status,countdown_active,countdown_started_at,countdown_seconds"
-        )
+        .select("status,countdown_active,countdown_started_at,countdown_seconds")
         .eq("id", gameId as string)
         .maybeSingle();
 
@@ -436,9 +497,7 @@ export default function ThankYouPage() {
       prevCountdownActive = card.countdown_active;
       prevStatus = card.status;
 
-      if (changedCountdown || changedStatus) {
-        applyCardState(card as any);
-      }
+      if (changedCountdown || changedStatus) applyCardState(card as any);
     }, 1000);
 
     return () => {
@@ -449,20 +508,15 @@ export default function ThankYouPage() {
   }, [type, gameId, supabase, router]);
 
   /* ---------------------------------------------------------
-     Trivia countdown ticking (black screen)
+     Trivia countdown ticking
   --------------------------------------------------------- */
   useEffect(() => {
     if (type !== "trivia") return;
     if (triviaPhase !== "countdown") return;
     if (!countdownStartedAtMs) return;
 
-    const id = setInterval(() => {
-      setNow(Date.now());
-    }, 250);
-
-    return () => {
-      clearInterval(id);
-    };
+    const id = setInterval(() => setNow(Date.now()), 250);
+    return () => clearInterval(id);
   }, [type, triviaPhase, countdownStartedAtMs]);
 
   /* ---------------------------------------------------------
@@ -480,9 +534,9 @@ export default function ThankYouPage() {
       ? "linear-gradient(135deg,#0a2540,#1b2b44,#000000)"
       : data?.background_value?.includes?.("http")
       ? `url(${data.background_value})`
-      : data?.background_value || "linear-gradient(135deg,#0a2540,#1b2b44,#000000)";
+      : data?.background_value ||
+        "linear-gradient(135deg,#0a2540,#1b2b44,#000000)";
 
-  // ✅ Use branding_logo_url only; fallback to FanInteract logo
   const logo = host?.branding_logo_url?.trim?.() || "/faninteractlogo.png";
 
   const headline = visitInfo?.isReturning
@@ -504,8 +558,9 @@ export default function ThankYouPage() {
     }
   }, [type, profile?.first_name]);
 
-  // Prize Wheel popup config
-  const wheelPopupEnabled = type === "wheel" && !!data?.thank_you_popup_enabled;
+  // ✅ wheel popup config
+  const wheelPopupEnabled =
+    type === "wheel" && data?.thank_you_popup_enabled === true;
 
   const wheelPopupText = useMemo(() => {
     if (!wheelPopupEnabled) return null;
@@ -515,7 +570,7 @@ export default function ThankYouPage() {
   }, [wheelPopupEnabled, data?.thank_you_popup_message]);
 
   /* ---------------------------------------------------------
-     Trivia countdown full-screen (black) override
+     Trivia countdown full-screen override
   --------------------------------------------------------- */
   if (
     type === "trivia" &&
@@ -547,7 +602,7 @@ export default function ThankYouPage() {
   }
 
   /* ---------------------------------------------------------
-     Render normal Thank You / Waiting view
+     Render
   --------------------------------------------------------- */
   return (
     <div
@@ -616,71 +671,7 @@ export default function ThankYouPage() {
 
         <p style={{ color: "#f3e8e0", marginBottom: 12 }}>{message}</p>
 
-        {/* WAITING STATE FOR BASKETBALL */}
-        {type === "basketball" && (
-          <>
-            <div
-              style={{
-                marginTop: 22,
-                fontSize: "1.4rem",
-                fontWeight: 900,
-                color: "#00ffd0",
-                textShadow:
-                  "0 0 10px rgba(0,255,208,0.9), 0 0 22px rgba(0,255,208,0.6)",
-                animation: "pulseGlow 1.6s ease-in-out infinite",
-              }}
-            >
-              Waiting for host approval…
-            </div>
-
-            <p
-              style={{
-                marginTop: 10,
-                fontSize: "0.9rem",
-                color: "#cbd5e1",
-                opacity: 0.85,
-              }}
-            >
-              Keep this screen open — it becomes your controller.
-              <br />
-              <span style={{ opacity: 0.7 }}>
-                (On Safari, please keep your screen awake manually.)
-              </span>
-            </p>
-          </>
-        )}
-
-        {/* WAITING STATE FOR TRIVIA */}
-        {type === "trivia" && triviaPhase === "waiting" && (
-          <>
-            <div
-              style={{
-                marginTop: 22,
-                fontSize: "1.4rem",
-                fontWeight: 900,
-                color: "#38bdf8",
-                textShadow: "0 0 12px rgba(56,189,248,0.8)",
-              }}
-            >
-              Waiting for the game to begin…
-            </div>
-
-            <p
-              style={{
-                marginTop: 10,
-                fontSize: "0.9rem",
-                color: "#cbd5e1",
-                opacity: 0.85,
-              }}
-            >
-              Keep this screen open.
-              <br />
-              The countdown and first question will appear automatically.
-            </p>
-          </>
-        )}
-
-        {/* PRIZE WHEEL POPUP MESSAGE (above badge) */}
+        {/* PRIZE WHEEL POPUP MESSAGE */}
         {type === "wheel" && wheelPopupText && (
           <div
             style={{
@@ -709,7 +700,7 @@ export default function ThankYouPage() {
           </div>
         )}
 
-        {/* Loyalty badge (if enabled & returned) */}
+        {/* Loyalty badge */}
         {badge && (
           <div
             style={{
@@ -744,13 +735,7 @@ export default function ThankYouPage() {
               {badge.label}
             </div>
 
-            <div
-              style={{
-                fontSize: "0.95rem",
-                color: "#f1f5f9",
-                opacity: 0.95,
-              }}
-            >
+            <div style={{ fontSize: "0.95rem", color: "#f1f5f9", opacity: 0.95 }}>
               {badge.description}
             </div>
           </div>
