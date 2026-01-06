@@ -2,6 +2,45 @@
 
 import { cn } from "@/lib/utils";
 
+function hasContent(s?: string) {
+  if (!s) return false;
+  const t = String(s).trim();
+  if (!t) return false;
+  // protect against literal "null"/"undefined" strings
+  if (t.toLowerCase() === "null" || t.toLowerCase() === "undefined") return false;
+  return true;
+}
+
+/* ------------------ SUPER BASIC MARKDOWN PARSER (slightly safer) ------------------ */
+function markdownToHtml(md: string) {
+  let html = md;
+
+  // Headings
+  html = html.replace(/^### (.*$)/gim, "<h3>$1</h3>");
+  html = html.replace(/^## (.*$)/gim, "<h2>$1</h2>");
+  html = html.replace(/^# (.*$)/gim, "<h1>$1</h1>");
+
+  // Bold/italic/underline
+  html = html.replace(/\*\*(.*?)\*\*/gim, "<strong>$1</strong>");
+  html = html.replace(/\*(.*?)\*/gim, "<em>$1</em>");
+  html = html.replace(/__(.*?)__/gim, "<u>$1</u>");
+
+  // Horizontal rules (--- on its own line)
+  html = html.replace(/^\s*---\s*$/gim, "<hr/>");
+
+  // Very simple lists: wrap consecutive - items in <ul> ... </ul>
+  // 1) mark list items
+  html = html.replace(/^\s*-\s+(.*)$/gim, "<li>$1</li>");
+  // 2) wrap blocks of <li>...</li> into <ul>
+  html = html.replace(/(?:<li>.*<\/li>\s*){1,}/gim, (match) => `<ul>${match}</ul>`);
+
+  // Paragraph-ish breaks
+  html = html.replace(/\n{2,}/g, "<br/><br/>");
+  html = html.replace(/\n/g, "<br/>");
+
+  return html;
+}
+
 export default function TermsModal({
   isOpen,
   onClose,
@@ -15,7 +54,7 @@ export default function TermsModal({
 }) {
   if (!isOpen) return null;
 
-  /* ------------------ HARD-CODED FANINTERACT TERMS ------------------ */
+  /* ------------------ FANINTERACT TERMS (ALWAYS) ------------------ */
   const fanInteractTerms = `
 # FanInteract Terms & Conditions
 
@@ -55,28 +94,27 @@ Event hosts may add additional venue-specific terms.
 Using this service means you accept these terms.
 `;
 
-  /* ------------------ MERGE SECTIONS ------------------ */
-  const combinedMarkdown = [
-    fanInteractTerms,
-    masterTerms ? `# Master Account Terms\n${masterTerms}` : "",
-    hostTerms ? `# Host Venue Terms\n${hostTerms}` : ""
-  ]
-    .filter(Boolean)
-    .join("\n\n---\n\n");
+  /* ------------------ BUILD SECTIONS (GUARANTEED) ------------------ */
+  const sections: string[] = [];
 
-  /* ------------------ SUPER BASIC MARKDOWN PARSER ------------------ */
-  function markdownToHtml(md: string) {
-    return md
-      .replace(/^### (.*$)/gim, "<h3>$1</h3>")
-      .replace(/^## (.*$)/gim, "<h2>$1</h2>")
-      .replace(/^# (.*$)/gim, "<h1>$1</h1>")
-      .replace(/\*\*(.*?)\*\*/gim, "<strong>$1</strong>")
-      .replace(/\*(.*?)\*/gim, "<em>$1</em>")
-      .replace(/__(.*?)__/gim, "<u>$1</u>")
-      .replace(/- (.*)/gim, "<li>$1</li>")
-      .replace(/\n{2,}/g, "<br/><br/>");
+  // Always include FanInteract
+  sections.push(fanInteractTerms.trim());
+
+  // Include Master terms if real content
+  if (hasContent(masterTerms)) {
+    sections.push(
+      `# FanInteract Master Account Terms\n\n${String(masterTerms).trim()}`
+    );
   }
 
+  // Include Host terms if real content
+  if (hasContent(hostTerms)) {
+    sections.push(
+      `# Venue / Host Terms\n\n${String(hostTerms).trim()}`
+    );
+  }
+
+  const combinedMarkdown = sections.join("\n\n---\n\n");
   const html = markdownToHtml(combinedMarkdown);
 
   return (
