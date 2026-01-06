@@ -94,9 +94,9 @@ const LEADER_UI = {
 /* QUESTION FONT AUTOFIT                                */
 /* ---------------------------------------------------- */
 const QUESTION_FONT_SIZES = [
-  "clamp(2.4rem,3.5vw,4.5rem)", // default / largest
-  "clamp(2.0rem,2.9vw,3.7rem)", // medium
-  "clamp(1.7rem,2.4vw,3.1rem)", // smallest
+  "clamp(2.4rem,3.5vw,4.5rem)",
+  "clamp(2.0rem,2.9vw,3.7rem)",
+  "clamp(1.7rem,2.4vw,3.1rem)",
 ];
 
 /* ---------------------------------------------------- */
@@ -107,21 +107,16 @@ const fallbackLogo = "/faninteractlogo.png";
 /* ---------------------------------------------------- */
 /* PHASE DURATIONS (WALL AUTHORITY)                     */
 /* ---------------------------------------------------- */
-const OVERLAY_MS = 5000; // "THE ANSWER IS"
-const REVEAL_MS = 8000; // show correct answer
-const LEADERBOARD_MS = 8000; // leaderboard display
-
-// how often to update the bar on WALL (ms)
+const OVERLAY_MS = 5000;
+const REVEAL_MS = 8000;
+const LEADERBOARD_MS = 8000;
 const WALL_TIMER_STEP_MS = 30;
-
-/* ✅ EXTRA TIME FOR FIRST QUESTION ONLY (visual + lock) */
 const FIRST_QUESTION_EXTRA_MS = 8000;
 
 /* ---------------------------------------------------- */
 /* STREAK FLAME VIDEO                                   */
 /* ---------------------------------------------------- */
-// 🔥 put your .webm in /public, e.g. /public/streak-flames.webm
-const STREAK_FLAME_SRC = "/streak-flames.webm";
+const STREAK_FLAME_SRC = "/streak-flames.mp4";
 
 /* ---------------------------------------------------- */
 /* HELPERS                                              */
@@ -148,11 +143,8 @@ function formatDisplayName(display?: string) {
 function pickSelfieUrl(guest: any): string | null {
   return (
     guest?.selfie_url ||
-    guest?.photo_url ||
     guest?.avatar_url ||
     guest?.image_url ||
-    guest?.selfie ||
-    guest?.photo ||
     guest?.profile_photo_url ||
     null
   );
@@ -161,16 +153,13 @@ function pickSelfieUrl(guest: any): string | null {
 function pickPublicName(row: any): string {
   const pn = String(row?.public_name || "").trim();
   if (pn) return pn;
-
-  // backward compat if older data uses `title`
   const t = String(row?.title || "").trim();
   if (t) return t;
-
   return "Trivia Game";
 }
 
 /* ---------------------------------------------------------
-   ✅ Highlight The Herd flag reader (supports either column name)
+   Highlight The Herd flag reader
 --------------------------------------------------------- */
 function readHerdEnabled(row: any): boolean {
   if (typeof row?.highlight_the_herd_enabled !== "undefined") {
@@ -179,7 +168,6 @@ function readHerdEnabled(row: any): boolean {
   if (typeof row?.herd_highlight_enabled !== "undefined") {
     return !!row.herd_highlight_enabled;
   }
-  // tolerate a few other shapes
   if (typeof row?.highlightTheHerdEnabled !== "undefined") {
     return !!row.highlightTheHerdEnabled;
   }
@@ -213,7 +201,6 @@ function sameLeaderRows(a: LeaderRow[], b: LeaderRow[]) {
       a[i].points !== b[i].points ||
       a[i].name !== b[i].name ||
       (a[i].selfieUrl || "") !== (b[i].selfieUrl || "") ||
-      // ✅ also compare streaks to trigger updates when streaks change
       (a[i].currentStreak ?? 0) !== (b[i].currentStreak ?? 0) ||
       (a[i].bestStreak ?? 0) !== (b[i].bestStreak ?? 0)
     ) {
@@ -223,9 +210,6 @@ function sameLeaderRows(a: LeaderRow[], b: LeaderRow[]) {
   return true;
 }
 
-/**
- * ✅ FIX FOR “Q1 then jumps to Q4/Q8”
- */
 type QuestionOrderMode = "question_number" | "round_number" | "created_at";
 
 function normalizeQuestions(qsRaw: any[]): {
@@ -303,23 +287,20 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
   const brightness = trivia?.background_brightness ?? 100;
 
   /* -------------------------------------------------- */
-  /* ✅ LIVE CARD STATUS (PAUSE/RESUME SUPPORT)          */
+  /* LIVE CARD STATUS                                   */
   /* -------------------------------------------------- */
   const [cardStatus, setCardStatus] = useState<string>(trivia?.status || "idle");
   const [cardCountdownActive, setCardCountdownActive] = useState<boolean>(
     !!trivia?.countdown_active
   );
 
-  // ✅ card-level progressive wrong removal toggle
   const [progressiveWrongRemovalEnabled, setProgressiveWrongRemovalEnabled] =
     useState<boolean>(!!trivia?.progressive_wrong_removal_enabled);
 
-  // ✅ PATCH: herd highlight MUST be wall state (supports both column names)
   const [herdHighlightEnabled, setHerdHighlightEnabled] = useState<boolean>(
     readHerdEnabled(trivia)
   );
 
-  // ✅ Track which DB column exists so we don’t spam errors
   const herdFlagColRef = useRef<
     "highlight_the_herd_enabled" | "herd_highlight_enabled" | null
   >(null);
@@ -331,7 +312,6 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
       !!trivia?.progressive_wrong_removal_enabled
     );
 
-    // ✅ sync herd from prop if either column exists
     if (
       typeof (trivia as any)?.highlight_the_herd_enabled !== "undefined" ||
       typeof (trivia as any)?.herd_highlight_enabled !== "undefined"
@@ -350,9 +330,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
   useEffect(() => {
     if (!trivia?.id) return;
 
-    // reset column knowledge on card change
     herdFlagColRef.current = null;
-
     let alive = true;
 
     const baseCols =
@@ -370,9 +348,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
     const isMissingColumnError = (err: any, colName: string) => {
       const code = String(err?.code || "");
       const msg = String(err?.message || "").toLowerCase();
-      // Postgres: undefined_column is 42703
       if (code === "42703") return true;
-      // supabase sometimes returns "column <x> does not exist"
       if (msg.includes("does not exist") && msg.includes(colName.toLowerCase()))
         return true;
       return false;
@@ -381,26 +357,22 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
     const poll = async () => {
       let res: any;
 
-      // If we already know which column exists, use it
       if (herdFlagColRef.current === "highlight_the_herd_enabled") {
         res = await trySelect("highlight_the_herd_enabled");
       } else if (herdFlagColRef.current === "herd_highlight_enabled") {
         res = await trySelect("herd_highlight_enabled");
       } else {
-        // Prefer highlight_the_herd_enabled first
         res = await trySelect("highlight_the_herd_enabled");
 
         if (
           res?.error &&
           isMissingColumnError(res.error, "highlight_the_herd_enabled")
         ) {
-          // fallback to herd_highlight_enabled
           res = await trySelect("herd_highlight_enabled");
           if (!res?.error) herdFlagColRef.current = "herd_highlight_enabled";
         } else if (!res?.error) {
           herdFlagColRef.current = "highlight_the_herd_enabled";
         } else {
-          // Some other error; don't flip modes, just bail
           return;
         }
       }
@@ -415,8 +387,6 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
       setProgressiveWrongRemovalEnabled(
         !!(data as any).progressive_wrong_removal_enabled
       );
-
-      // ✅ Read herd from whichever col we got back
       setHerdHighlightEnabled(readHerdEnabled(data));
     };
 
@@ -440,7 +410,6 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
     null
   );
 
-  // ✅ session + wall authority
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [sessionStatus, setSessionStatus] = useState<string | null>(null);
 
@@ -467,7 +436,6 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
 
   const timerSeconds: number = trivia?.timer_seconds ?? 30;
 
-  // ✅ Title (PUBLIC NAME) + live updates
   const [publicName, setPublicName] = useState<string>(() =>
     pickPublicName(trivia)
   );
@@ -498,14 +466,12 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
           if (typeof next.countdown_active === "boolean")
             setCardCountdownActive(!!next.countdown_active);
 
-          // ✅ progressive wrong-removal toggle can change live
           if (typeof next.progressive_wrong_removal_enabled !== "undefined") {
             setProgressiveWrongRemovalEnabled(
               !!next.progressive_wrong_removal_enabled
             );
           }
 
-          // ✅ PATCH: herd toggle can change live (supports both column names)
           if (
             typeof (next as any).highlight_the_herd_enabled !== "undefined" ||
             typeof (next as any).herd_highlight_enabled !== "undefined"
@@ -522,7 +488,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
   }, [trivia?.id]);
 
   /* -------------------------------------------------- */
-  /* ✅ SERVER CLOCK OFFSET                              */
+  /* SERVER CLOCK OFFSET                                */
   /* -------------------------------------------------- */
   const serverOffsetRef = useRef(0);
 
@@ -557,7 +523,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
   }, []);
 
   /* -------------------------------------------------- */
-  /* ✅ Phase writer (idempotent + guarded)               */
+  /* Phase writer                                       */
   /* -------------------------------------------------- */
   const phaseWriteLockRef = useRef(false);
 
@@ -597,7 +563,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
   }
 
   /* -------------------------------------------------- */
-  /* ✅ CRITICAL FIX: Atomic, guarded “advance question”  */
+  /* Advance question                                   */
   /* -------------------------------------------------- */
   const advanceWriteLockRef = useRef(false);
 
@@ -635,7 +601,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
   }
 
   /* -------------------------------------------------- */
-  /* ✅ Poll session                                     */
+  /* Poll session                                       */
   /* -------------------------------------------------- */
   useEffect(() => {
     if (!trivia?.id) return;
@@ -687,7 +653,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
       setWallPhaseStartedAt(session.wall_phase_started_at ?? null);
 
       if (!session.wall_phase) {
-        setWallPhaseAuthoritative("question", undefined);
+        setWallPhaseAuthoritative("question");
       }
 
       const { data: qsRaw, error: qErr } = await supabase
@@ -728,7 +694,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
   }, [trivia?.id]);
 
   /* -------------------------------------------------- */
-  /* ✅ Derived runtime flags                             */
+  /* Derived flags                                      */
   /* -------------------------------------------------- */
   const isPaused = cardStatus === "paused" || sessionStatus === "paused";
   const isActiveGame =
@@ -740,15 +706,12 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
       ? currentQuestionNumber >= totalQuestions
       : false;
 
-  /* -------------------------------------------------- */
-  /* ✅ Reset question font when question changes         */
-  /* -------------------------------------------------- */
   useEffect(() => {
     setQuestionFontMode(0);
   }, [currentQuestionNumber, trivia?.id]);
 
   /* -------------------------------------------------- */
-  /* ✅ Auto-fit question text to ~4 lines                */
+  /* Auto-fit question text                             */
   /* -------------------------------------------------- */
   useEffect(() => {
     const el = questionRef.current;
@@ -763,7 +726,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
           ? lineHeightRaw
           : fontSizePx * 1.2;
 
-      const maxHeight = lineHeightPx * 4; // target: 4 lines
+      const maxHeight = lineHeightPx * 4;
       const actual = el.scrollHeight;
 
       const maxMode = QUESTION_FONT_SIZES.length - 1;
@@ -782,7 +745,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
   }, [question?.question_text, view, questionFontMode]);
 
   /* -------------------------------------------------- */
-  /* ✅ UI follows wall_phase ONLY                        */
+  /* UI follows wall_phase                              */
   /* -------------------------------------------------- */
   useEffect(() => {
     if (wallPhase === "leaderboard") setView("leaderboard");
@@ -797,7 +760,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
   }, [wallPhase, isPaused]);
 
   /* -------------------------------------------------- */
-  /* ✅ QUESTION TIMER                                    */
+  /* QUESTION TIMER                                     */
   /* -------------------------------------------------- */
   useEffect(() => {
     let intervalId: number | null = null;
@@ -877,7 +840,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
   ]);
 
   /* -------------------------------------------------- */
-  /* ✅ PHASE MACHINE                                     */
+  /* PHASE MACHINE                                      */
   /* -------------------------------------------------- */
   const phaseTickLockRef = useRef(false);
 
@@ -918,7 +881,6 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
             await setWallPhaseAuthoritative("podium", "leaderboard");
             return;
           }
-
           await advanceQuestionAuthoritative();
           return;
         }
@@ -945,7 +907,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
   ]);
 
   /* -------------------------------------------------- */
-  /* TOP 3 RANKINGS                                      */
+  /* TOP 3 RANKINGS                                     */
   /* -------------------------------------------------- */
   useEffect(() => {
     if (!trivia?.id) return;
@@ -1031,7 +993,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
         const { data: guests, error: guestsErr } = await supabase
           .from("guest_profiles")
           .select(
-            "id,first_name,last_name,photo_url,selfie_url,avatar_url,image_url,profile_photo_url"
+            "id,first_name,last_name,selfie_url,avatar_url,image_url,profile_photo_url"
           )
           .in("id", guestIds);
 
@@ -1097,7 +1059,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
   }, [trivia?.id, isActiveGame, sessionId]);
 
   /* -------------------------------------------------- */
-  /* FULL LEADERBOARD LOADER                             */
+  /* FULL LEADERBOARD LOADER                            */
   /* -------------------------------------------------- */
   useEffect(() => {
     if (!trivia?.id) return;
@@ -1130,7 +1092,6 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
       const { data: players, error: playersErr } = await supabase
         .from("trivia_players")
         .select(
-          // ✅ include streak columns
           "id,status,guest_id,display_name,photo_url,current_streak,best_streak"
         )
         .eq("session_id", session.id)
@@ -1174,7 +1135,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
         const { data: guests, error: guestsErr } = await supabase
           .from("guest_profiles")
           .select(
-            "id,first_name,last_name,photo_url,selfie_url,avatar_url,image_url,profile_photo_url"
+            "id,first_name,last_name,selfie_url,avatar_url,image_url,profile_photo_url"
           )
           .in("id", guestIds);
 
@@ -1196,7 +1157,6 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
           const safeName = guest?.name || formatDisplayName(p.display_name);
           const safeSelfie = guest?.selfieUrl || p.photo_url || null;
 
-          // ✅ read streaks from DB, default 0
           const currentStreak =
             typeof p.current_streak === "number" ? p.current_streak : 0;
           const bestStreak =
@@ -1268,34 +1228,28 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
     "rgba(253, 224, 71, 0.9)",
   ];
 
-  // ✅ NEW: progressive wrong removal from hook
   const { removed: removedWrongIndices } = useProgressiveWrongRemoval({
     enabled: progressiveWrongRemovalEnabled,
     questionId: question?.id ?? null,
     optionsLen: options.length,
     correctIndex:
       typeof question?.correct_index === "number" ? question.correct_index : null,
-
     wallPhase,
     isRunning: isActiveGame,
     isPaused,
     isSessionOver: sessionStatus === "finished",
     revealAnswer,
-
     progressRemaining01: progress,
   });
 
-  // ✅ NEW: herd highlight (returns “42% (17 votes)” labels)
   const herd = useHerdHighlight({
     enabled: herdHighlightEnabled,
     sessionId,
     questionId: question?.id ?? null,
     optionsLen: options.length,
-
     active: isActiveGame && wallPhase === "question",
     paused: isPaused,
     revealAnswer,
-
     removed: removedWrongIndices,
     pollMs: 600,
   });
@@ -1572,7 +1526,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                         </div>
                       </div>
 
-                      {/* ✅ ANSWERS (MODULAR) */}
+                      {/* ANSWERS */}
                       <AnswerGrid
                         options={options}
                         correctIndex={
@@ -1736,20 +1690,14 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                                 }}
                               />
 
-                              {isTop3 && <div className="fi-row-sheen" />}
-
-                              {/* 🔥 Streak flames along inside left edge (forced above glass) */}
+                              {/* 🔥 FULL-ROW FLAME BACKGROUND WHEN ON STREAK */}
                               {onStreak && (
                                 <div
                                   style={{
                                     position: "absolute",
-                                    top: "-20%",
-                                    bottom: "-20%",
-                                    left: -18,
-                                    width: 110,
-                                    zIndex: 5, // above glass & sheen
+                                    inset: 0,
+                                    zIndex: 1,
                                     pointerEvents: "none",
-                                    overflow: "hidden",
                                   }}
                                 >
                                   <video
@@ -1758,17 +1706,26 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                                     loop
                                     muted
                                     playsInline
+                                    onError={(e) => {
+                                      console.error(
+                                        "🔥 streak-flames video error (row)",
+                                        e
+                                      );
+                                    }}
                                     style={{
                                       width: "100%",
                                       height: "100%",
                                       objectFit: "cover",
+                                      opacity: 0.85,
                                       mixBlendMode: "screen",
                                       filter:
-                                        "drop-shadow(0 0 18px rgba(255,140,0,0.9))",
+                                        "drop-shadow(0 0 24px rgba(255,140,0,0.85))",
                                     }}
                                   />
                                 </div>
                               )}
+
+                              {isTop3 && <div className="fi-row-sheen" />}
 
                               <div
                                 style={{
@@ -1776,7 +1733,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                                   alignItems: "center",
                                   gap: 18,
                                   position: "relative",
-                                  zIndex: 2,
+                                  zIndex: 3,
                                 }}
                               >
                                 <div
@@ -1860,11 +1817,11 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                                 </div>
                               </div>
 
-                              {/* ✅ Points + streak pill (inline: fire left of points) */}
+                              {/* Points + streak pill */}
                               <div
                                 style={{
                                   position: "relative",
-                                  zIndex: 2,
+                                  zIndex: 3,
                                   display: "flex",
                                   flexDirection: "row",
                                   alignItems: "center",
@@ -1872,31 +1829,73 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                                   textAlign: "right",
                                 }}
                               >
-                                {(r.currentStreak ?? 0) > 1 && (
-                                  <div
-                                    style={{
-                                      fontSize:
-                                        "clamp(0.95rem,1.4vw,1.6rem)",
-                                      fontWeight: 700,
-                                      padding: "4px 10px",
-                                      borderRadius: 999,
-                                      background: "rgba(0,0,0,0.45)",
-                                      border:
-                                        "1px solid rgba(255,255,255,0.25)",
-                                      color:
-                                        "rgba(255,255,255,0.96)",
-                                      textShadow:
-                                        "0 6px 16px rgba(0,0,0,0.7)",
-                                      display: "inline-flex",
-                                      alignItems: "center",
-                                      gap: 6,
-                                      whiteSpace: "nowrap",
-                                    }}
-                                  >
-                                    <span>🔥</span>
-                                    <span>{r.currentStreak} in a row</span>
-                                  </div>
-                                )}
+                                {(() => {
+                                  const s = r.currentStreak ?? 0;
+                                  if (s < 2) return null;
+
+                                  const bonusPercent =
+                                    s >= 6
+                                      ? 50
+                                      : s === 5
+                                      ? 40
+                                      : s === 4
+                                      ? 30
+                                      : s === 3
+                                      ? 20
+                                      : 10; // s === 2
+
+                                  const isOnFire = s >= 3;
+
+                                  return (
+                                    <div
+                                      style={{
+                                        fontSize:
+                                          "clamp(0.95rem,1.4vw,1.6rem)",
+                                        fontWeight: 700,
+                                        padding: "4px 18px",
+                                        borderRadius: 999,
+                                        background: "rgba(0,0,0,0.75)",
+                                        border:
+                                          "1px solid rgba(255,255,255,0.28)",
+                                        color:
+                                          "rgba(255,255,255,0.98)",
+                                        textShadow:
+                                          "0 6px 16px rgba(0,0,0,0.9)",
+                                        display: "inline-flex",
+                                        alignItems: "center",
+                                        gap: 10,
+                                        whiteSpace: "nowrap",
+                                        flexShrink: 0,
+                                      }}
+                                    >
+                                      <span>🔥</span>
+
+                                      {isOnFire && (
+                                        <span
+                                          style={{
+                                            fontWeight: 900,
+                                            textTransform: "uppercase",
+                                            letterSpacing: "0.12em",
+                                            textShadow: `
+                                              -1px -1px 0 rgba(0,0,0,1),
+                                               1px -1px 0 rgba(0,0,0,1),
+                                              -1px  1px 0 rgba(0,0,0,1),
+                                               1px  1px 0 rgba(0,0,0,1),
+                                               0    0   10px rgba(248,113,113,1)
+                                            `,
+                                            fontSize: "0.9em",
+                                          }}
+                                        >
+                                          On Fire
+                                        </span>
+                                      )}
+
+                                      <span>
+                                        {s} in a row · {bonusPercent}% bonus
+                                      </span>
+                                    </div>
+                                  );
+                                })()}
 
                                 <div
                                   style={{
@@ -1978,7 +1977,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
             </div>
           )}
 
-          {/* TOP 3 LEADERS */}
+          {/* TOP 3 LEADERS (question view) */}
           {view === "question" && !isFinalQuestion && (
             <div
               style={{
@@ -2177,21 +2176,6 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
           }
         }
 
-        @keyframes fiCorrectPulse {
-          0% {
-            transform: scale(1.04);
-            filter: saturate(1) brightness(1);
-          }
-          50% {
-            transform: scale(1.06);
-            filter: saturate(1.08) brightness(1.06);
-          }
-          100% {
-            transform: scale(1.04);
-            filter: saturate(1) brightness(1);
-          }
-        }
-
         .fi-row-sheen {
           position: absolute;
           inset: 0;
@@ -2206,7 +2190,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
           transform: translateX(-120%);
           animation: fiRowSheen 2.4s ease-in-out infinite;
           mix-blend-mode: screen;
-          z-index: 1; /* below flames (z=5) and text (z=2) */
+          z-index: 2;
         }
         @keyframes fiRowSheen {
           0% { transform: translateX(-120%); }
