@@ -994,8 +994,8 @@ export default function TriviaCard({
      STOP TRIVIA
      - Go back to Inactive wall
      - KEEP PLAYERS (same session id)
-     - CLEAR ANSWERS → reset points & streaks to zero
-     - Do NOT touch trivia_sessions.status (avoids enum/RLS issues)
+     - CLEAR ANSWERS → reset scoreboard
+     - RESET trivia_players.score/current_streak/best_streak to 0
   ------------------------------------------------------------ */
   async function handleStopTrivia() {
     // cancel any pending auto-start
@@ -1014,7 +1014,7 @@ export default function TriviaCard({
       .limit(1)
       .maybeSingle();
 
-    // 2) If we have a session, clear all answers → reset scoreboard & streaks
+    // 2) If we have a session, clear all answers + reset player stats
     if (!sessionErr && session?.id) {
       const { data: players, error: playersErr } = await supabase
         .from("trivia_players")
@@ -1024,6 +1024,7 @@ export default function TriviaCard({
       if (!playersErr && players && players.length) {
         const playerIds = players.map((p: any) => p.id).filter(Boolean);
 
+        // 2a. Delete all answers → wipes points that leaderboard uses
         if (playerIds.length > 0) {
           const { error: delErr } = await supabase
             .from("trivia_answers")
@@ -1034,14 +1035,24 @@ export default function TriviaCard({
             console.error("❌ stop: delete trivia_answers error:", delErr);
           }
         }
-      }
 
-      // NOTE:
-      // We deliberately do NOT update trivia_sessions.status here.
-      // Your DB enum/constraints likely don't allow "stopped",
-      // which is why you were seeing an empty {} error.
-      // If later you decide to use status="finished" here,
-      // make sure it matches your enum and dashboard logic.
+        // 2b. Reset per-player stats on trivia_players
+        const { error: resetPlayersErr } = await supabase
+          .from("trivia_players")
+          .update({
+            score: 0,
+            current_streak: 0,
+            best_streak: 0,
+          })
+          .eq("session_id", session.id);
+
+        if (resetPlayersErr) {
+          console.error(
+            "❌ stop: reset trivia_players score/streak error:",
+            resetPlayersErr
+          );
+        }
+      }
     }
 
     // 3) Flip card back to inactive (and stop any countdowns)
