@@ -318,8 +318,11 @@ const FALLBACK_BG =
 // ✅ Extra visual/lock grace period for FIRST question only (ms)
 const FIRST_QUESTION_EXTRA_MS = 8000;
 
+// 🔥 Fire video for streaks (UPDATE this path to your real asset)
+const STREAK_FIRE_VIDEO = "/videos/fi-streak-fire.mp4";
+
 /* ---------------------------------------------------------
-   ✅ Effective question start (fixes Q1 scoring)
+   ✅ Effective question start (for TIMER only, not scoring)
 --------------------------------------------------------- */
 function getEffectiveQuestionStartMs(args: {
   questionStartedAt: string | null;
@@ -351,7 +354,7 @@ function getEffectiveQuestionStartMs(args: {
     }
   }
 
-  // Apply your extra Q1 grace
+  // Apply your extra Q1 grace (visual only)
   if (currentQuestionNumber === 1) {
     startMs += FIRST_QUESTION_EXTRA_MS;
   }
@@ -427,6 +430,9 @@ export default function TriviaUserInterfacePage() {
   // ✅ PATCH: leaderboard flicker guard
   const lastLeaderRowsRef = useRef<LeaderRow[]>([]);
   const leaderScrollRef = useRef<HTMLDivElement | null>(null);
+
+  // ✅ PLAYER STREAK (for fire video + chip)
+  const [playerStreak, setPlayerStreak] = useState<number>(0);
 
   /* ---------------------------------------------------------
      ✅ FLAGS (from hook) — single source of truth
@@ -931,7 +937,7 @@ export default function TriviaUserInterfacePage() {
   }, [currentQuestion?.id, timerSeconds]);
 
   /* ---------------------------------------------------------
-     TIMER (patched: uses effective start so Q1 doesn't burn time)
+     TIMER (visual, uses effective start)
   --------------------------------------------------------- */
   useEffect(() => {
     if (timerIntervalRef.current !== null) {
@@ -971,9 +977,7 @@ export default function TriviaUserInterfacePage() {
         };
       }
 
-      // If effective start is in the future (countdown/grace), elapsed = 0
       const effectiveElapsed = Math.max(0, nowMs - effectiveStartMs);
-
       const remainingMs = Math.max(0, durationMs - effectiveElapsed);
       const frac = durationMs > 0 ? remainingMs / durationMs : 0;
 
@@ -1309,6 +1313,43 @@ export default function TriviaUserInterfacePage() {
   }, [session?.id, wallPhase, questions]);
 
   /* ---------------------------------------------------------
+     ✅ PLAYER STREAK POLLING (realtime streak + fire video)
+  --------------------------------------------------------- */
+  useEffect(() => {
+    if (!playerId || !streakMultiplierEnabled || !questions.length) {
+      setPlayerStreak(0);
+      return;
+    }
+
+    let cancelled = false;
+
+    async function pollStreak() {
+      const { data, error } = await supabase
+        .from("trivia_answers")
+        .select("question_id,is_correct")
+        .eq("player_id", playerId);
+
+      if (cancelled || error || !data) return;
+
+      const streak = computeStreakEndingAtLatestAnswered({
+        answers: data as any,
+        questions,
+      });
+
+      setPlayerStreak(streak);
+    }
+
+    // initial fetch + interval
+    pollStreak();
+    const id = window.setInterval(pollStreak, 2000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [playerId, streakMultiplierEnabled, questions]);
+
+  /* ---------------------------------------------------------
      ✅ Auto-scroll leaderboard down then back up
   --------------------------------------------------------- */
   useEffect(() => {
@@ -1393,34 +1434,47 @@ export default function TriviaUserInterfacePage() {
 
     const isCorrect = idx === currentQuestion.correct_index;
 
-    // --- base points (time-based)
+    // --- base points (time-based, NO extra 8s grace)
     const basePoints = isCorrect
       ? (() => {
           const nowMs = Date.now() + serverOffsetMs;
 
-          const effectiveStartMs =
-            getEffectiveQuestionStartMs({
-              questionStartedAt,
-              currentQuestionNumber: session?.current_question ?? null,
-              countdownStartedAt,
-              countdownSeconds,
-            }) ?? nowMs;
+          // Start from the DB-stamped question_started_at
+          let startMs: number;
+          if (questionStartedAt) {
+            const base = new Date(questionStartedAt).getTime();
+            startMs = Number.isFinite(base) ? base : nowMs;
+          } else {
+            startMs = nowMs;
+          }
 
-          // clamp: if user answers during countdown/grace, treat elapsed as 0
-          const safeNowMs = Math.max(nowMs, effectiveStartMs);
+          // For question 1, if we know when the countdown started,
+          // shift scoring start to the *end* of the countdown ONLY.
+          if ((session?.current_question ?? null) === 1 && countdownStartedAt) {
+            const cStart = new Date(countdownStartedAt).getTime();
+            if (Number.isFinite(cStart)) {
+              const cSecs =
+                typeof countdownSeconds === "number" ? countdownSeconds : 10;
+              const countdownEnd = cStart + cSecs * 1000;
+              startMs = Math.max(startMs, countdownEnd);
+            }
+          }
+
+          const startIso = new Date(startMs).toISOString();
 
           try {
             return computeTriviaPoints({
               scoringMode,
               timerSeconds,
-              questionStartedAt: new Date(effectiveStartMs).toISOString(),
-              nowMs: safeNowMs,
+              questionStartedAt: startIso,
+              nowMs,
             } as any);
           } catch {
+            // fallback if computeTriviaPoints signature changes
             return computeTriviaPoints({
               scoringMode,
               timerSeconds,
-              questionStartedAt: new Date(effectiveStartMs).toISOString(),
+              questionStartedAt: startIso,
             } as any);
           }
         })()
@@ -1428,6 +1482,7 @@ export default function TriviaUserInterfacePage() {
 
     // --- streak bonus (optional)
     let bonusPct = 0;
+    let streakAfter = 0;
 
     if (streakMultiplierEnabled && isCorrect) {
       const { data: prev, error: prevErr } = await supabase
@@ -1442,9 +1497,15 @@ export default function TriviaUserInterfacePage() {
           currentQuestionIndex,
         });
 
-        const streakAfter = streakBefore + 1;
+        streakAfter = streakBefore + 1;
         bonusPct = streakBonusPct(streakAfter);
+
+        // ✅ Instant UI update for streak on phone
+        setPlayerStreak(streakAfter);
       }
+    } else if (!isCorrect && streakMultiplierEnabled) {
+      // Wrong answer breaks streak immediately on UI
+      setPlayerStreak(0);
     }
 
     const points = isCorrect ? Math.round(basePoints * (1 + bonusPct)) : 0;
@@ -1581,6 +1642,10 @@ export default function TriviaUserInterfacePage() {
     !isCountdownRunning &&
     !isSessionOver;
 
+  // 🔥 Fire streak logic (streak >= 3 lights the video)
+  const hasFireStreak =
+    streakMultiplierEnabled && typeof playerStreak === "number" && playerStreak >= 3;
+
   return (
     <>
       <div
@@ -1596,7 +1661,13 @@ export default function TriviaUserInterfacePage() {
         }}
       >
         {/* HEADER ROW */}
-        <div style={{ display: "flex", alignItems: "center", marginBottom: 12 }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            marginBottom: 12,
+          }}
+        >
           <div
             style={{
               width: 44,
@@ -1612,6 +1683,7 @@ export default function TriviaUserInterfacePage() {
               marginRight: 10,
               letterSpacing: 0.5,
               overflow: "hidden",
+              flexShrink: 0,
             }}
           >
             {hostLogoUrl ? (
@@ -1625,7 +1697,14 @@ export default function TriviaUserInterfacePage() {
             )}
           </div>
 
-          <div style={{ display: "flex", flexDirection: "column" }}>
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              flex: 1,
+              minWidth: 0,
+            }}
+          >
             <div
               style={{
                 fontSize: "0.95rem",
@@ -1641,6 +1720,70 @@ export default function TriviaUserInterfacePage() {
                 : `Question ${currentQuestionIndex + 1} of ${questions.length}`}
             </div>
           </div>
+
+          {/* 🔥 STREAK CHIP + FIRE VIDEO (realtime) */}
+          {streakMultiplierEnabled && (
+            <div
+              style={{
+                marginLeft: 10,
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                flexShrink: 0,
+              }}
+            >
+              <div
+                style={{
+                  padding: "4px 10px",
+                  borderRadius: 999,
+                  border: "1px solid rgba(251,191,36,0.85)",
+                  background: "rgba(15,23,42,0.9)",
+                  fontSize: "0.72rem",
+                  fontWeight: 800,
+                  letterSpacing: 0.4,
+                  textTransform: "uppercase",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                }}
+              >
+                <span aria-hidden="true">⭐</span>
+                <span>
+                  {playerStreak >= 2
+                    ? `x${playerStreak} streak`
+                    : "Streak multiplier"}
+                </span>
+              </div>
+
+              {hasFireStreak && STREAK_FIRE_VIDEO && (
+                <div
+                  style={{
+                    width: 42,
+                    height: 42,
+                    borderRadius: 999,
+                    overflow: "hidden",
+                    border: "1px solid rgba(251,191,36,0.9)",
+                    boxShadow: "0 0 16px rgba(251,191,36,0.7)",
+                    background: "rgba(0,0,0,0.5)",
+                    flexShrink: 0,
+                  }}
+                >
+                  <video
+                    src={STREAK_FIRE_VIDEO}
+                    autoPlay
+                    loop
+                    muted
+                    playsInline
+                    style={{
+                      width: "100%",
+                      height: "100%",
+                      objectFit: "cover",
+                    }}
+                  />
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* QUESTION BOX */}

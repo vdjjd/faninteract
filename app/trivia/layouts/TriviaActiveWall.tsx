@@ -268,6 +268,18 @@ function pickQuestionForCurrent(
   return qs[idx] ?? null;
 }
 
+/* ---------------------------------------------------------
+   Streak bonus helper
+--------------------------------------------------------- */
+function getStreakBonusPercent(streak: number): number {
+  if (streak <= 1) return 0;
+  if (streak === 2) return 10;
+  if (streak === 3) return 20;
+  if (streak === 4) return 30;
+  if (streak === 5) return 40;
+  return 50; // 6+ capped at 50%
+}
+
 /* -------------------------------------------------------------------------- */
 /* 🎮 TRIVIA ACTIVE WALL                                                       */
 /* -------------------------------------------------------------------------- */
@@ -301,6 +313,9 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
     readHerdEnabled(trivia)
   );
 
+  const [streakMultiplierEnabled, setStreakMultiplierEnabled] =
+    useState<boolean>(!!trivia?.streak_multiplier_enabled);
+
   const herdFlagColRef = useRef<
     "highlight_the_herd_enabled" | "herd_highlight_enabled" | null
   >(null);
@@ -318,6 +333,10 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
     ) {
       setHerdHighlightEnabled(readHerdEnabled(trivia));
     }
+
+    if (typeof (trivia as any)?.streak_multiplier_enabled !== "undefined") {
+      setStreakMultiplierEnabled(!!(trivia as any).streak_multiplier_enabled);
+    }
   }, [
     trivia?.id,
     trivia?.status,
@@ -325,6 +344,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
     trivia?.progressive_wrong_removal_enabled,
     (trivia as any)?.herd_highlight_enabled,
     (trivia as any)?.highlight_the_herd_enabled,
+    (trivia as any)?.streak_multiplier_enabled,
   ]);
 
   useEffect(() => {
@@ -334,7 +354,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
     let alive = true;
 
     const baseCols =
-      "status,countdown_active,progressive_wrong_removal_enabled";
+      "status,countdown_active,progressive_wrong_removal_enabled,streak_multiplier_enabled";
 
     const trySelect = async (col: string | null) => {
       const cols = col ? `${baseCols},${col}` : baseCols;
@@ -388,6 +408,10 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
         !!(data as any).progressive_wrong_removal_enabled
       );
       setHerdHighlightEnabled(readHerdEnabled(data));
+
+      if (typeof (data as any).streak_multiplier_enabled !== "undefined") {
+        setStreakMultiplierEnabled(!!(data as any).streak_multiplier_enabled);
+      }
     };
 
     poll();
@@ -477,6 +501,10 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
             typeof (next as any).herd_highlight_enabled !== "undefined"
           ) {
             setHerdHighlightEnabled(readHerdEnabled(next));
+          }
+
+          if (typeof (next as any).streak_multiplier_enabled !== "undefined") {
+            setStreakMultiplierEnabled(!!(next as any).streak_multiplier_enabled);
           }
         }
       )
@@ -1655,7 +1683,16 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                       >
                         {leaderRows.slice(0, 10).map((r) => {
                           const isTop3 = r.rank <= 3;
-                          const onStreak = (r.currentStreak ?? 0) >= 3;
+                          const streakCount = r.currentStreak ?? 0;
+                          const streakBonus = getStreakBonusPercent(streakCount);
+
+                          // 🔥 flames only when streak multiplier is ON
+                          const onStreak =
+                            streakMultiplierEnabled && streakCount >= 3;
+
+                          // pill only when streak multiplier is ON
+                          const showStreakPill =
+                            streakMultiplierEnabled && streakCount > 1;
 
                           return (
                             <div
@@ -1722,6 +1759,34 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                                         "drop-shadow(0 0 24px rgba(255,140,0,0.85))",
                                     }}
                                   />
+                                </div>
+                              )}
+
+                              {/* CENTER "ON FIRE" TEXT WHEN 3+ STREAK */}
+                              {onStreak && (
+                                <div
+                                  style={{
+                                    position: "absolute",
+                                    left: "50%",
+                                    top: "50%",
+                                    transform: "translate(-50%, -50%)",
+                                    zIndex: 3,
+                                    pointerEvents: "none",
+                                    textTransform: "uppercase",
+                                    letterSpacing: "0.18em",
+                                    fontWeight: 900,
+                                    fontSize:
+                                      "clamp(1.1rem,1.8vw,2.1rem)",
+                                    color: "#fff",
+                                    textShadow: `
+                                      0 0 3px #000,
+                                      0 0 8px #000,
+                                      0 0 14px rgba(255,140,0,0.9),
+                                      0 0 26px rgba(255,69,0,0.9)
+                                    `,
+                                  }}
+                                >
+                                  ON FIRE
                                 </div>
                               )}
 
@@ -1808,7 +1873,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                                     whiteSpace: "nowrap",
                                     overflow: "hidden",
                                     textOverflow: "ellipsis",
-                                    maxWidth: "65vw",
+                                    maxWidth: "40vw",
                                     textShadow:
                                       "0 10px 30px rgba(0,0,0,0.55)",
                                   }}
@@ -1829,73 +1894,36 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                                   textAlign: "right",
                                 }}
                               >
-                                {(() => {
-                                  const s = r.currentStreak ?? 0;
-                                  if (s < 2) return null;
-
-                                  const bonusPercent =
-                                    s >= 6
-                                      ? 50
-                                      : s === 5
-                                      ? 40
-                                      : s === 4
-                                      ? 30
-                                      : s === 3
-                                      ? 20
-                                      : 10; // s === 2
-
-                                  const isOnFire = s >= 3;
-
-                                  return (
-                                    <div
-                                      style={{
-                                        fontSize:
-                                          "clamp(0.95rem,1.4vw,1.6rem)",
-                                        fontWeight: 700,
-                                        padding: "4px 18px",
-                                        borderRadius: 999,
-                                        background: "rgba(0,0,0,0.75)",
-                                        border:
-                                          "1px solid rgba(255,255,255,0.28)",
-                                        color:
-                                          "rgba(255,255,255,0.98)",
-                                        textShadow:
-                                          "0 6px 16px rgba(0,0,0,0.9)",
-                                        display: "inline-flex",
-                                        alignItems: "center",
-                                        gap: 10,
-                                        whiteSpace: "nowrap",
-                                        flexShrink: 0,
-                                      }}
-                                    >
-                                      <span>🔥</span>
-
-                                      {isOnFire && (
-                                        <span
-                                          style={{
-                                            fontWeight: 900,
-                                            textTransform: "uppercase",
-                                            letterSpacing: "0.12em",
-                                            textShadow: `
-                                              -1px -1px 0 rgba(0,0,0,1),
-                                               1px -1px 0 rgba(0,0,0,1),
-                                              -1px  1px 0 rgba(0,0,0,1),
-                                               1px  1px 0 rgba(0,0,0,1),
-                                               0    0   10px rgba(248,113,113,1)
-                                            `,
-                                            fontSize: "0.9em",
-                                          }}
-                                        >
-                                          On Fire
-                                        </span>
-                                      )}
-
-                                      <span>
-                                        {s} in a row · {bonusPercent}% bonus
-                                      </span>
-                                    </div>
-                                  );
-                                })()}
+                                {showStreakPill && (
+                                  <div
+                                    style={{
+                                      fontSize:
+                                        "clamp(0.95rem,1.4vw,1.6rem)",
+                                      fontWeight: 700,
+                                      padding: "4px 14px",
+                                      borderRadius: 999,
+                                      background: "rgba(0,0,0,0.45)",
+                                      border:
+                                        "1px solid rgba(255,255,255,0.25)",
+                                      color:
+                                        "rgba(255,255,255,0.96)",
+                                      textShadow:
+                                        "0 6px 16px rgba(0,0,0,0.7)",
+                                      display: "inline-flex",
+                                      alignItems: "center",
+                                      gap: 8,
+                                      whiteSpace: "nowrap",
+                                      maxWidth: "320px",
+                                    }}
+                                  >
+                                    <span>🔥</span>
+                                    <span>
+                                      {streakCount} in a row
+                                      {streakBonus > 0 &&
+                                        ` • +${streakBonus}% points`}
+                                    </span>
+                                  </div>
+                                )}
 
                                 <div
                                   style={{
