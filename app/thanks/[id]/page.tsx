@@ -87,7 +87,9 @@ export default function ThankYouPage() {
     typeof window !== "undefined" ? window.location.pathname : "";
 
   const isThanksPath =
-    typeof window !== "undefined" ? window.location.pathname.includes("/thanks/") : false;
+    typeof window !== "undefined"
+      ? window.location.pathname.includes("/thanks/")
+      : false;
 
   // Initial detection from path (non-/thanks routes) + optional ?type override
   const initialType: ThankType = (() => {
@@ -676,25 +678,31 @@ export default function ThankYouPage() {
           <div
             style={{
               marginTop: 18,
-              padding: 14,
+              padding: 16,
               borderRadius: 16,
-              background: "rgba(255,255,255,0.08)",
-              border: "1px solid rgba(255,255,255,0.18)",
+              background: "rgba(255,255,255,0.10)",
+              border: "1px solid rgba(255,255,255,0.20)",
             }}
           >
             <div
               style={{
-                fontSize: "0.85rem",
-                fontWeight: 700,
+                fontSize: "1.05rem",
+                fontWeight: 800,
                 color: "#facc15",
-                marginBottom: 4,
+                marginBottom: 6,
                 textTransform: "uppercase",
-                letterSpacing: 0.5,
+                letterSpacing: 0.7,
               }}
             >
               Special Offer
             </div>
-            <div style={{ fontSize: "0.95rem", color: "#f9fafb" }}>
+            <div
+              style={{
+                fontSize: "1.15rem",
+                lineHeight: 1.35,
+                color: "#f9fafb",
+              }}
+            >
               {wheelPopupText}
             </div>
           </div>
