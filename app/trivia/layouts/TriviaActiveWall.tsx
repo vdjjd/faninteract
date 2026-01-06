@@ -1807,17 +1807,14 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                                 {(r.currentStreak ?? 0) > 1 && (
                                   <div
                                     style={{
-                                      fontSize:
-                                        "clamp(0.95rem,1.4vw,1.6rem)",
+                                      fontSize: "clamp(0.95rem,1.4vw,1.6rem)",
                                       fontWeight: 700,
                                       padding: "4px 10px",
                                       borderRadius: 999,
                                       background: "rgba(0,0,0,0.45)",
-                                      border:
-                                        "1px solid rgba(255,255,255,0.25)",
+                                      border: "1px solid rgba(255,255,255,0.25)",
                                       color: "rgba(255,255,255,0.96)",
-                                      textShadow:
-                                        "0 6px 16px rgba(0,0,0,0.7)",
+                                      textShadow: "0 6px 16px rgba(0,0,0,0.7)",
                                       display: "inline-flex",
                                       alignItems: "center",
                                       gap: 6,
@@ -1831,11 +1828,9 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
 
                                 <div
                                   style={{
-                                    fontSize:
-                                      "clamp(1.6rem,2.6vw,3rem)",
+                                    fontSize: "clamp(1.6rem,2.6vw,3rem)",
                                     fontWeight: 900,
-                                    textShadow:
-                                      "0 10px 30px rgba(0,0,0,0.55)",
+                                    textShadow: "0 10px 30px rgba(0,0,0,0.55)",
                                     minWidth: "3ch",
                                     textAlign: "right",
                                   }}
@@ -2152,3 +2147,4 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
     </>
   );
 }
+
