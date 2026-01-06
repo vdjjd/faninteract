@@ -1684,7 +1684,9 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                         {leaderRows.slice(0, 10).map((r) => {
                           const isTop3 = r.rank <= 3;
                           const streakCount = r.currentStreak ?? 0;
-                          const streakBonus = getStreakBonusPercent(streakCount);
+                          const streakBonus = getStreakBonusPercent(
+                            streakCount
+                          );
 
                           // 🔥 flames only when streak multiplier is ON
                           const onStreak =
@@ -1693,6 +1695,21 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                           // pill only when streak multiplier is ON
                           const showStreakPill =
                             streakMultiplierEnabled && streakCount > 1;
+
+                          // 🟢 Build streak label & dynamic font size
+                          const streakLabel =
+                            streakBonus > 0
+                              ? `${streakCount} in a row • +${streakBonus}% points`
+                              : `${streakCount} in a row`;
+
+                          const labelLen = streakLabel.length;
+                          let pillFontSize =
+                            "clamp(0.95rem,1.4vw,1.6rem)";
+
+                          if (labelLen > 28)
+                            pillFontSize = "clamp(0.85rem,1.3vw,1.4rem)";
+                          if (labelLen > 38)
+                            pillFontSize = "clamp(0.75rem,1.2vw,1.2rem)";
 
                           return (
                             <div
@@ -1892,13 +1909,13 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                                   alignItems: "center",
                                   gap: 10,
                                   textAlign: "right",
+                                  minWidth: 0, // allow pill to shrink
                                 }}
                               >
                                 {showStreakPill && (
                                   <div
                                     style={{
-                                      fontSize:
-                                        "clamp(0.95rem,1.4vw,1.6rem)",
+                                      fontSize: pillFontSize,
                                       fontWeight: 700,
                                       padding: "4px 14px",
                                       borderRadius: 999,
@@ -1913,14 +1930,18 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                                       alignItems: "center",
                                       gap: 8,
                                       whiteSpace: "nowrap",
-                                      maxWidth: "320px",
+                                      maxWidth: "min(38vw, 360px)",
+                                      overflow: "hidden",
                                     }}
                                   >
                                     <span>🔥</span>
-                                    <span>
-                                      {streakCount} in a row
-                                      {streakBonus > 0 &&
-                                        ` • +${streakBonus}% points`}
+                                    <span
+                                      style={{
+                                        display: "inline-block",
+                                        flexShrink: 1,
+                                      }}
+                                    >
+                                      {streakLabel}
                                     </span>
                                   </div>
                                 )}
