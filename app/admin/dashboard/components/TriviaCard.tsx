@@ -91,6 +91,7 @@ export default function TriviaCard({
   const normalizeScoringMode = (raw: any): "flat" | "speed" => {
     const v = String(raw || "").trim();
 
+    // allow legacy/old values to safely map to flat
     if (v === "speed") return "speed";
     if (v === "flat") return "flat";
     if (v === "hundreds" || v === "100s" || v === "100") return "flat";
@@ -135,6 +136,7 @@ export default function TriviaCard({
 
   const [playMode, setPlayMode] = useState<string>(trivia?.play_mode || "auto");
 
+  // ✅ FIX: this must be "flat" | "speed" (NOT "100s")
   const [scoringMode, setScoringMode] = useState<"flat" | "speed">(
     normalizeScoringMode(trivia?.scoring_mode)
   );
@@ -154,6 +156,7 @@ export default function TriviaCard({
   const [streakMultiplierEnabled, setStreakMultiplierEnabled] =
     useState<boolean>(!!trivia?.streak_multiplier_enabled);
 
+  // ✅ points_type in DB is "100s" | "1000s" | "10000s"
   const [pointsType, setPointsType] = useState<string>(
     trivia?.points_type || "100s"
   );
@@ -217,15 +220,20 @@ export default function TriviaCard({
       normalizeCountdownSeconds(trivia?.countdown_seconds ?? 10)
     );
     setPlayMode(trivia?.play_mode || "auto");
+
+    // ✅ FIX: normalize scoring_mode from DB
     setScoringMode(normalizeScoringMode(trivia?.scoring_mode));
+
     setRequireSelfie(trivia?.require_selfie ?? true);
     setAdsEnabled(!!trivia?.ads_enabled);
+
     setProgressiveWrongRemovalEnabled(
       !!trivia?.progressive_wrong_removal_enabled
     );
     setHighlightTheHerdEnabled(!!trivia?.highlight_the_herd_enabled);
     setStreakMultiplierEnabled(!!trivia?.streak_multiplier_enabled);
     setPointsType(trivia?.points_type || "100s");
+
     setCardStatus(trivia?.status);
     setCardCountdownActive(!!trivia?.countdown_active);
   }, [
@@ -271,6 +279,7 @@ export default function TriviaCard({
     const pollCard = async () => {
       if (!trivia?.id) return;
 
+      // ✅ FIX: include scoring_mode + points_type
       const { data, error } = await supabase
         .from("trivia_cards")
         .select(
@@ -303,6 +312,7 @@ export default function TriviaCard({
       setPointsType((data as any).points_type || "100s");
       setScoringMode(normalizeScoringMode((data as any).scoring_mode));
 
+      // keep local trivia object in sync (since you mutate it elsewhere)
       trivia.background_type = data.background_type;
       trivia.background_value = data.background_value;
       trivia.ads_enabled = data.ads_enabled;
@@ -368,6 +378,7 @@ export default function TriviaCard({
     await updateTriviaSettings({ play_mode: value });
   }
 
+  // ✅ FIX: scoring_mode must be "flat" | "speed"
   async function handleScoringModeChange(e: any) {
     const value = normalizeScoringMode(e.target.value);
     setScoringMode(value);
@@ -983,8 +994,9 @@ export default function TriviaCard({
      STOP TRIVIA
      - Go back to Inactive wall
      - KEEP PLAYERS (same session id)
-     - CLEAR ANSWERS → reset scoreboard
-     - NUKE trivia_players.score/current_streak/best_streak → NULL
+     - CLEAR ANSWERS
+     - RESET trivia_players.score/current_streak/best_streak → 0
+     - Mark session as "stopped" for phone UI redirect
   ------------------------------------------------------------ */
   async function handleStopTrivia() {
     // cancel any pending auto-start
@@ -1003,17 +1015,22 @@ export default function TriviaCard({
       .limit(1)
       .maybeSingle();
 
-    // 2) If we have a session, clear all answers + nuke player stats
+    // 2) If we have a session, clear answers + reset player stats + mark stopped
     if (!sessionErr && session?.id) {
+      // Fetch players in this session
       const { data: players, error: playersErr } = await supabase
         .from("trivia_players")
         .select("id")
         .eq("session_id", session.id);
 
+      if (playersErr) {
+        console.error("❌ stop: load trivia_players error:", playersErr);
+      }
+
       if (!playersErr && players && players.length) {
         const playerIds = players.map((p: any) => p.id).filter(Boolean);
 
-        // 2a. Delete all answers (leaderboard points source)
+        // 2a. Delete all answers → nuke leaderboard source
         if (playerIds.length > 0) {
           const { error: delErr } = await supabase
             .from("trivia_answers")
@@ -1025,13 +1042,13 @@ export default function TriviaCard({
           }
         }
 
-        // 2b. NUKE SCORE / STREAKS => NULL
+        // 2b. Reset each player's score + streaks in this session to ZERO
         const { error: resetPlayersErr } = await supabase
           .from("trivia_players")
           .update({
-            score: null,
-            current_streak: null,
-            best_streak: null,
+            score: 0,
+            current_streak: 0,
+            best_streak: 0,
           })
           .eq("session_id", session.id);
 
@@ -1041,6 +1058,19 @@ export default function TriviaCard({
             resetPlayersErr
           );
         }
+      }
+
+      // 2c. Mark session as stopped so phones redirect to /thanks
+      const { error: sessUpErr } = await supabase
+        .from("trivia_sessions")
+        .update({
+          status: "stopped",
+          paused_at: null,
+        })
+        .eq("id", session.id);
+
+      if (sessUpErr) {
+        console.error("❌ stop: update trivia_sessions error:", sessUpErr);
       }
     }
 
@@ -1315,7 +1345,8 @@ export default function TriviaCard({
                 <p className={cn("text-xs", "opacity-75")}>Players</p>
                 <p className={cn("text-lg", "font-bold")}>{participantsCount}</p>
                 <p className={cn("text-[0.7rem]", "opacity-75", "mt-1")}>
-                  Active: <span className="font-semibold">{activePlayersCount}</span>
+                  Active:{" "}
+                  <span className="font-semibold">{activePlayersCount}</span>
                 </p>
               </div>
 
