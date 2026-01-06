@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Image from "next/image";
 import { motion } from "framer-motion";
@@ -116,8 +116,7 @@ export default function GuestSignupPage() {
   const basketballId = params.get("basketball");
   const triviaQueryId = params.get("trivia"); // may be null
 
-  // We do NOT trust host= as primary source (tamperable).
-  // Keep as LAST-RESORT only if you still have legacy QRs.
+  // Legacy-only fallback. Ideally remove once all QRs carry wall/poll/etc.
   const hostParam = params.get("host");
 
   const rawType = params.get("type");
@@ -140,7 +139,6 @@ export default function GuestSignupPage() {
   /* ------------------------------------------------- */
   const [bgCss, setBgCss] = useState<string | null>(null);
 
-  // Host UUID that must go into guest_profiles.host_id
   const [hostIdFromContext, setHostIdFromContext] = useState<string | null>(null);
   const [hostSettings, setHostSettings] = useState<any | null>(null);
   const [loadingHost, setLoadingHost] = useState(true);
@@ -263,7 +261,7 @@ export default function GuestSignupPage() {
           foundBgCss = cssBg;
         }
 
-        // 2) Prize Wheel (background_type + background_value) ✅ from your schema
+        // 2) Prize Wheel (background_type + background_value) ✅
         if (!foundHostId && wheelId) {
           const { data, error } = await supabase
             .from("prize_wheels")
@@ -279,7 +277,7 @@ export default function GuestSignupPage() {
           }
         }
 
-        // 3) Poll (tries background_value if it exists; otherwise host_id only)
+        // 3) Poll (tries background_value if exists; otherwise host only)
         if (!foundHostId && pollId) {
           const { host_id, cssBg } = await fetchHostAndBgFromStandardTable(
             supabase,
@@ -291,7 +289,7 @@ export default function GuestSignupPage() {
           foundBgCss = cssBg ?? foundBgCss;
         }
 
-        // 4) Basketball (tries background_value if it exists; otherwise host_id only)
+        // 4) Basketball (tries background_value if exists; otherwise host only)
         if (!foundHostId && basketballId) {
           const { host_id, cssBg } = await fetchHostAndBgFromStandardTable(
             supabase,
@@ -303,7 +301,7 @@ export default function GuestSignupPage() {
           foundBgCss = cssBg ?? foundBgCss;
         }
 
-        // 5) Trivia (background_value on trivia_cards)
+        // 5) Trivia (background_value)
         if (!foundHostId && triviaId) {
           const { host_id, cssBg } = await fetchHostAndBgFromStandardTable(
             supabase,
@@ -315,15 +313,13 @@ export default function GuestSignupPage() {
           foundBgCss = cssBg ?? foundBgCss;
         }
 
-        // LAST RESORT (legacy-only)
+        // Legacy-only fallback
         if (!foundHostId && hostParam) {
           console.warn("⚠️ Using host from URL as fallback (legacy QR):", hostParam);
           foundHostId = hostParam;
         }
 
-        if (!cancelled) {
-          setBgCss(foundBgCss);
-        }
+        if (!cancelled) setBgCss(foundBgCss);
 
         if (foundHostId) {
           await loadHostById(foundHostId);
@@ -469,21 +465,14 @@ export default function GuestSignupPage() {
     );
   }
 
-  /* -------------------------------------------------
-     RENDER
-  ------------------------------------------------- */
-  const bgImage =
-    bgCss ||
-    "linear-gradient(135deg,#0a2540,#1b2b44,#000000)";
+  // ✅ NOT a hook — safe after early return
+  const bgImage = bgCss || "linear-gradient(135deg,#0a2540,#1b2b44,#000000)";
 
-  // Host logo preference: branding_logo_url -> logo_url -> default
-  const logoSrc = useMemo(() => {
-    return (
-      hostSettings?.branding_logo_url ||
-      hostSettings?.logo_url ||
-      "/faninteractlogo.png"
-    );
-  }, [hostSettings]);
+  // ✅ NOT a hook — safe after early return
+  const logoSrc =
+    hostSettings?.branding_logo_url ||
+    hostSettings?.logo_url ||
+    "/faninteractlogo.png";
 
   const logoAlt = hostSettings?.venue_name
     ? `${hostSettings.venue_name} Logo`
@@ -493,7 +482,6 @@ export default function GuestSignupPage() {
 
   return (
     <main className={cn("relative flex items-center justify-center min-h-screen w-full text-white")}>
-      {/* ✅ Background follows the QR source */}
       <div className={cn("absolute inset-0 bg-cover bg-center")} style={{ backgroundImage: bgImage }} />
       <div className={cn("absolute inset-0 bg-black/60 backdrop-blur-md")} />
 
@@ -506,7 +494,6 @@ export default function GuestSignupPage() {
           "border border-white/10 bg-white/10 backdrop-blur-lg"
         )}
       >
-        {/* ✅ HOST LOGO */}
         <div className={cn("flex justify-center mb-6")}>
           {isRemoteLogo ? (
             <img
