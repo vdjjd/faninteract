@@ -443,6 +443,9 @@ export default function TriviaLeaderboardPage() {
                   const isTop3 = r.rank <= 3;
                   const medal = medalFor(r.rank);
 
+                  // 🔥 show flames for streaks 3+
+                  const hasFlames = (r.streak ?? 0) >= 3;
+
                   return (
                     <div
                       key={r.playerId}
@@ -478,6 +481,32 @@ export default function TriviaLeaderboardPage() {
                           opacity: 0.75,
                         }}
                       />
+
+                      {/* 🔥 FLAME VIDEO LAYER (behind content, inside row) */}
+                      {hasFlames && (
+                        <video
+                          autoPlay
+                          loop
+                          muted
+                          playsInline
+                          style={{
+                            position: "absolute",
+                            inset: 0,
+                            width: "100%",
+                            height: "100%",
+                            objectFit: "cover",
+                            opacity: 0.6, // tweak intensity
+                            mixBlendMode: "screen",
+                            pointerEvents: "none",
+                          }}
+                        >
+                          {/* change src if your filename is different */}
+                          <source
+                            src="/leaderboard-flames.webm"
+                            type="video/webm"
+                          />
+                        </video>
+                      )}
 
                       {/* Left: avatar + name + streak */}
                       <div

@@ -991,68 +991,80 @@ export default function TriviaCard({
   }
 
   /* ------------------------------------------------------------
-     STOP TRIVIA (go back to Inactive wall, keep players)
+     STOP TRIVIA (go back to Inactive wall, keep players,
+     CLEAR ANSWERS, mark session as "stopped" for phone UI)
   ------------------------------------------------------------ */
   async function handleStopTrivia() {
+    // cancel any pending auto-start
     if (playTimeoutRef.current) {
       window.clearTimeout(playTimeoutRef.current);
       playTimeoutRef.current = null;
     }
     playLockRef.current = false;
 
-    await supabase
-      .from("trivia_cards")
-      .update({
-        status: "inactive",
-        countdown_active: false,
-      })
-      .eq("id", trivia.id);
-
+    // 1) Find latest session (if any)
     const { data: session, error: sessionErr } = await supabase
       .from("trivia_sessions")
-      .select("id,status,created_at")
+      .select("id,created_at")
       .eq("trivia_card_id", trivia.id)
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle();
 
+    // 2) If we have a session, clear all answers & set status = "stopped"
     if (!sessionErr && session?.id) {
-      await supabase
-        .from("trivia_sessions")
-        .update({ status: "waiting", paused_at: null })
-        .eq("id", session.id);
-
+      // 2a. Clear all answers for this session → reset scoreboard
       const { data: players, error: playersErr } = await supabase
         .from("trivia_players")
-        .select("id,status")
+        .select("id")
         .eq("session_id", session.id);
 
       if (!playersErr && players && players.length) {
-        const playerIds = players.map((p) => p.id);
+        const playerIds = players.map((p: any) => p.id).filter(Boolean);
 
-        const { data: answers, error: answersErr } = await supabase
-          .from("trivia_answers")
-          .select("player_id")
-          .in("player_id", playerIds);
+        if (playerIds.length > 0) {
+          const { error: delErr } = await supabase
+            .from("trivia_answers")
+            .delete()
+            .in("player_id", playerIds);
 
-        if (!answersErr && answers) {
-          const activeSet = new Set<string>(
-            answers.map((a: any) => a.player_id as string)
-          );
-
-          const inactiveIds = players
-            .filter((p) => p.status === "approved" && !activeSet.has(p.id as string))
-            .map((p) => p.id);
-
-          if (inactiveIds.length > 0) {
-            await supabase.from("trivia_players").delete().in("id", inactiveIds);
+          if (delErr) {
+            console.error("❌ stop: delete trivia_answers error:", delErr);
           }
         }
       }
+
+      // 2b. Mark session as stopped so phone UI can redirect to /thanks
+      const { error: sessUpErr } = await supabase
+        .from("trivia_sessions")
+        .update({
+          status: "stopped",
+          paused_at: null,
+        })
+        .eq("id", session.id);
+
+      if (sessUpErr) {
+        console.error("❌ stop: update trivia_sessions error:", sessUpErr);
+      }
     }
 
+    // 3) Flip card back to inactive (and stop any countdowns)
+    const { error: cardErr } = await supabase
+      .from("trivia_cards")
+      .update({
+        status: "inactive",
+        countdown_active: false,
+        countdown_started_at: null,
+      })
+      .eq("id", trivia.id);
+
+    if (cardErr) console.error("❌ stop: update trivia_cards error:", cardErr);
+
+    // 4) Local UI sync (dashboard reset)
     setCardStatus("inactive");
     setCardCountdownActive(false);
+    lastLeaderboardRef.current = [];
+    setLeaderboard([]);
   }
 
   /* ------------------------------------------------------------
@@ -1695,7 +1707,6 @@ export default function TriviaCard({
                   "focus:border-blue-400"
                 )}
               >
-                {/* ✅ FIX: values MUST match DB constraint */}
                 <option value="flat">Flat (always max points)</option>
                 <option value="speed">Speed-based (faster = more)</option>
               </select>
