@@ -106,10 +106,6 @@ export default function ThankYouPage() {
   // Server-time offset so phones + wall line up
   const [serverOffsetMs, setServerOffsetMs] = useState<number>(0);
 
-  // 🎯 Prize Wheel: popup state
-  const [wheelPopupMessage, setWheelPopupMessage] = useState<string | null>(null);
-  const [showWheelPopup, setShowWheelPopup] = useState(false);
-
   /* ---------------------------------------------------------
      Load guest profile
   --------------------------------------------------------- */
@@ -119,7 +115,8 @@ export default function ThankYouPage() {
 
   /* ---------------------------------------------------------
      Load host + background (with FK-based join)
---------------------------------------------------------- */
+     ✅ Updated: for type "wheel" also pull popup fields
+  --------------------------------------------------------- */
   useEffect(() => {
     if (!gameId) return;
 
@@ -140,7 +137,6 @@ export default function ThankYouPage() {
           ? "trivia_cards"
           : "fan_walls";
 
-      // 👇 include wheel popup fields when type === "wheel"
       const select =
         type === "basketball"
           ? `
@@ -198,30 +194,6 @@ export default function ThankYouPage() {
       setData(data);
     })();
   }, [gameId, type, supabase]);
-
-  /* ---------------------------------------------------------
-     Prize Wheel: derive popup data from loaded wheel row
---------------------------------------------------------- */
-  useEffect(() => {
-    if (type !== "wheel") {
-      setShowWheelPopup(false);
-      setWheelPopupMessage(null);
-      return;
-    }
-
-    if (!data) return;
-
-    if (data.thank_you_popup_enabled) {
-      setWheelPopupMessage(
-        (data.thank_you_popup_message as string) ||
-          "Thanks for playing! Show this screen at the merch table for your reward."
-      );
-      setShowWheelPopup(true);
-    } else {
-      setShowWheelPopup(false);
-      setWheelPopupMessage(null);
-    }
-  }, [type, data?.thank_you_popup_enabled, data?.thank_you_popup_message, data]);
 
   /* ---------------------------------------------------------
      Record visit (loyalty / badge)
@@ -347,7 +319,7 @@ export default function ThankYouPage() {
 
   /* ---------------------------------------------------------
      Trivia: watch trivia_cards for countdown / running state
---------------------------------------------------------- */
+  --------------------------------------------------------- */
   useEffect(() => {
     if (type !== "trivia" || !gameId) return;
 
@@ -362,7 +334,7 @@ export default function ThankYouPage() {
       const totalSeconds =
         typeof card.countdown_seconds === "number" && card.countdown_seconds > 0
           ? card.countdown_seconds
-          : 10;
+          : 10; // sane fallback
 
       // Countdown ON
       if (card.countdown_active) {
@@ -374,6 +346,7 @@ export default function ThankYouPage() {
             new Date(card.countdown_started_at).getTime()
           );
         } else {
+          // Fallback if somehow missing
           setCountdownStartedAtMs(Date.now());
         }
         return;
@@ -429,7 +402,7 @@ export default function ThankYouPage() {
       )
       .subscribe();
 
-    // ⏱ Polling fallback
+    // ⏱ Polling fallback: check every 1s
     let prevCountdownActive: boolean | null = null;
     let prevStatus: string | null = null;
 
@@ -467,7 +440,7 @@ export default function ThankYouPage() {
 
   /* ---------------------------------------------------------
      Trivia countdown full-screen (black) override
---------------------------------------------------------- */
+  --------------------------------------------------------- */
   useEffect(() => {
     if (type !== "trivia") return;
     if (triviaPhase !== "countdown") return;
@@ -484,13 +457,33 @@ export default function ThankYouPage() {
 
   /* ---------------------------------------------------------
      Badge logic
---------------------------------------------------------- */
+  --------------------------------------------------------- */
   const badge =
     visitInfo?.loyaltyDisabled ? null : visitInfo?.badge ?? null;
 
   /* ---------------------------------------------------------
+     Prize Wheel Thank-You Popup logic
+     - Only for type "wheel"
+     - Uses DB fields from prize_wheels
+  --------------------------------------------------------- */
+  const wheelPopupEnabled =
+    type === "wheel" && !!data?.thank_you_popup_enabled;
+
+  const wheelPopupText = useMemo(() => {
+    if (!wheelPopupEnabled) return null;
+    const raw = (data as any)?.thank_you_popup_message as
+      | string
+      | undefined;
+    const trimmed = (raw || "").trim();
+    if (trimmed.length > 0) return trimmed;
+
+    // Fallback/default if DB message is empty
+    return "We want everyone to be a winner! Show this screen at the merchandise table for $10 off and pick your free poster.";
+  }, [wheelPopupEnabled, data]);
+
+  /* ---------------------------------------------------------
      UI helpers
---------------------------------------------------------- */
+  --------------------------------------------------------- */
   const bg =
     type === "basketball"
       ? `url(/newbackground.png)`
@@ -526,8 +519,8 @@ export default function ThankYouPage() {
   }, [type, profile?.first_name]);
 
   /* ---------------------------------------------------------
-     Trivia countdown full-screen (black) UI
---------------------------------------------------------- */
+     Trivia countdown full-screen (black) override
+  --------------------------------------------------------- */
   if (
     type === "trivia" &&
     triviaPhase === "countdown" &&
@@ -559,7 +552,7 @@ export default function ThankYouPage() {
 
   /* ---------------------------------------------------------
      Render normal Thank You / Waiting view
---------------------------------------------------------- */
+  --------------------------------------------------------- */
   return (
     <div
       style={{
@@ -596,6 +589,7 @@ export default function ThankYouPage() {
           boxShadow: "0 0 35px rgba(0,0,0,0.7)",
         }}
       >
+        {/* Host Logo (from hosts table) */}
         <img
           src={logo}
           alt="logo"
@@ -689,11 +683,51 @@ export default function ThankYouPage() {
           </>
         )}
 
-        {/* Loyalty badge (if enabled & returned) */}
-        {badge && (
+        {/* 🎁 Prize Wheel Popup (special offer / message) */}
+        {type === "wheel" && wheelPopupEnabled && wheelPopupText && (
           <div
             style={{
               marginTop: 18,
+              padding: 14,
+              borderRadius: 16,
+              background: "rgba(15,118,110,0.25)",
+              border: "1px solid rgba(45,212,191,0.7)",
+              boxShadow: "0 0 18px rgba(45,212,191,0.55)",
+            }}
+          >
+            <div
+              style={{
+                fontSize: "0.9rem",
+                fontWeight: 800,
+                letterSpacing: "0.06em",
+                textTransform: "uppercase",
+                color: "#a5f3fc",
+                marginBottom: 6,
+              }}
+            >
+              Special Message
+            </div>
+            <div
+              style={{
+                fontSize: "0.95rem",
+                color: "#ecfeff",
+                lineHeight: 1.4,
+              }}
+            >
+              {wheelPopupText}
+            </div>
+          </div>
+        )}
+
+        {/* Loyalty badge (if enabled & returned)
+            ✅ Will appear *under* the popup area */}
+        {badge && (
+          <div
+            style={{
+              marginTop:
+                type === "wheel" && wheelPopupEnabled && wheelPopupText
+                  ? 12
+                  : 18,
               padding: 16,
               borderRadius: 16,
               background: "rgba(255,255,255,0.08)",
@@ -736,83 +770,6 @@ export default function ThankYouPage() {
           </div>
         )}
       </div>
-
-      {/* 🧾 Prize Wheel popup overlay */}
-      {type === "wheel" && showWheelPopup && wheelPopupMessage && (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            zIndex: 50,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            background: "rgba(0,0,0,0.75)",
-            padding: 24,
-          }}
-        >
-          <div
-            style={{
-              maxWidth: 430,
-              width: "100%",
-              borderRadius: 18,
-              background: "rgba(15,23,42,0.98)",
-              border: "1px solid rgba(148,163,184,0.6)",
-              boxShadow: "0 0 30px rgba(0,0,0,0.8)",
-              padding: "22px 20px 18px",
-              textAlign: "left",
-            }}
-          >
-            <div
-              style={{
-                fontSize: "1.1rem",
-                fontWeight: 700,
-                marginBottom: 6,
-                color: "#e5e7eb",
-              }}
-            >
-              Message from your host
-            </div>
-
-            <p
-              style={{
-                fontSize: "0.95rem",
-                color: "#e5e7eb",
-                marginBottom: 14,
-                whiteSpace: "pre-wrap",
-              }}
-            >
-              {wheelPopupMessage}
-            </p>
-
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "flex-end",
-                marginTop: 4,
-              }}
-            >
-              <button
-                type="button"
-                onClick={() => setShowWheelPopup(false)}
-                style={{
-                  padding: "6px 14px",
-                  borderRadius: 999,
-                  border: "none",
-                  fontSize: "0.9rem",
-                  fontWeight: 600,
-                  background:
-                    "linear-gradient(135deg,#facc15,#f97316,#fb923c)",
-                  color: "#020617",
-                  cursor: "pointer",
-                }}
-              >
-                Got it
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       <style>{`
         @keyframes pulseGlow {
