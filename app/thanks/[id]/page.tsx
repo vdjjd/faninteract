@@ -66,17 +66,21 @@ export default function ThankYouPage() {
 
   const rawType = searchParams.get("type");
 
-  const path =
-    typeof window !== "undefined" ? window.location.pathname : "";
+  const path = typeof window !== "undefined" ? window.location.pathname : "";
 
   // Auto-detect type from URL path, then allow ?type= override
   let detectedType =
-    path.includes("/basketball/") ? "basketball" :
-    path.includes("/trivia/") ? "trivia" :
-    path.includes("/polls/") ? "poll" :
-    path.includes("/prizewheel/") ? "wheel" :
-    path.includes("/wall/") ? "wall" :
-    "lead";
+    path.includes("/basketball/")
+      ? "basketball"
+      : path.includes("/trivia/")
+      ? "trivia"
+      : path.includes("/polls/")
+      ? "poll"
+      : path.includes("/prizewheel/")
+      ? "wheel"
+      : path.includes("/wall/")
+      ? "wall"
+      : "lead";
 
   if (rawType) detectedType = rawType.toLowerCase();
 
@@ -118,6 +122,7 @@ export default function ThankYouPage() {
 
   /* ---------------------------------------------------------
      Load host + background (with FK-based join)
+     NOTE: hosts only has branding_logo_url, not logo_url
   --------------------------------------------------------- */
   useEffect(() => {
     if (!gameId) return;
@@ -145,8 +150,7 @@ export default function ThankYouPage() {
               id,
               host:host_id (
                 id,
-                branding_logo_url,
-                logo_url
+                branding_logo_url
               )
             `
           : type === "trivia"
@@ -155,8 +159,7 @@ export default function ThankYouPage() {
               host_id,
               host:host_id (
                 id,
-                branding_logo_url,
-                logo_url
+                branding_logo_url
               )
             `
           : type === "wheel"
@@ -167,8 +170,7 @@ export default function ThankYouPage() {
               thank_you_popup_message,
               host:host_id (
                 id,
-                branding_logo_url,
-                logo_url
+                branding_logo_url
               )
             `
           : `
@@ -176,8 +178,7 @@ export default function ThankYouPage() {
               background_value,
               host:host_id (
                 id,
-                branding_logo_url,
-                logo_url
+                branding_logo_url
               )
             `;
 
@@ -198,22 +199,30 @@ export default function ThankYouPage() {
   }, [gameId, type, supabase]);
 
   /* ---------------------------------------------------------
+     Normalize host (embedded joins can return array)
+  --------------------------------------------------------- */
+  const host = useMemo(() => {
+    const h = data?.host;
+    return Array.isArray(h) ? h[0] : h;
+  }, [data]);
+
+  /* ---------------------------------------------------------
      Record visit (loyalty / badge)
   --------------------------------------------------------- */
   useEffect(() => {
-    if (!profile || !data?.host?.id) return;
+    if (!profile || !host?.id) return;
 
     const deviceId = getOrCreateGuestDeviceId();
 
     recordVisit({
       device_id: deviceId,
       guest_profile_id: profile.id,
-      host_id: data.host.id,
+      host_id: host.id,
     }).then((res) => {
       if (!res) return;
       setVisitInfo(res);
     });
-  }, [profile, data?.host?.id]);
+  }, [profile, host?.id]);
 
   /* ---------------------------------------------------------
      Wake Lock (basketball controller mode)
@@ -421,8 +430,7 @@ export default function ThankYouPage() {
 
       if (!card || error) return;
 
-      const changedCountdown =
-        card.countdown_active !== prevCountdownActive;
+      const changedCountdown = card.countdown_active !== prevCountdownActive;
       const changedStatus = card.status !== prevStatus;
 
       prevCountdownActive = card.countdown_active;
@@ -460,8 +468,7 @@ export default function ThankYouPage() {
   /* ---------------------------------------------------------
      Badge logic
   --------------------------------------------------------- */
-  const badge =
-    visitInfo?.loyaltyDisabled ? null : visitInfo?.badge ?? null;
+  const badge = visitInfo?.loyaltyDisabled ? null : visitInfo?.badge ?? null;
 
   /* ---------------------------------------------------------
      UI helpers
@@ -473,13 +480,10 @@ export default function ThankYouPage() {
       ? "linear-gradient(135deg,#0a2540,#1b2b44,#000000)"
       : data?.background_value?.includes?.("http")
       ? `url(${data.background_value})`
-      : data?.background_value ||
-        "linear-gradient(135deg,#0a2540,#1b2b44,#000000)";
+      : data?.background_value || "linear-gradient(135deg,#0a2540,#1b2b44,#000000)";
 
-  const logo =
-    data?.host?.branding_logo_url?.trim() ||
-    data?.host?.logo_url?.trim() ||
-    "/faninteractlogo.png";
+  // ✅ Use branding_logo_url only; fallback to FanInteract logo
+  const logo = host?.branding_logo_url?.trim?.() || "/faninteractlogo.png";
 
   const headline = visitInfo?.isReturning
     ? `Welcome back, ${profile?.first_name || "friend"}!`
@@ -501,8 +505,7 @@ export default function ThankYouPage() {
   }, [type, profile?.first_name]);
 
   // Prize Wheel popup config
-  const wheelPopupEnabled =
-    type === "wheel" && !!data?.thank_you_popup_enabled;
+  const wheelPopupEnabled = type === "wheel" && !!data?.thank_you_popup_enabled;
 
   const wheelPopupText = useMemo(() => {
     if (!wheelPopupEnabled) return null;
@@ -583,8 +586,12 @@ export default function ThankYouPage() {
         }}
       >
         <img
+          key={logo}
           src={logo}
           alt="logo"
+          onError={(e) => {
+            e.currentTarget.src = "/faninteractlogo.png";
+          }}
           style={{
             width: "72%",
             maxWidth: 260,
@@ -607,9 +614,7 @@ export default function ThankYouPage() {
           {headline}
         </h1>
 
-        <p style={{ color: "#f3e8e0", marginBottom: 12 }}>
-          {message}
-        </p>
+        <p style={{ color: "#f3e8e0", marginBottom: 12 }}>{message}</p>
 
         {/* WAITING STATE FOR BASKETBALL */}
         {type === "basketball" && (
@@ -698,12 +703,7 @@ export default function ThankYouPage() {
             >
               Special Offer
             </div>
-            <div
-              style={{
-                fontSize: "0.95rem",
-                color: "#f9fafb",
-              }}
-            >
+            <div style={{ fontSize: "0.95rem", color: "#f9fafb" }}>
               {wheelPopupText}
             </div>
           </div>
@@ -713,8 +713,7 @@ export default function ThankYouPage() {
         {badge && (
           <div
             style={{
-              marginTop:
-                type === "wheel" && wheelPopupText ? 12 : 18,
+              marginTop: type === "wheel" && wheelPopupText ? 12 : 18,
               padding: 16,
               borderRadius: 16,
               background: "rgba(255,255,255,0.08)",
