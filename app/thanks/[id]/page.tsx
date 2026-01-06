@@ -45,6 +45,9 @@ async function recordVisit({
   return res.json();
 }
 
+const DEFAULT_WHEEL_POPUP_MESSAGE =
+  "We want everyone to be a winner! Show this screen at the merchandise table for $10 off and pick your free poster.";
+
 /* ---------------------------------------------------------
    Component
 --------------------------------------------------------- */
@@ -115,7 +118,6 @@ export default function ThankYouPage() {
 
   /* ---------------------------------------------------------
      Load host + background (with FK-based join)
-     ✅ Updated: for type "wheel" also pull popup fields
   --------------------------------------------------------- */
   useEffect(() => {
     if (!gameId) return;
@@ -319,7 +321,7 @@ export default function ThankYouPage() {
 
   /* ---------------------------------------------------------
      Trivia: watch trivia_cards for countdown / running state
-  --------------------------------------------------------- */
+--------------------------------------------------------- */
   useEffect(() => {
     if (type !== "trivia" || !gameId) return;
 
@@ -439,7 +441,7 @@ export default function ThankYouPage() {
   }, [type, gameId, supabase, router]);
 
   /* ---------------------------------------------------------
-     Trivia countdown full-screen (black) override
+     Trivia countdown ticking (black screen)
   --------------------------------------------------------- */
   useEffect(() => {
     if (type !== "trivia") return;
@@ -460,26 +462,6 @@ export default function ThankYouPage() {
   --------------------------------------------------------- */
   const badge =
     visitInfo?.loyaltyDisabled ? null : visitInfo?.badge ?? null;
-
-  /* ---------------------------------------------------------
-     Prize Wheel Thank-You Popup logic
-     - Only for type "wheel"
-     - Uses DB fields from prize_wheels
-  --------------------------------------------------------- */
-  const wheelPopupEnabled =
-    type === "wheel" && !!data?.thank_you_popup_enabled;
-
-  const wheelPopupText = useMemo(() => {
-    if (!wheelPopupEnabled) return null;
-    const raw = (data as any)?.thank_you_popup_message as
-      | string
-      | undefined;
-    const trimmed = (raw || "").trim();
-    if (trimmed.length > 0) return trimmed;
-
-    // Fallback/default if DB message is empty
-    return "We want everyone to be a winner! Show this screen at the merchandise table for $10 off and pick your free poster.";
-  }, [wheelPopupEnabled, data]);
 
   /* ---------------------------------------------------------
      UI helpers
@@ -517,6 +499,17 @@ export default function ThankYouPage() {
         return "Your submission was received!";
     }
   }, [type, profile?.first_name]);
+
+  // Prize Wheel popup config
+  const wheelPopupEnabled =
+    type === "wheel" && !!data?.thank_you_popup_enabled;
+
+  const wheelPopupText = useMemo(() => {
+    if (!wheelPopupEnabled) return null;
+    const raw = (data?.thank_you_popup_message || "") as string;
+    const trimmed = raw.trim();
+    return trimmed || DEFAULT_WHEEL_POPUP_MESSAGE;
+  }, [wheelPopupEnabled, data?.thank_you_popup_message]);
 
   /* ---------------------------------------------------------
      Trivia countdown full-screen (black) override
@@ -589,7 +582,6 @@ export default function ThankYouPage() {
           boxShadow: "0 0 35px rgba(0,0,0,0.7)",
         }}
       >
-        {/* Host Logo (from hosts table) */}
         <img
           src={logo}
           alt="logo"
@@ -683,35 +675,33 @@ export default function ThankYouPage() {
           </>
         )}
 
-        {/* 🎁 Prize Wheel Popup (special offer / message) */}
-        {type === "wheel" && wheelPopupEnabled && wheelPopupText && (
+        {/* PRIZE WHEEL POPUP MESSAGE (above badge) */}
+        {type === "wheel" && wheelPopupText && (
           <div
             style={{
               marginTop: 18,
               padding: 14,
               borderRadius: 16,
-              background: "rgba(15,118,110,0.25)",
-              border: "1px solid rgba(45,212,191,0.7)",
-              boxShadow: "0 0 18px rgba(45,212,191,0.55)",
+              background: "rgba(255,255,255,0.08)",
+              border: "1px solid rgba(255,255,255,0.18)",
             }}
           >
             <div
               style={{
-                fontSize: "0.9rem",
-                fontWeight: 800,
-                letterSpacing: "0.06em",
+                fontSize: "0.85rem",
+                fontWeight: 700,
+                color: "#facc15",
+                marginBottom: 4,
                 textTransform: "uppercase",
-                color: "#a5f3fc",
-                marginBottom: 6,
+                letterSpacing: 0.5,
               }}
             >
-              Special Message
+              Special Offer
             </div>
             <div
               style={{
                 fontSize: "0.95rem",
-                color: "#ecfeff",
-                lineHeight: 1.4,
+                color: "#f9fafb",
               }}
             >
               {wheelPopupText}
@@ -719,15 +709,12 @@ export default function ThankYouPage() {
           </div>
         )}
 
-        {/* Loyalty badge (if enabled & returned)
-            ✅ Will appear *under* the popup area */}
+        {/* Loyalty badge (if enabled & returned) */}
         {badge && (
           <div
             style={{
               marginTop:
-                type === "wheel" && wheelPopupEnabled && wheelPopupText
-                  ? 12
-                  : 18,
+                type === "wheel" && wheelPopupText ? 12 : 18,
               padding: 16,
               borderRadius: 16,
               background: "rgba(255,255,255,0.08)",
