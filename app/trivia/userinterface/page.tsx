@@ -316,7 +316,7 @@ const FALLBACK_BG =
   "radial-gradient(circle at top,#1d4ed8 0,#020617 55%,#000 100%)";
 
 // ✅ Extra visual/lock grace period for FIRST question only (ms)
-const FIRST_QUESTION_EXTRA_MS = 8000;
+const FIRST_QUESTION_EXTRA_MS = 2000;
 
 /* ---------------------------------------------------------
    ✅ Effective question start (fixes Q1 scoring)
