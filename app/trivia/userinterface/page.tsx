@@ -860,6 +860,17 @@ export default function TriviaUserInterfacePage() {
   }
 
   /* ---------------------------------------------------------
+     ✅ If host hits STOP, send user to thank-you page
+     (assuming dashboard sets status = "stopped")
+  --------------------------------------------------------- */
+  useEffect(() => {
+    if (!gameId) return;
+    if (session?.status === "stopped") {
+      router.replace(`/thanks/${gameId}?type=trivia`);
+    }
+  }, [session?.status, gameId, router]);
+
+  /* ---------------------------------------------------------
      Detect video
   --------------------------------------------------------- */
   const lockedAd: SlideAd | null = useMemo(() => {
