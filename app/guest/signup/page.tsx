@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Image from "next/image";
 import { motion } from "framer-motion";
@@ -30,20 +30,95 @@ function toBool(val: any): boolean {
   return false;
 }
 
+function looksLikeUrl(v: any): boolean {
+  return typeof v === "string" && /^https?:\/\//i.test(v.trim());
+}
+
+/**
+ * Convert "background_type + background_value" into a CSS backgroundImage string:
+ * - image -> `url(...)`
+ * - gradient/color -> use string directly
+ */
+function toCssBg(background_type: any, background_value: any): string | null {
+  const v = typeof background_value === "string" ? background_value.trim() : "";
+  if (!v) return null;
+
+  const t = typeof background_type === "string" ? background_type.trim().toLowerCase() : "";
+
+  if (t === "image" || looksLikeUrl(v)) return `url(${v})`;
+  return v; // gradient or any valid CSS background-image value
+}
+
+/**
+ * Safe helper: some tables won't have background_* columns.
+ * This attempts host_id + background_value, and if column missing, falls back to host_id only.
+ */
+async function fetchHostAndBgFromStandardTable(
+  supabase: any,
+  table: string,
+  id: string,
+  bgColumn = "background_value"
+): Promise<{ host_id: string | null; cssBg: string | null }> {
+  // 1) Attempt host_id + background_value
+  {
+    const { data, error } = await supabase
+      .from(table)
+      .select(`host_id, ${bgColumn}`)
+      .eq("id", id)
+      .single();
+
+    if (!error && data) {
+      const bgVal = data?.[bgColumn] ?? null;
+      const cssBg = bgVal ? (looksLikeUrl(bgVal) ? `url(${bgVal})` : String(bgVal)) : null;
+      return { host_id: data.host_id ?? null, cssBg };
+    }
+
+    const msg = String((error as any)?.message || "");
+    const code = String((error as any)?.code || "");
+    const isMissingColumn =
+      code === "42703" ||
+      msg.toLowerCase().includes("column") ||
+      msg.toLowerCase().includes("does not exist");
+
+    if (!isMissingColumn) {
+      console.error(`❌ ${table} load error:`, error);
+    }
+  }
+
+  // 2) Fallback host_id only
+  {
+    const { data, error } = await supabase
+      .from(table)
+      .select("host_id")
+      .eq("id", id)
+      .single();
+
+    if (error) {
+      console.error(`❌ ${table} host_id fallback error:`, error);
+      return { host_id: null, cssBg: null };
+    }
+
+    return { host_id: data?.host_id ?? null, cssBg: null };
+  }
+}
+
 export default function GuestSignupPage() {
   const router = useRouter();
   const params = useSearchParams();
   const supabase = getSupabaseClient();
 
   /* -------------------------------------------------
-     🔥 NORMALIZE QR PARAMS
+     NORMALIZE QR PARAMS
   ------------------------------------------------- */
   const redirect = params.get("redirect") || "";
   const wallId = params.get("wall");
   const wheelId = params.get("prizewheel");
   const basketballId = params.get("basketball");
   const triviaQueryId = params.get("trivia"); // may be null
-  const hostParam = params.get("host");       // 👈 NEW: host from QR / redirect
+
+  // We do NOT trust host= as primary source (tamperable).
+  // Keep as LAST-RESORT only if you still have legacy QRs.
+  const hostParam = params.get("host");
 
   const rawType = params.get("type");
   let pollId = params.get("poll");
@@ -53,20 +128,17 @@ export default function GuestSignupPage() {
     pollId = rawType.split("=")[1];
   }
 
-  // Try to infer triviaId from redirect path if the query param is missing
-  // e.g. redirect="/trivia/602344ef-6a73-4c1d-981e-3f034aa5db4a/join"
+  // Infer triviaId from redirect if missing
   let triviaId = triviaQueryId || null;
   if (!triviaId && redirect) {
     const match = redirect.match(
       /\/trivia\/([0-9a-fA-F-]{8}-[0-9a-fA-F-]{4}-[0-9a-fA-F-]{4}-[0-9a-fA-F-]{4}-[0-9a-fA-F-]{12})\/join/
     );
-    if (match && match[1]) {
-      triviaId = match[1];
-    }
+    if (match?.[1]) triviaId = match[1];
   }
 
   /* ------------------------------------------------- */
-  const [wall, setWall] = useState<any>(null);
+  const [bgCss, setBgCss] = useState<string | null>(null);
 
   // Host UUID that must go into guest_profiles.host_id
   const [hostIdFromContext, setHostIdFromContext] = useState<string | null>(null);
@@ -100,7 +172,7 @@ export default function GuestSignupPage() {
   }, []);
 
   /* -------------------------------------------------
-     LOAD HOST CONTEXT (including trivia)
+     LOAD HOST CONTEXT + BACKGROUND from the QR source
   ------------------------------------------------- */
   useEffect(() => {
     let cancelled = false;
@@ -110,7 +182,26 @@ export default function GuestSignupPage() {
 
       const { data: host, error } = await supabase
         .from("hosts")
-        .select("*, master_id")
+        .select(`
+          id,
+          master_id,
+          venue_name,
+          branding_logo_url,
+          logo_url,
+          require_last_name,
+          require_email,
+          require_phone,
+          require_street,
+          require_city,
+          require_state,
+          require_zip,
+          require_age,
+          minimum_age,
+          host_terms_markdown,
+          loyalty_enabled,
+          loyalty_show_badge,
+          loyalty_show_visit_count
+        `)
         .eq("id", hostId)
         .single();
 
@@ -135,20 +226,21 @@ export default function GuestSignupPage() {
       setHostSettings(normalizedHost);
       setHostIdFromContext(hostId);
 
-      if (host.host_terms_markdown) {
-        setHostTerms(host.host_terms_markdown);
-      }
+      setHostTerms(host.host_terms_markdown || "");
 
       if (host.master_id) {
-        const { data: master } = await supabase
+        const { data: master, error: masterErr } = await supabase
           .from("master_accounts")
           .select("master_terms_markdown")
           .eq("id", host.master_id)
           .single();
 
-        if (!cancelled && master?.master_terms_markdown) {
-          setMasterTerms(master.master_terms_markdown);
+        if (!cancelled) {
+          if (masterErr) console.error("❌ master_accounts load error:", masterErr);
+          setMasterTerms(master?.master_terms_markdown || "");
         }
+      } else {
+        setMasterTerms("");
       }
     }
 
@@ -156,124 +248,91 @@ export default function GuestSignupPage() {
       setLoadingHost(true);
 
       try {
-        // 🔑 0) If host is explicitly provided in the URL, trust that first.
-        if (hostParam) {
-          console.log("✅ Using host from URL:", hostParam);
-          await loadHostById(hostParam);
-          // Background is optional; if you really want trivia background here,
-          // you can add a separate query, but skipping trivia_cards avoids the 400.
-          return;
-        }
-
         let foundHostId: string | null = null;
-        let bgVal: string | null = null;
+        let foundBgCss: string | null = null;
 
-        console.log("🔎 Signup context:", {
-          wallId,
-          wheelId,
-          pollId,
-          basketballId,
-          triviaId,
-          redirect,
-        });
-
-        // 1) Fan Wall
+        // 1) Fan Wall (background_value)
         if (wallId) {
-          const { data, error } = await supabase
-            .from("fan_walls")
-            .select("background_value, host_id")
-            .eq("id", wallId)
-            .single();
-
-          if (!cancelled && data) {
-            bgVal = data.background_value || null;
-            foundHostId = data.host_id ?? null;
-            console.log("✅ fan_walls host:", foundHostId);
-          }
-          if (error) console.error("❌ fan_walls load error:", error);
+          const { host_id, cssBg } = await fetchHostAndBgFromStandardTable(
+            supabase,
+            "fan_walls",
+            wallId,
+            "background_value"
+          );
+          foundHostId = host_id;
+          foundBgCss = cssBg;
         }
 
-        // 2) Prize Wheel
+        // 2) Prize Wheel (background_type + background_value) ✅ from your schema
         if (!foundHostId && wheelId) {
           const { data, error } = await supabase
             .from("prize_wheels")
-            .select("host_id")
+            .select("host_id, background_type, background_value")
             .eq("id", wheelId)
             .single();
 
-          if (!cancelled && data?.host_id) {
-            foundHostId = data.host_id;
-            console.log("✅ prize_wheels host:", foundHostId);
-          }
           if (error) console.error("❌ prize_wheels load error:", error);
-        }
-
-        // 3) Poll
-        if (!foundHostId && pollId) {
-          const { data, error } = await supabase
-            .from("polls")
-            .select("host_id")
-            .eq("id", pollId)
-            .single();
-
-          if (!cancelled && data?.host_id) {
-            foundHostId = data.host_id;
-            console.log("✅ polls host:", foundHostId);
-          }
-          if (error) console.error("❌ polls load error:", error);
-        }
-
-        // 4) Basketball
-        if (!foundHostId && basketballId) {
-          const { data, error } = await supabase
-            .from("bb_games")
-            .select("host_id")
-            .eq("id", basketballId)
-            .single();
-
-          if (!cancelled && data?.host_id) {
-            foundHostId = data.host_id;
-            console.log("✅ bb_games host:", foundHostId);
-          }
-          if (error) console.error("❌ bb_games load error:", error);
-        }
-
-        // 5) Trivia fallback (this is where your 400 was happening)
-        // We'll leave it as a fallback for older QR codes that *don't* have ?host=...
-        if (!foundHostId && triviaId) {
-          const { data, error } = await supabase
-            .from("trivia_cards")
-            .select("background_type, background_value, host_id")
-            .eq("id", triviaId)
-            .single();
 
           if (!cancelled && data) {
-            bgVal = data.background_value || null;
-            if (data.host_id) {
-              foundHostId = data.host_id;
-              console.log("✅ trivia_cards host (fallback):", foundHostId);
-            } else {
-              console.log("⚠️ trivia_cards row found but host_id is null");
-            }
-          }
-          if (error) {
-            console.error("❌ trivia_cards load error (fallback):", error);
+            foundHostId = data.host_id ?? null;
+            foundBgCss = toCssBg(data.background_type, data.background_value);
           }
         }
 
-        if (!cancelled && bgVal) {
-          setWall({ background_value: bgVal });
+        // 3) Poll (tries background_value if it exists; otherwise host_id only)
+        if (!foundHostId && pollId) {
+          const { host_id, cssBg } = await fetchHostAndBgFromStandardTable(
+            supabase,
+            "polls",
+            pollId,
+            "background_value"
+          );
+          foundHostId = host_id;
+          foundBgCss = cssBg ?? foundBgCss;
+        }
+
+        // 4) Basketball (tries background_value if it exists; otherwise host_id only)
+        if (!foundHostId && basketballId) {
+          const { host_id, cssBg } = await fetchHostAndBgFromStandardTable(
+            supabase,
+            "bb_games",
+            basketballId,
+            "background_value"
+          );
+          foundHostId = host_id;
+          foundBgCss = cssBg ?? foundBgCss;
+        }
+
+        // 5) Trivia (background_value on trivia_cards)
+        if (!foundHostId && triviaId) {
+          const { host_id, cssBg } = await fetchHostAndBgFromStandardTable(
+            supabase,
+            "trivia_cards",
+            triviaId,
+            "background_value"
+          );
+          foundHostId = host_id;
+          foundBgCss = cssBg ?? foundBgCss;
+        }
+
+        // LAST RESORT (legacy-only)
+        if (!foundHostId && hostParam) {
+          console.warn("⚠️ Using host from URL as fallback (legacy QR):", hostParam);
+          foundHostId = hostParam;
+        }
+
+        if (!cancelled) {
+          setBgCss(foundBgCss);
         }
 
         if (foundHostId) {
           await loadHostById(foundHostId);
         } else if (!cancelled) {
-          // No host at all — use a minimal default so UI still renders.
-          console.log(
-            "⚠️ No host found for this signup context, using default hostSettings."
-          );
           setHostSettings({
             id: null,
+            venue_name: null,
+            branding_logo_url: null,
+            logo_url: null,
             require_last_name: false,
             require_email: false,
             require_phone: false,
@@ -284,6 +343,8 @@ export default function GuestSignupPage() {
             require_age: false,
           });
           setHostIdFromContext(null);
+          setHostTerms("");
+          setMasterTerms("");
         }
       } finally {
         if (!cancelled) setLoadingHost(false);
@@ -315,16 +376,13 @@ export default function GuestSignupPage() {
         .eq("device_id", deviceId)
         .maybeSingle();
 
-      if (error) {
-        console.error("❌ guest_profiles check error:", error);
-      }
+      if (error) console.error("❌ guest_profiles check error:", error);
 
       if (!data) {
         localStorage.removeItem("guest_profile");
         return;
       }
 
-      // If coming from a page that gave us a redirect, go there first
       if (redirect) return router.push(redirect);
       if (wallId) return router.push(`/wall/${wallId}/submit`);
       if (wheelId) return router.push(`/prizewheel/${wheelId}/submit`);
@@ -372,10 +430,7 @@ export default function GuestSignupPage() {
           : null,
       };
 
-      // This is the host UUID that goes to guest_profiles.host_id
       const hostIdForSync = hostIdFromContext || hostSettings?.id || null;
-
-      console.log("🔍 hostIdForSync =>", hostIdForSync);
 
       const { profile } = await syncGuestProfile(
         type,
@@ -388,7 +443,6 @@ export default function GuestSignupPage() {
         localStorage.setItem("guest_profile", JSON.stringify(profile));
       }
 
-      // Redirect priority:
       if (redirect) router.push(redirect);
       else if (wallId) router.push(`/wall/${wallId}/submit`);
       else if (wheelId) router.push(`/prizewheel/${wheelId}/submit`);
@@ -409,9 +463,7 @@ export default function GuestSignupPage() {
   ------------------------------------------------- */
   if (loadingHost || !hostSettings) {
     return (
-      <main className={cn(
-        "min-h-screen w-full flex items-center justify-center bg-black text-white"
-      )}>
+      <main className={cn("min-h-screen w-full flex items-center justify-center bg-black text-white")}>
         Loading…
       </main>
     );
@@ -421,22 +473,28 @@ export default function GuestSignupPage() {
      RENDER
   ------------------------------------------------- */
   const bgImage =
-    wall?.background_value?.includes("http")
-      ? `url(${wall.background_value})`
-      : wall?.background_value ||
-        "linear-gradient(135deg,#0a2540,#1b2b44,#000000)";
+    bgCss ||
+    "linear-gradient(135deg,#0a2540,#1b2b44,#000000)";
+
+  // Host logo preference: branding_logo_url -> logo_url -> default
+  const logoSrc = useMemo(() => {
+    return (
+      hostSettings?.branding_logo_url ||
+      hostSettings?.logo_url ||
+      "/faninteractlogo.png"
+    );
+  }, [hostSettings]);
+
+  const logoAlt = hostSettings?.venue_name
+    ? `${hostSettings.venue_name} Logo`
+    : "FanInteract";
+
+  const isRemoteLogo = typeof logoSrc === "string" && logoSrc.startsWith("http");
 
   return (
-    <main
-      className={cn(
-        "relative flex items-center justify-center",
-        "min-h-screen w-full text-white"
-      )}
-    >
-      <div
-        className={cn("absolute inset-0 bg-cover bg-center")}
-        style={{ backgroundImage: bgImage }}
-      />
+    <main className={cn("relative flex items-center justify-center min-h-screen w-full text-white")}>
+      {/* ✅ Background follows the QR source */}
+      <div className={cn("absolute inset-0 bg-cover bg-center")} style={{ backgroundImage: bgImage }} />
       <div className={cn("absolute inset-0 bg-black/60 backdrop-blur-md")} />
 
       <motion.div
@@ -448,97 +506,79 @@ export default function GuestSignupPage() {
           "border border-white/10 bg-white/10 backdrop-blur-lg"
         )}
       >
+        {/* ✅ HOST LOGO */}
         <div className={cn("flex justify-center mb-6")}>
-          <Image
-            src="/faninteractlogo.png"
-            alt="FanInteract"
-            width={360}
-            height={120}
-            className={cn("w-[240px] md:w-[320px]")}
-          />
+          {isRemoteLogo ? (
+            <img
+              src={logoSrc}
+              alt={logoAlt}
+              className={cn("w-[240px] md:w-[320px] object-contain")}
+              style={{ maxHeight: 120 }}
+            />
+          ) : (
+            <Image
+              src={logoSrc}
+              alt={logoAlt}
+              width={360}
+              height={120}
+              className={cn("w-[240px] md:w-[320px] object-contain")}
+              priority
+            />
+          )}
         </div>
 
-        <motion.h2
-          className={cn(
-            "text-center text-2xl font-semibold text-sky-300 mb-6"
-          )}
-        >
+        <motion.h2 className={cn("text-center text-2xl font-semibold text-sky-300 mb-6")}>
           Join the Fan Zone
         </motion.h2>
 
         <form onSubmit={handleSubmit} className="space-y-3">
-          {/* FIRST NAME (ALWAYS) */}
           <input
             required
             placeholder="First Name *"
-            className={cn(
-              "w-full p-3 rounded-xl bg-black/40 border border-white/20"
-            )}
+            className={cn("w-full p-3 rounded-xl bg-black/40 border border-white/20")}
             value={form.first_name}
-            onChange={(e) =>
-              setForm({ ...form, first_name: e.target.value })
-            }
+            onChange={(e) => setForm({ ...form, first_name: e.target.value })}
           />
 
-          {/* LAST NAME */}
           {hostSettings.require_last_name && (
             <input
               required
               placeholder="Last Name *"
-              className={cn(
-                "w-full p-3 rounded-xl bg-black/40 border border-white/20"
-              )}
+              className={cn("w-full p-3 rounded-xl bg-black/40 border border-white/20")}
               value={form.last_name}
-              onChange={(e) =>
-                setForm({ ...form, last_name: e.target.value })
-              }
+              onChange={(e) => setForm({ ...form, last_name: e.target.value })}
             />
           )}
 
-          {/* EMAIL */}
           {hostSettings.require_email && (
             <input
               required
               type="email"
               placeholder="Email *"
-              className={cn(
-                "w-full p-3 rounded-xl bg-black/40 border border-white/20"
-              )}
+              className={cn("w-full p-3 rounded-xl bg-black/40 border border-white/20")}
               value={form.email}
-              onChange={(e) =>
-                setForm({ ...form, email: e.target.value })
-              }
+              onChange={(e) => setForm({ ...form, email: e.target.value })}
             />
           )}
 
-          {/* PHONE */}
           {hostSettings.require_phone && (
             <input
               required
               type="tel"
               placeholder="Phone *"
-              className={cn(
-                "w-full p-3 rounded-xl bg-black/40 border border-white/20"
-              )}
+              className={cn("w-full p-3 rounded-xl bg-black/40 border border-white/20")}
               value={form.phone}
-              onChange={(e) =>
-                setForm({ ...form, phone: e.target.value })
-              }
+              onChange={(e) => setForm({ ...form, phone: e.target.value })}
             />
           )}
 
-          {/* ADDRESS */}
           {hostSettings.require_street && (
             <input
               required
               placeholder="Street Address *"
-              className={cn(
-                "w-full p-3 rounded-xl bg-black/40 border border-white/20"
-              )}
+              className={cn("w-full p-3 rounded-xl bg-black/40 border border-white/20")}
               value={form.street}
-              onChange={(e) =>
-                setForm({ ...form, street: e.target.value })
-              }
+              onChange={(e) => setForm({ ...form, street: e.target.value })}
             />
           )}
 
@@ -546,26 +586,18 @@ export default function GuestSignupPage() {
             <input
               required
               placeholder="City *"
-              className={cn(
-                "w-full p-3 rounded-xl bg-black/40 border border-white/20"
-              )}
+              className={cn("w-full p-3 rounded-xl bg-black/40 border border-white/20")}
               value={form.city}
-              onChange={(e) =>
-                setForm({ ...form, city: e.target.value })
-              }
+              onChange={(e) => setForm({ ...form, city: e.target.value })}
             />
           )}
 
           {hostSettings.require_state && (
             <select
               required
-              className={cn(
-                "w-full p-3 rounded-xl bg-black/40 border border-white/20"
-              )}
+              className={cn("w-full p-3 rounded-xl bg-black/40 border border-white/20")}
               value={form.state}
-              onChange={(e) =>
-                setForm({ ...form, state: e.target.value })
-              }
+              onChange={(e) => setForm({ ...form, state: e.target.value })}
             >
               <option value="">State *</option>
               {stateOptions.map((s) => (
@@ -580,17 +612,12 @@ export default function GuestSignupPage() {
             <input
               required
               placeholder="ZIP Code *"
-              className={cn(
-                "w-full p-3 rounded-xl bg-black/40 border border-white/20"
-              )}
+              className={cn("w-full p-3 rounded-xl bg-black/40 border border-white/20")}
               value={form.zip}
-              onChange={(e) =>
-                setForm({ ...form, zip: e.target.value })
-              }
+              onChange={(e) => setForm({ ...form, zip: e.target.value })}
             />
           )}
 
-          {/* DOB → AGE */}
           {hostSettings.require_age && (
             <div className="relative">
               <input
@@ -603,14 +630,8 @@ export default function GuestSignupPage() {
                   "text-white appearance-none [color-scheme:dark]"
                 )}
                 value={form.date_of_birth}
-                onChange={(e) =>
-                  setForm({
-                    ...form,
-                    date_of_birth: e.target.value,
-                  })
-                }
+                onChange={(e) => setForm({ ...form, date_of_birth: e.target.value })}
               />
-
               {!form.date_of_birth && (
                 <span
                   className={cn(
@@ -624,17 +645,8 @@ export default function GuestSignupPage() {
             </div>
           )}
 
-          {/* TERMS */}
-          <label
-            className={cn(
-              "flex items-center gap-2 text-sm text-gray-300 mt-2"
-            )}
-          >
-            <input
-              type="checkbox"
-              checked={agree}
-              onChange={(e) => setAgree(e.target.checked)}
-            />
+          <label className={cn("flex items-center gap-2 text-sm text-gray-300 mt-2")}>
+            <input type="checkbox" checked={agree} onChange={(e) => setAgree(e.target.checked)} />
             I agree to the{" "}
             <button
               type="button"
