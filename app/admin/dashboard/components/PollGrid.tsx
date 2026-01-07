@@ -26,8 +26,26 @@ export default function PollGrid({
     [pollId: string]: boolean;
   }>({});
 
+  // 🔹 track if we're on mobile to disable Launch Wall button
+  const [isMobile, setIsMobile] = useState(false);
+
   const timers = useRef<{ [key: string]: NodeJS.Timeout }>({});
   const refreshInterval = useRef<NodeJS.Timeout | null>(null);
+
+  /* ------------------------------------------------------------
+     Detect mobile vs desktop
+  ------------------------------------------------------------ */
+  useEffect(() => {
+    const check = () => {
+      if (typeof window !== 'undefined') {
+        setIsMobile(window.innerWidth < 768);
+      }
+    };
+
+    check();
+    window.addEventListener('resize', check);
+    return () => window.removeEventListener('resize', check);
+  }, []);
 
   /* ------------------------------------------------------------
      SYNC incoming polls → local state
@@ -245,7 +263,7 @@ export default function PollGrid({
   }
 
   /* ------------------------------------------------------------
-     🚀 Launch Active Wall
+     🚀 Launch Active Wall (desktop / laptop only)
   ------------------------------------------------------------ */
   function handleLaunch(pollId: string) {
     const url = `${window.location.origin}/polls/${pollId}`;
@@ -506,9 +524,13 @@ export default function PollGrid({
               {/* WALL / OPTIONS ROW */}
               <div className={cn('flex flex-wrap justify-center gap-2 mb-2')}>
                 <button
-                  onClick={() => handleLaunch(poll.id)}
+                  type="button"
+                  onClick={isMobile ? undefined : () => handleLaunch(poll.id)}
+                  disabled={isMobile}
                   className={cn(
-                    'bg-blue-600 hover:bg-blue-700 px-2 py-1 rounded text-sm font-semibold'
+                    'px-2 py-1 rounded text-sm font-semibold',
+                    'bg-blue-600 hover:bg-blue-700',
+                    isMobile && 'opacity-40 cursor-not-allowed hover:bg-blue-600'
                   )}
                 >
                   🚀 Launch Wall

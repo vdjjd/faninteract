@@ -30,6 +30,21 @@ export default function FanWallGrid({
 
   const refreshTimeout = useRef<NodeJS.Timeout | null>(null);
 
+  // 🔹 Track mobile vs desktop so Launch can be disabled on phones
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    const check = () => {
+      if (typeof window !== 'undefined') {
+        setIsMobile(window.innerWidth < 768);
+      }
+    };
+
+    check();
+    window.addEventListener('resize', check);
+    return () => window.removeEventListener('resize', check);
+  }, []);
+
   useEffect(() => {
     setLocalWalls(walls || []);
   }, [walls]);
@@ -168,7 +183,7 @@ export default function FanWallGrid({
   }
 
   /* ------------------------------------------------------ */
-  /*  LAUNCH                                                */
+  /*  LAUNCH (desktop / laptop only; disabled on mobile)    */
   /* ------------------------------------------------------ */
   function handleLaunch(id: string) {
     const url = `${window.location.origin}/wall/${id}`;
@@ -226,13 +241,12 @@ export default function FanWallGrid({
     <div className={cn("mt-10 w-full max-w-6xl")}>
       <h2 className={cn('text-xl font-semibold mb-3')}>🎤 Fan Zone Walls</h2>
 
-      {/* 🟦 FIXED EMPTY STATE — MATCHES SLIDESHOW EXACTLY */}
+      {/* Empty state */}
       {(!localWalls || localWalls.length === 0) && (
-  <p className={cn("text-sm text-white/60 italic mt-1")}>
-    No Fan Walls created yet.
-  </p>
-)}
-
+        <p className={cn("text-sm text-white/60 italic mt-1")}>
+          No Fan Walls created yet.
+        </p>
+      )}
 
       {/* GRID */}
       {localWalls && localWalls.length > 0 && (
@@ -305,27 +319,52 @@ export default function FanWallGrid({
               </div>
 
               <div className={cn('flex flex-wrap justify-center gap-2 mt-auto pt-2 border-t border-white/10')}>
-                <button onClick={() => handleLaunch(wall.id)} className={cn('bg-blue-600 hover:bg-blue-700 px-2 py-1 rounded text-sm font-semibold')}>
+                {/* 🚀 Launch (disabled on mobile) */}
+                <button
+                  type="button"
+                  onClick={isMobile ? undefined : () => handleLaunch(wall.id)}
+                  disabled={isMobile}
+                  className={cn(
+                    'px-2 py-1 rounded text-sm font-semibold',
+                    'bg-blue-600 hover:bg-blue-700',
+                    isMobile && 'opacity-40 cursor-not-allowed hover:bg-blue-600'
+                  )}
+                >
                   🚀 Launch
                 </button>
 
-                <button onClick={() => handleStart(wall.id)} className={cn('bg-green-600 hover:bg-green-700 px-2 py-1 rounded text-sm font-semibold')}>
+                <button
+                  onClick={() => handleStart(wall.id)}
+                  className={cn('bg-green-600 hover:bg-green-700 px-2 py-1 rounded text-sm font-semibold')}
+                >
                   ▶️ Play
                 </button>
 
-                <button onClick={() => handleStop(wall.id)} className={cn('bg-red-600 hover:bg-red-700 px-2 py-1 rounded text-sm font-semibold')}>
+                <button
+                  onClick={() => handleStop(wall.id)}
+                  className={cn('bg-red-600 hover:bg-red-700 px-2 py-1 rounded text-sm font-semibold')}
+                >
                   ⏹ Stop
                 </button>
 
-                <button onClick={() => handleClear(wall.id)} className={cn('bg-cyan-500 hover:bg-cyan-600 px-2 py-1 rounded text-sm font-semibold')}>
+                <button
+                  onClick={() => handleClear(wall.id)}
+                  className={cn('bg-cyan-500 hover:bg-cyan-600 px-2 py-1 rounded text-sm font-semibold')}
+                >
                   🧹 Clear
                 </button>
 
-                <button onClick={() => onOpenOptions(wall)} className={cn('bg-indigo-500 hover:bg-indigo-600 px-2 py-1 rounded text-sm font-semibold')}>
+                <button
+                  onClick={() => onOpenOptions(wall)}
+                  className={cn('bg-indigo-500 hover:bg-indigo-600 px-2 py-1 rounded text-sm font-semibold')}
+                >
                   ⚙ Options
                 </button>
 
-                <button onClick={() => handleDelete(wall.id)} className={cn('bg-red-700 hover:bg-red-800 px-2 py-1 rounded text-sm font-semibold')}>
+                <button
+                  onClick={() => handleDelete(wall.id)}
+                  className={cn('bg-red-700 hover:bg-red-800 px-2 py-1 rounded text-sm font-semibold')}
+                >
                   ❌ Delete
                 </button>
               </div>
