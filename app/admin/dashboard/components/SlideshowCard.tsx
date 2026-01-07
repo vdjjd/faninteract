@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { cn } from '@/lib/utils';
 import { getSupabaseClient } from '@/lib/supabaseClient';
 
@@ -14,6 +14,21 @@ export default function SlideshowCard({
 }) {
   const [isRenaming, setRenaming] = useState(false);
   const [name, setName] = useState(show.name ?? "");
+
+  // 🔹 Track mobile vs desktop for Launch button behavior
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    const check = () => {
+      if (typeof window !== 'undefined') {
+        setIsMobile(window.innerWidth < 768);
+      }
+    };
+
+    check();
+    window.addEventListener('resize', check);
+    return () => window.removeEventListener('resize', check);
+  }, []);
 
   /* -----------------------------------------------------------
      UPDATE NAME
@@ -74,16 +89,9 @@ export default function SlideshowCard({
   }
 
   /* -----------------------------------------------------------
-     LAUNCH POPUP (desktop / laptop only)
+     LAUNCH POPUP (desktop / laptop only, mobile just disabled)
   ----------------------------------------------------------- */
   function launchPopup() {
-    if (typeof window !== 'undefined' && window.innerWidth < 768) {
-      alert(
-        "Launch is meant for a laptop or desktop so you can put the slideshow on the big screen. You can still control it from your phone."
-      );
-      return;
-    }
-
     const url = `/slideshow/${show.id}`;
 
     window.open(
@@ -154,10 +162,13 @@ export default function SlideshowCard({
 
         {/* LAUNCH */}
         <button
-          onClick={launchPopup}
+          type="button"
+          onClick={isMobile ? undefined : launchPopup}
+          disabled={isMobile}
           className={cn(
+            "px-2 py-1 rounded text-sm font-semibold text-white",
             "bg-blue-600 hover:bg-blue-700",
-            "px-2 py-1 rounded text-sm font-semibold text-white"
+            isMobile && "opacity-40 cursor-not-allowed hover:bg-blue-600"
           )}
         >
           🚀 Launch
