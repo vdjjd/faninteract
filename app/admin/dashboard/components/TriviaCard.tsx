@@ -284,7 +284,7 @@ export default function TriviaCard({
       const { data, error } = await supabase
         .from("trivia_cards")
         .select(
-          "status, countdown_active, countdown_seconds, background_type, background_value, ads_enabled, progressive_wrong_removal_enabled, highlight_the_herd_enabled, streak_multiplier_enabled, points_type, scoring_mode"
+          "status, countdown_active, countdown_seconds, background_type, background_value, ads_enabled, progressive_wrong_removal_enabled, highlight_the_herd_enabled, streak_multiplier_enabled, points_type, scoring_mode, play_mode"
         )
         .eq("id", trivia.id)
         .maybeSingle();
@@ -312,6 +312,7 @@ export default function TriviaCard({
 
       setPointsType((data as any).points_type || "100s");
       setScoringMode(normalizeScoringMode((data as any).scoring_mode));
+      setPlayMode((data as any).play_mode || "auto");
 
       // keep local trivia object in sync (since you mutate it elsewhere)
       trivia.background_type = data.background_type;
@@ -324,6 +325,7 @@ export default function TriviaCard({
       trivia.streak_multiplier_enabled = (data as any).streak_multiplier_enabled;
       trivia.points_type = (data as any).points_type;
       trivia.scoring_mode = (data as any).scoring_mode;
+      trivia.play_mode = (data as any).play_mode;
     };
 
     pollCard();
@@ -1067,7 +1069,8 @@ export default function TriviaCard({
   /* ------------------------------------------------------------
      MANUAL ADVANCE (button + space bar)
      - Only when playMode === "manual" and cardStatus === "running"
-     - Steps wall_phase: question -> answer -> leaderboard -> next question (question)
+     - Steps wall_phase: question -> overlay -> reveal -> leaderboard -> question(next)
+       (all values respect DB constraint: question|overlay|reveal|leaderboard|podium)
   ------------------------------------------------------------ */
   const isManualMode = playMode === "manual";
 
@@ -1090,21 +1093,27 @@ export default function TriviaCard({
       return;
     }
 
-    let currentPhase = (session.wall_phase as string) || "question";
-    let currentQuestion = (session.current_question as number) || 1;
+    const currentPhase = (session.wall_phase as string) || "question";
+    const currentQuestion = (session.current_question as number) || 1;
 
-    let nextPhase = currentPhase;
+    let nextPhase: "question" | "overlay" | "reveal" | "leaderboard" | "podium" =
+      currentPhase as any;
     let nextQuestion = currentQuestion;
 
-    // Simple phase machine:
-    // question -> answer -> leaderboard -> question (next)
+    // Phase machine:
+    // question -> overlay -> reveal -> leaderboard -> question (next)
     if (!currentPhase || currentPhase === "question") {
-      nextPhase = "answer";
-    } else if (currentPhase === "answer") {
+      nextPhase = "overlay";
+    } else if (currentPhase === "overlay") {
+      nextPhase = "reveal";
+    } else if (currentPhase === "reveal") {
       nextPhase = "leaderboard";
     } else if (currentPhase === "leaderboard") {
       nextPhase = "question";
       nextQuestion = currentQuestion + 1;
+    } else if (currentPhase === "podium") {
+      // already end-of-game — do nothing
+      return;
     } else {
       // Any unknown phase, reset to question
       nextPhase = "question";
@@ -1112,13 +1121,21 @@ export default function TriviaCard({
 
     const nowIso = await getServerIsoNow();
 
+    const updatePayload: any = {
+      wall_phase: nextPhase,
+      wall_phase_started_at: nowIso,
+      current_question: nextQuestion,
+    };
+
+    // When we move to the next question, also reset question_started_at
+    if (nextPhase === "question" && nextQuestion !== currentQuestion) {
+      updatePayload.question_started_at = nowIso;
+      updatePayload.status = "running";
+    }
+
     const { error: updateErr } = await supabase
       .from("trivia_sessions")
-      .update({
-        wall_phase: nextPhase,
-        wall_phase_started_at: nowIso,
-        current_question: nextQuestion,
-      })
+      .update(updatePayload)
       .eq("id", session.id);
 
     if (updateErr) {
@@ -1131,7 +1148,6 @@ export default function TriviaCard({
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.code === "Space" || e.key === " ") {
         e.preventDefault();
-        // Fire and forget; errors are logged inside handler
         void handleManualAdvance();
       }
     };
@@ -1440,8 +1456,6 @@ export default function TriviaCard({
 
           {!loadingQuestions && questions.length > 0 && (
             <>
-              {/* NOTE: This vertical scroll is intentional for a long question list.
-                 If you want NO inner scroll, remove max-h-80 and overflow-y-auto. */}
               <div className={cn("max-h-80", "overflow-y-auto", "space-y-3", "pr-1")}>
                 {visibleQuestions.map((q) => {
                   const isActive = !!q.is_active;
