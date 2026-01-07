@@ -69,6 +69,33 @@ export default function TriviaCard({
   if (!trivia) return null;
 
   /* ------------------------------------------------------------
+     HANDHELD DETECTION (phone / small tablet)
+     - Used to disable Launch on mobile / iPad
+  ------------------------------------------------------------ */
+  const [isHandheld, setIsHandheld] = useState(false);
+
+  useEffect(() => {
+    const checkHandheld = () => {
+      if (typeof window === "undefined") return;
+
+      const ua = window.navigator?.userAgent || "";
+      const looksMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(ua);
+      const smallViewport = window.innerWidth < 1024; // treat sub-laptop as handheld
+
+      setIsHandheld(looksMobile || smallViewport);
+    };
+
+    checkHandheld();
+    window.addEventListener("resize", checkHandheld);
+
+    return () => {
+      window.removeEventListener("resize", checkHandheld);
+    };
+  }, []);
+
+  const canLaunchFromThisDevice = !isHandheld;
+
+  /* ------------------------------------------------------------
      QUESTIONS STATE
   ------------------------------------------------------------ */
   const [questions, setQuestions] = useState<any[]>([]);
@@ -280,7 +307,7 @@ export default function TriviaCard({
     const pollCard = async () => {
       if (!trivia?.id) return;
 
-      // ✅ FIX: include scoring_mode + points_type
+      // ✅ include scoring_mode + points_type + play_mode
       const { data, error } = await supabase
         .from("trivia_cards")
         .select(
@@ -1270,10 +1297,21 @@ export default function TriviaCard({
             {/* COL 1 */}
             <div className={cn("flex", "flex-col", "gap-2")}>
               <button
-                onClick={() => onLaunch(trivia.id)}
+                onClick={() => {
+                  if (!canLaunchFromThisDevice) {
+                    alert(
+                      "To launch this wall, please use a laptop or desktop with a second screen connected."
+                    );
+                    return;
+                  }
+                  onLaunch(trivia.id);
+                }}
+                disabled={!canLaunchFromThisDevice}
                 className={cn(
-                  "bg-blue-600 hover:bg-blue-700 py-2 rounded-lg font-semibold h-10",
-                  "flex items-center justify-center"
+                  "py-2 rounded-lg font-semibold h-10 flex items-center justify-center",
+                  canLaunchFromThisDevice
+                    ? "bg-blue-600 hover:bg-blue-700"
+                    : "bg-gray-700/70 cursor-not-allowed opacity-60"
                 )}
               >
                 Launch

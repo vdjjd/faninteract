@@ -74,9 +74,16 @@ export default function SlideshowCard({
   }
 
   /* -----------------------------------------------------------
-     LAUNCH POPUP (does NOT mark as playing — Option A)
+     LAUNCH POPUP (desktop / laptop only)
   ----------------------------------------------------------- */
   function launchPopup() {
+    if (typeof window !== 'undefined' && window.innerWidth < 768) {
+      alert(
+        "Launch is meant for a laptop or desktop so you can put the slideshow on the big screen. You can still control it from your phone."
+      );
+      return;
+    }
+
     const url = `/slideshow/${show.id}`;
 
     window.open(

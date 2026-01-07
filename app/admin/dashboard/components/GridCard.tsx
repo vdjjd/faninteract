@@ -39,8 +39,18 @@ export default function GridCard({
 
   /* -------------------------------------------------- */
   /* 🚀 OPEN WALL IN REAL BROWSER (OBS-SAFE)            */
+  /*   - Desktop / laptop: use openbrowser: protocol    */
+  /*   - Phone: show info message, do NOT try protocol  */
   /* -------------------------------------------------- */
   function launchPopout() {
+    if (typeof window !== "undefined" && window.innerWidth < 768) {
+      alert(
+        "Launch is meant for a laptop or desktop so you can put the wall on the big screen. " +
+        "You can still control everything from your phone."
+      );
+      return;
+    }
+
     const url = `${window.location.origin}/wall/${id}`;
 
     console.log("Launching EXTERNAL browser via protocol:", url);

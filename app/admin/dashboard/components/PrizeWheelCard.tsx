@@ -266,9 +266,17 @@ export default function PrizeWheelCard({
   }
 
   /* ------------------------------------------------------------
-     Launch Wheel Popup
+     Launch Wheel Popup (patched for mobile)
   ------------------------------------------------------------ */
   function handleLaunch() {
+    if (typeof window !== "undefined" && window.innerWidth < 768) {
+      alert(
+        "Launch is meant for a laptop or desktop so you can put the wheel on the big screen. " +
+          "You can still control everything from your phone."
+      );
+      return;
+    }
+
     const url = `${window.location.origin}/prizewheel/${wheel.id}`;
 
     const popup = window.open(
