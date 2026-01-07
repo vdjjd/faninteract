@@ -108,6 +108,21 @@ export default function PrizeWheelCard({
   );
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);
 
+  // 🔹 Desktop vs mobile: disable Launch on phones
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    const check = () => {
+      if (typeof window !== "undefined") {
+        setIsMobile(window.innerWidth < 768);
+      }
+    };
+
+    check();
+    window.addEventListener("resize", check);
+    return () => window.removeEventListener("resize", check);
+  }, []);
+
   /* ------------------------------------------------------------
      Sync thank-you popup state when wheel prop changes
   ------------------------------------------------------------ */
@@ -266,17 +281,9 @@ export default function PrizeWheelCard({
   }
 
   /* ------------------------------------------------------------
-     Launch Wheel Popup (patched for mobile)
+     Launch Wheel Popup (no alert, disabled via isMobile)
   ------------------------------------------------------------ */
   function handleLaunch() {
-    if (typeof window !== "undefined" && window.innerWidth < 768) {
-      alert(
-        "Launch is meant for a laptop or desktop so you can put the wheel on the big screen. " +
-          "You can still control everything from your phone."
-      );
-      return;
-    }
-
     const url = `${window.location.origin}/prizewheel/${wheel.id}`;
 
     const popup = window.open(
@@ -515,11 +522,15 @@ export default function PrizeWheelCard({
                 ⏹ Stop
               </button>
 
-              {/* LAUNCH */}
+              {/* LAUNCH (greyed out / disabled on mobile) */}
               <button
-                onClick={handleLaunch}
+                type="button"
+                onClick={isMobile ? undefined : handleLaunch}
+                disabled={isMobile}
                 className={cn(
-                  "px-3 py-1 rounded text-sm font-semibold bg-blue-600 hover:bg-blue-700"
+                  "px-3 py-1 rounded text-sm font-semibold",
+                  "bg-blue-600 hover:bg-blue-700",
+                  isMobile && "opacity-40 cursor-not-allowed hover:bg-blue-600"
                 )}
               >
                 🚀 Launch
