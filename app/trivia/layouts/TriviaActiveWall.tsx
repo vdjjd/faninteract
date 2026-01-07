@@ -299,11 +299,15 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
   const brightness = trivia?.background_brightness ?? 100;
 
   /* -------------------------------------------------- */
-  /* LIVE CARD STATUS                                   */
+  /* LIVE CARD STATUS + PLAY MODE                       */
   /* -------------------------------------------------- */
   const [cardStatus, setCardStatus] = useState<string>(trivia?.status || "idle");
   const [cardCountdownActive, setCardCountdownActive] = useState<boolean>(
     !!trivia?.countdown_active
+  );
+
+  const [playMode, setPlayMode] = useState<string>(
+    trivia?.play_mode || "auto"
   );
 
   const [progressiveWrongRemovalEnabled, setProgressiveWrongRemovalEnabled] =
@@ -323,6 +327,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
   useEffect(() => {
     setCardStatus(trivia?.status || "idle");
     setCardCountdownActive(!!trivia?.countdown_active);
+    setPlayMode(trivia?.play_mode || "auto");
     setProgressiveWrongRemovalEnabled(
       !!trivia?.progressive_wrong_removal_enabled
     );
@@ -341,6 +346,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
     trivia?.id,
     trivia?.status,
     trivia?.countdown_active,
+    trivia?.play_mode,
     trivia?.progressive_wrong_removal_enabled,
     (trivia as any)?.herd_highlight_enabled,
     (trivia as any)?.highlight_the_herd_enabled,
@@ -354,7 +360,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
     let alive = true;
 
     const baseCols =
-      "status,countdown_active,progressive_wrong_removal_enabled,streak_multiplier_enabled";
+      "status,countdown_active,progressive_wrong_removal_enabled,streak_multiplier_enabled,play_mode";
 
     const trySelect = async (col: string | null) => {
       const cols = col ? `${baseCols},${col}` : baseCols;
@@ -404,6 +410,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
 
       setCardStatus((data as any).status);
       setCardCountdownActive(!!(data as any).countdown_active);
+      setPlayMode((data as any).play_mode || "auto");
       setProgressiveWrongRemovalEnabled(
         !!(data as any).progressive_wrong_removal_enabled
       );
@@ -464,6 +471,8 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
     pickPublicName(trivia)
   );
 
+  const isManualMode = playMode === "manual";
+
   useEffect(() => {
     setPublicName(pickPublicName(trivia));
   }, [trivia?.public_name, trivia?.title, trivia?.id]);
@@ -489,6 +498,10 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
           if (typeof next.status === "string") setCardStatus(next.status);
           if (typeof next.countdown_active === "boolean")
             setCardCountdownActive(!!next.countdown_active);
+
+          if (typeof next.play_mode === "string") {
+            setPlayMode(next.play_mode || "auto");
+          }
 
           if (typeof next.progressive_wrong_removal_enabled !== "undefined") {
             setProgressiveWrongRemovalEnabled(
@@ -680,7 +693,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
       setWallPhase(safePhase);
       setWallPhaseStartedAt(session.wall_phase_started_at ?? null);
 
-      if (!session.wall_phase) {
+      if (!session.wall_phase && !isManualMode) {
         setWallPhaseAuthoritative("question");
       }
 
@@ -719,7 +732,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
       alive = false;
       clearInterval(interval);
     };
-  }, [trivia?.id]);
+  }, [trivia?.id, isManualMode]);
 
   /* -------------------------------------------------- */
   /* Derived flags                                      */
@@ -793,6 +806,21 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
   useEffect(() => {
     let intervalId: number | null = null;
 
+    // 🔹 MANUAL MODE: timer no longer controls anything
+    if (isManualMode) {
+      if (isPaused) {
+        setLocked(true);
+        setProgress(0);
+      } else {
+        setLocked(wallPhase !== "question");
+        setProgress(wallPhase === "question" ? 1 : 0);
+      }
+
+      return () => {
+        if (intervalId != null) window.clearInterval(intervalId);
+      };
+    }
+
     if (isPaused) {
       setLocked(true);
       return () => {
@@ -865,6 +893,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
     questionStartedAt,
     timerSeconds,
     wallPhase,
+    isManualMode,
   ]);
 
   /* -------------------------------------------------- */
@@ -873,6 +902,8 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
   const phaseTickLockRef = useRef(false);
 
   useEffect(() => {
+    // 🔹 MANUAL MODE: host / dashboard fully control phases
+    if (isManualMode) return;
     if (!isActiveGame) return;
     if (isPaused) return;
     if (!sessionId) return;
@@ -932,6 +963,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
     wallPhaseStartedAt,
     isFinalQuestion,
     currentQuestionNumber,
+    isManualMode,
   ]);
 
   /* -------------------------------------------------- */
@@ -1542,12 +1574,13 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                                 : "linear-gradient(to right,#4ade80,#22c55e)",
                             position: "relative",
                             overflow: "hidden",
-                            transition: isPaused
+                            transition: isPaused || isManualMode
                               ? "none"
                               : "width 0.05s linear, background 0.2s ease",
                           }}
                         >
                           {!isPaused &&
+                            !isManualMode &&
                             wallPhase === "question" &&
                             !revealAnswer &&
                             !locked && <div className="fi-timer-shine" />}

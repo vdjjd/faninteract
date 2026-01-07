@@ -840,12 +840,11 @@ export default function TriviaUserInterfacePage() {
   /* ---------------------------------------------------------
      ✅ Session over detection + close handler + continue button
   --------------------------------------------------------- */
-  const isLastQuestion = currentQuestionIndex === questions.length - 1;
 
+  // Manual-advance friendly: only host controls "session over"
   const isSessionOver =
     session?.status === "finished" ||
-    wallPhase === "podium" ||
-    (isLastQuestion && wallPhase === "leaderboard");
+    wallPhase === "podium";
 
   function handleCloseTab() {
     try {
