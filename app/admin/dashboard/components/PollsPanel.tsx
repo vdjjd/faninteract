@@ -14,6 +14,21 @@ export default function PollGrid({ host, refreshPolls, onOpenOptions }: PollGrid
   const [localPolls, setLocalPolls] = useState<any[]>([]);
   const refreshTimeout = useRef<NodeJS.Timeout | null>(null);
 
+  // 🔹 Desktop vs mobile: disable Launch on phones
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    const check = () => {
+      if (typeof window !== 'undefined') {
+        setIsMobile(window.innerWidth < 768);
+      }
+    };
+
+    check();
+    window.addEventListener('resize', check);
+    return () => window.removeEventListener('resize', check);
+  }, []);
+
   /* ------------------------------------------------------------
      ✅ Load all polls for this host
   ------------------------------------------------------------ */
@@ -244,15 +259,13 @@ export default function PollGrid({ host, refreshPolls, onOpenOptions }: PollGrid
               )}
             >
               <button
-                onClick={() => handleLaunch(poll.id)}
+                type="button"
+                onClick={isMobile ? undefined : () => handleLaunch(poll.id)}
+                disabled={isMobile}
                 className={cn(
-                  'bg-blue-600',
-                  'hover:bg-blue-700',
-                  'px-2',
-                  'py-1',
-                  'rounded',
-                  'text-sm',
-                  'font-semibold'
+                  'px-2 py-1 rounded text-sm font-semibold',
+                  'bg-blue-600 hover:bg-blue-700',
+                  isMobile && 'opacity-40 cursor-not-allowed hover:bg-blue-600'
                 )}
               >
                 🚀 Launch
