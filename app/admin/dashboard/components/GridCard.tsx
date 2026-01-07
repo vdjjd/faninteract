@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { supabase } from "@/lib/supabaseClient";
 import { cn } from "../../../../lib/utils";
 
@@ -31,26 +31,31 @@ export default function GridCard({
   onClear,
   onDelete,
 }: GridCardProps) {
-
   const icon =
     type === 'fanwall' ? '🎤' :
     type === 'poll' ? '📊' :
     '🧠';
 
+  // 🔹 Track mobile vs desktop so Launch can be disabled on phones
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    const check = () => {
+      if (typeof window !== 'undefined') {
+        setIsMobile(window.innerWidth < 768);
+      }
+    };
+
+    check();
+    window.addEventListener('resize', check);
+    return () => window.removeEventListener('resize', check);
+  }, []);
+
   /* -------------------------------------------------- */
   /* 🚀 OPEN WALL IN REAL BROWSER (OBS-SAFE)            */
-  /*   - Desktop / laptop: use openbrowser: protocol    */
-  /*   - Phone: show info message, do NOT try protocol  */
+  /*   - Desktop / laptop only                          */
   /* -------------------------------------------------- */
   function launchPopout() {
-    if (typeof window !== "undefined" && window.innerWidth < 768) {
-      alert(
-        "Launch is meant for a laptop or desktop so you can put the wall on the big screen. " +
-        "You can still control everything from your phone."
-      );
-      return;
-    }
-
     const url = `${window.location.origin}/wall/${id}`;
 
     console.log("Launching EXTERNAL browser via protocol:", url);
@@ -114,9 +119,13 @@ export default function GridCard({
 
         {/* 🚀 LAUNCH WALL (External Browser) */}
         <button
-          onClick={launchPopout}
+          type="button"
+          onClick={isMobile ? undefined : launchPopout}
+          disabled={isMobile}
           className={cn(
-            'bg-blue-600 hover:bg-blue-700 px-2 py-1 rounded text-sm font-semibold'
+            'px-2 py-1 rounded text-sm font-semibold',
+            'bg-blue-600 hover:bg-blue-700',
+            isMobile && 'opacity-40 cursor-not-allowed hover:bg-blue-600'
           )}
         >
           🚀 Launch
@@ -128,7 +137,7 @@ export default function GridCard({
             onClick={() => onStart(id)}
             className={cn('bg-green-600 hover:bg-green-700 px-2 py-1 rounded text-sm font-semibold')}
           >
-            ▶️ Start
+          ▶️ Start
           </button>
         )}
 
