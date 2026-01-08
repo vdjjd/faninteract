@@ -43,9 +43,26 @@ export default function ShootPage({
   const dunkRAF = useRef<number | null>(null);
   const dunkStart = useRef<number>(0);
 
+  // ✅ DEV / TEST controls
+  const [devEnabled, setDevEnabled] = useState(false);
+  const [devArmed, setDevArmed] = useState(false);
+  const devHoldTimer = useRef<number | null>(null);
+
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 250);
     return () => clearInterval(id);
+  }, []);
+
+  // ✅ decide whether dev panel shows
+  useEffect(() => {
+    try {
+      const url = new URL(window.location.href);
+      const q = url.searchParams.get("dev");
+      const ls = localStorage.getItem("bb_dev");
+      setDevEnabled(q === "1" || ls === "1");
+    } catch {
+      setDevEnabled(false);
+    }
   }, []);
 
   // load game state + realtime
@@ -110,8 +127,7 @@ export default function ShootPage({
     if (countdownLeft && countdownLeft > 0) return "Get ready…";
     if (locked) return "Locked…";
     if (mode === "dunk") return "STOP the bar in the center to DUNK!";
-    if (mode === "three")
-      return `3PT MODE${shotsLeft != null ? ` • ${shotsLeft} to dunk` : ""}`;
+    if (mode === "three") return `3PT MODE${shotsLeft != null ? ` • ${shotsLeft} to dunk` : ""}`;
     return "Swipe up to shoot";
   }, [game?.game_running, countdownLeft, locked, mode, shotsLeft]);
 
@@ -272,6 +288,19 @@ export default function ShootPage({
     supabase.removeChannel(channel);
   }
 
+  // ✅ DEV helpers
+  function armDev() {
+    if (!devEnabled) return;
+    if (devHoldTimer.current) window.clearTimeout(devHoldTimer.current);
+    devHoldTimer.current = window.setTimeout(() => setDevArmed(true), 600);
+  }
+
+  function disarmDev() {
+    if (devHoldTimer.current) window.clearTimeout(devHoldTimer.current);
+    devHoldTimer.current = null;
+    setDevArmed(false);
+  }
+
   function onPointerDown(e: React.PointerEvent) {
     if (!acceptingShots) return;
     if (locked) return;
@@ -316,6 +345,117 @@ export default function ShootPage({
       onPointerUp={onPointerUp}
     >
       <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.70)" }} />
+
+      {/* ✅ DEV panel (top-right) */}
+      {devEnabled && (
+        <div
+          style={{
+            position: "absolute",
+            right: 14,
+            top: 14,
+            zIndex: 80,
+            width: 220,
+            padding: 10,
+            borderRadius: 14,
+            background: "rgba(0,0,0,0.60)",
+            border: "1px solid rgba(255,255,255,0.18)",
+            color: "#fff",
+            backdropFilter: "blur(8px)",
+          }}
+        >
+          <div style={{ fontWeight: 1000, fontSize: 12, opacity: 0.9 }}>DEV / TEST</div>
+
+          <button
+            onPointerDown={armDev}
+            onPointerUp={disarmDev}
+            onPointerCancel={disarmDev}
+            onPointerLeave={disarmDev}
+            style={{
+              marginTop: 8,
+              width: "100%",
+              padding: "10px 10px",
+              borderRadius: 12,
+              border: "1px solid rgba(255,255,255,0.20)",
+              background: devArmed ? "rgba(34,197,94,0.35)" : "rgba(255,255,255,0.10)",
+              color: "#fff",
+              fontWeight: 1000,
+            }}
+          >
+            {devArmed ? "ARMED" : "Hold 0.6s to Arm"}
+          </button>
+
+          <button
+            disabled={!devArmed}
+            onClick={() => {
+              setMode("dunk"); // local only
+              setShotsLeft(null);
+              setToast("FORCED DUNK MODE (local)");
+              setTimeout(() => setToast(null), 1200);
+              setDevArmed(false);
+            }}
+            style={{
+              marginTop: 8,
+              width: "100%",
+              padding: "12px 10px",
+              borderRadius: 12,
+              border: "none",
+              background: devArmed ? "#22c55e" : "rgba(34,197,94,0.25)",
+              color: "#06210f",
+              fontWeight: 1000,
+            }}
+          >
+            Force DUNK MODE
+          </button>
+
+          <button
+            disabled={!devArmed}
+            onClick={() => {
+              sendDunk(1); // guaranteed dunk
+              setToast("TEST DUNK SENT (100%)");
+              setTimeout(() => setToast(null), 1000);
+              setDevArmed(false);
+            }}
+            style={{
+              marginTop: 8,
+              width: "100%",
+              padding: "12px 10px",
+              borderRadius: 12,
+              border: "none",
+              background: devArmed ? "#ffd166" : "rgba(255,209,102,0.25)",
+              color: "#111827",
+              fontWeight: 1000,
+            }}
+          >
+            Send TEST DUNK (100%)
+          </button>
+
+          <button
+            disabled={!devArmed}
+            onClick={() => {
+              sendDunk(0); // guaranteed miss
+              setToast("TEST DUNK SENT (MISS)");
+              setTimeout(() => setToast(null), 1000);
+              setDevArmed(false);
+            }}
+            style={{
+              marginTop: 8,
+              width: "100%",
+              padding: "12px 10px",
+              borderRadius: 12,
+              border: "1px solid rgba(255,255,255,0.18)",
+              background: devArmed ? "rgba(255,255,255,0.10)" : "rgba(255,255,255,0.06)",
+              color: "#fff",
+              fontWeight: 1000,
+            }}
+          >
+            Send TEST DUNK (MISS)
+          </button>
+
+          <div style={{ marginTop: 8, fontSize: 11, opacity: 0.8, lineHeight: 1.25 }}>
+            Enable with <b>?dev=1</b> or localStorage <b>bb_dev=1</b>.
+          </div>
+        </div>
+      )}
 
       {/* Header */}
       <div style={{ position: "relative", zIndex: 5, padding: 18 }}>
