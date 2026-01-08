@@ -1,421 +1,567 @@
+// components/BasketballModerationModal.tsx
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { useParams } from "next/navigation";
-import { getSupabaseClient } from "@/lib/supabaseClient";
+import { useState, useEffect } from "react";
+import { supabase } from "@/lib/supabaseClient";
+import { cn } from "@/lib/utils";
 
-const supabase = getSupabaseClient();
-
-type EntryRow = {
+interface Entry {
   id: string;
-  game_id: string | null;
-  guest_profile_id: string | null;
-  display_name: string | null;
-  selfie_url: string | null;
-  device_token: string | null;
-  created_at?: string | null;
-};
+  game_id: string;
+  guest_profile_id: string;
+  status: "pending" | "approved" | "rejected";
+  photo_url?: string;
+  first_name?: string;
+  last_name?: string;
+  created_at: string;
+  device_token?: string | null;
 
-type PlayerRow = {
-  id: string;
-  game_id: string | null;
-  lane_index: number | null;
-  state: string | null;
-};
-
-function normalizeLaneIndex(input: number | null | undefined) {
-  if (typeof input !== "number" || !Number.isFinite(input)) return null;
-
-  // If UI passes 0–9, convert to 1–10. If already 1–10, keep.
-  if (input >= 0 && input <= 9) return input + 1;
-  if (input >= 1 && input <= 10) return input;
-
-  // Anything else => null (so we don’t violate check constraint)
-  return null;
+  guest_profiles: {
+    first_name: string | null;
+    last_name: string | null;
+    email: string | null;
+    phone: string | null;
+  } | null;
 }
 
-export default function BasketballModerationPage() {
-  const params = useParams<{ gameId: string }>();
-  const gameId = params?.gameId;
+interface Player {
+  id: string;
+  game_id: string;
+  guest_profile_id: string;
+  display_name: string | null;
+  selfie_url: string | null;
+  lane_index: number | null;
+  score: number | null;
+  disconnected_at: string | null;
 
-  const [loading, setLoading] = useState(true);
-  const [entries, setEntries] = useState<EntryRow[]>([]);
-  const [approved, setApproved] = useState<PlayerRow[]>([]);
-  const [busyId, setBusyId] = useState<string | null>(null);
-  const [errorMsg, setErrorMsg] = useState<string>("");
+  // ✅ IMPORTANT: your table uses state
+  state: "approved" | "removed" | "disconnected" | null;
 
-  async function loadAll() {
-    if (!gameId) return;
-    setLoading(true);
-    setErrorMsg("");
+  device_token?: string | null;
+  approved_at?: string | null;
+}
 
-    try {
-      // Pending queue (bb_game_entries)
-      // NOTE: if your table uses different column names (status/state), adjust the filter.
-      const { data: eData, error: eErr } = await supabase
-        .from("bb_game_entries")
-        .select("id,game_id,guest_profile_id,display_name,selfie_url,device_token,created_at")
-        .eq("game_id", gameId)
-        // If you have a status column, uncomment one of these:
-        // .eq("status", "pending")
-        // .eq("state", "pending")
-        .order("created_at", { ascending: true });
+export default function BasketballModerationModal({
+  gameId,
+  onClose,
+}: {
+  gameId: string;
+  onClose: () => void;
+}) {
+  const [entries, setEntries] = useState<Entry[]>([]);
+  const [players, setPlayers] = useState<Player[]>([]);
+  const [selectedPhoto, setSelectedPhoto] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ text: string; color: string } | null>(
+    null
+  );
 
-      if (eErr) {
-        console.error("❌ bb_game_entries load error:", eErr);
-        setErrorMsg(`Entries load failed: ${eErr.message}`);
-      } else {
-        setEntries((eData as any[]) || []);
-      }
-
-      // Approved players (to show lane occupancy)
-      const { data: pData, error: pErr } = await supabase
-        .from("bb_game_players")
-        .select("id,game_id,lane_index,state")
-        .eq("game_id", gameId)
-        .eq("state", "approved");
-
-      if (pErr) {
-        console.error("❌ bb_game_players load error:", pErr);
-      } else {
-        setApproved((pData as any[]) || []);
-      }
-    } finally {
-      setLoading(false);
-    }
+  function showToast(text: string, color = "#00ff88") {
+    setToast({ text, color });
+    setTimeout(() => setToast(null), 2400);
   }
 
-  useEffect(() => {
-    loadAll();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gameId]);
-
-  const usedLanes = useMemo(() => {
-    const s = new Set<number>();
-    for (const p of approved) {
-      if (typeof p.lane_index === "number") s.add(p.lane_index);
-    }
-    return s;
-  }, [approved]);
-
-  function findNextOpenLane(): number | null {
-    for (let lane = 1; lane <= 10; lane++) {
-      if (!usedLanes.has(lane)) return lane;
-    }
-    return null;
-  }
-
-  async function approveEntry(entry: EntryRow, requestedLane?: number | null) {
-    if (!gameId) return;
-    if (!entry?.id) return;
-
-    setBusyId(entry.id);
-    setErrorMsg("");
-
-    try {
-      // Choose lane
-      const lane =
-        normalizeLaneIndex(requestedLane ?? null) ?? findNextOpenLane();
-
-      // If no lane available, you can still approve without lane_index (null).
-      // But your UNIQUE lane index only applies when lane_index is not null.
-      const laneIndex = lane ?? null;
-
-      // ✅ CRITICAL FIX: set state to an allowed value (approved)
-      const payload: any = {
-        game_id: gameId,
-        guest_profile_id: entry.guest_profile_id,
-        display_name: entry.display_name,
-        selfie_url: entry.selfie_url,
-        lane_index: laneIndex,
-        score: 0,
-        disconnected_at: null,
-        state: "approved",
-        approved_at: new Date().toISOString(),
-        device_token: entry.device_token ?? null,
-        entry_id: entry.id,
-      };
-
-      const { data, error } = await supabase
-        .from("bb_game_players")
-        .insert(payload)
-        .select("id,game_id,lane_index,state")
-        .maybeSingle();
-
-      if (error) {
-        // This prints the real details (constraint name, etc)
-        console.error("❌ Insert error (bb_game_players):", error);
-        setErrorMsg(
-          `Approve failed: ${error.message}${
-            (error as any).details ? ` — ${(error as any).details}` : ""
-          }`
-        );
-        return;
-      }
-
-      // Optimistically update UI
-      if (data) setApproved((prev) => [...prev, data as any]);
-      setEntries((prev) => prev.filter((e) => e.id !== entry.id));
-
-      // Optional: mark entry as approved if your bb_game_entries table supports it.
-      // This is safe-ignored if the column doesn't exist.
-      try {
-        await supabase
-          .from("bb_game_entries")
-          .update({ approved_at: new Date().toISOString(), status: "approved" })
-          .eq("id", entry.id);
-      } catch {
-        // ignore
-      }
-    } finally {
-      setBusyId(null);
-    }
-  }
-
-  async function removePlayer(playerId: string) {
-    if (!playerId) return;
-
-    const { error } = await supabase
-      .from("bb_game_players")
-      .update({ state: "removed" })
-      .eq("id", playerId);
+  async function loadEntries() {
+    const { data, error } = await supabase
+      .from("bb_game_entries")
+      .select(
+        "id,game_id,guest_profile_id,status,photo_url,first_name,last_name,created_at,device_token, guest_profiles(first_name,last_name,email,phone)"
+      )
+      .eq("game_id", gameId)
+      .order("created_at", { ascending: false });
 
     if (error) {
-      console.error("❌ remove player error:", error);
-      setErrorMsg(`Remove failed: ${error.message}`);
+      console.error("❌ loadEntries error:", error);
       return;
     }
 
-    // reload lanes + lists
-    loadAll();
+    setEntries((data ?? []) as unknown as Entry[]);
   }
 
-  if (!gameId) {
-    return (
-      <div style={{ minHeight: "100vh", background: "#020617", color: "#fff", padding: 20 }}>
-        Missing gameId in route.
-      </div>
-    );
+  async function loadPlayers() {
+    const { data, error } = await supabase
+      .from("bb_game_players")
+      .select("*")
+      .eq("game_id", gameId)
+      .order("lane_index", { ascending: true });
+
+    if (error) {
+      console.error("❌ loadPlayers error:", error);
+      return;
+    }
+
+    setPlayers((data || []) as Player[]);
   }
+
+  // ✅ Use state-aware lane allocation:
+  // Only lanes of APPROVED + currently connected (disconnected_at is null) should block a lane.
+  function getNextLane() {
+    const used = new Set(
+      players
+        .filter((p) => p.state === "approved" && p.disconnected_at === null)
+        .map((p) => p.lane_index)
+        .filter((x): x is number => typeof x === "number")
+    );
+
+    for (let lane = 1; lane <= 10; lane++) if (!used.has(lane)) return lane;
+    return null;
+  }
+
+  async function handleApprove(entryId: string) {
+    const entry = entries.find((e) => e.id === entryId);
+    if (!entry) return;
+
+    const lane = getNextLane();
+    if (lane === null) {
+      showToast("❌ All 10 player spots are full!", "#ff4444");
+      return;
+    }
+
+    const displayName = `${entry.first_name ?? ""} ${
+      entry.last_name ?? ""
+    }`.trim();
+
+    // ✅ CRITICAL FIX: must set state to allowed value, or default 'active' fails CHECK constraint
+    const payload = {
+      game_id: gameId,
+      guest_profile_id: entry.guest_profile_id,
+      display_name: displayName,
+      selfie_url: entry.photo_url ?? null,
+      lane_index: lane,
+      score: 0,
+      disconnected_at: null,
+
+      state: "approved" as const, // ✅ fixes 400
+      approved_at: new Date().toISOString(),
+
+      // optional extras that exist in your schema
+      device_token: entry.device_token ?? null,
+      entry_id: entry.id,
+    };
+
+    const { error: insertErr } = await supabase
+      .from("bb_game_players")
+      .insert([payload]);
+
+    if (insertErr) {
+      console.error("❌ Insert error:", insertErr);
+      const details =
+        (insertErr as any)?.details || (insertErr as any)?.hint || "";
+      showToast(`Insert failed${details ? `: ${details}` : ""}`, "#ff4444");
+      return;
+    }
+
+    await supabase
+      .from("bb_game_entries")
+      .update({ status: "approved" })
+      .eq("id", entryId);
+
+    showToast("✅ Player Approved");
+
+    // ✅ Immediately refresh so UI reflects new player + lane usage
+    loadPlayers();
+    loadEntries();
+  }
+
+  async function handleReject(entryId: string) {
+    const { error } = await supabase
+      .from("bb_game_entries")
+      .update({ status: "rejected" })
+      .eq("id", entryId);
+
+    if (error) console.error("❌ reject error:", error);
+
+    showToast("🚫 Rejected", "#ff4444");
+    loadEntries();
+  }
+
+  async function handleDelete(entryId: string) {
+    const { error } = await supabase.from("bb_game_entries").delete().eq("id", entryId);
+    if (error) console.error("❌ delete entry error:", error);
+
+    showToast("🗑 Deleted", "#888");
+    loadEntries();
+  }
+
+  async function handleClearActive() {
+    // ✅ Active = approved + connected (disconnected_at null)
+    const activePlayers = players.filter(
+      (p) => p.state === "approved" && p.disconnected_at === null
+    );
+
+    if (activePlayers.length === 0) {
+      showToast("No active players to clear.", "#ffaa22");
+      return;
+    }
+
+    const nowIso = new Date().toISOString();
+
+    // ✅ IMPORTANT: set state='disconnected' to match your CHECK constraint & logic
+    const { error } = await supabase
+      .from("bb_game_players")
+      .update({ disconnected_at: nowIso, state: "disconnected" })
+      .eq("game_id", gameId)
+      .eq("state", "approved")
+      .is("disconnected_at", null);
+
+    if (error) {
+      console.error("❌ clear active error:", error);
+      showToast("Clear failed", "#ff4444");
+      return;
+    }
+
+    showToast("🔄 Active players moved to Previously Played");
+    loadPlayers();
+  }
+
+  async function handleReAdd(player: Player) {
+    const lane = getNextLane();
+    if (lane === null) {
+      showToast("❌ No open player spots!", "#ff4444");
+      return;
+    }
+
+    // ✅ Re-add means: set to approved + connected
+    const { error } = await supabase
+      .from("bb_game_players")
+      .update({
+        disconnected_at: null,
+        lane_index: lane,
+        score: 0,
+        state: "approved",
+        approved_at: new Date().toISOString(),
+      })
+      .eq("id", player.id);
+
+    if (error) {
+      console.error("❌ re-add error:", error);
+      showToast("Re-add failed", "#ff4444");
+      return;
+    }
+
+    showToast("🔁 Player Re-Added");
+    loadPlayers();
+  }
+
+  useEffect(() => {
+    if (!gameId) return;
+
+    loadEntries();
+    loadPlayers();
+
+    const entriesChannel = supabase
+      .channel(`mod_entries_${gameId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "bb_game_entries",
+          filter: `game_id=eq.${gameId}`,
+        },
+        () => loadEntries()
+      )
+      .subscribe();
+
+    const playersChannel = supabase
+      .channel(`mod_players_${gameId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "bb_game_players",
+          filter: `game_id=eq.${gameId}`,
+        },
+        () => loadPlayers()
+      )
+      .subscribe();
+
+    const interval = setInterval(() => {
+      loadEntries();
+      loadPlayers();
+    }, 3000);
+
+    return () => {
+      supabase.removeChannel(entriesChannel);
+      supabase.removeChannel(playersChannel);
+      clearInterval(interval);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gameId]);
+
+  const pending = entries.filter((e) => e.status === "pending");
+  const rejected = entries.filter((e) => e.status === "rejected");
+
+  // ✅ Active = approved + connected
+  const active = players.filter(
+    (p) => p.state === "approved" && p.disconnected_at === null
+  );
+
+  // ✅ Previous = disconnected OR disconnected_at not null
+  const previous = players.filter(
+    (p) => p.state === "disconnected" || p.disconnected_at !== null
+  );
 
   return (
     <div
-      style={{
-        minHeight: "100vh",
-        background: "#020617",
-        color: "#fff",
-        padding: 16,
-        fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, sans-serif",
-      }}
+      className={cn(
+        "fixed inset-0 bg-black/70 backdrop-blur-xl z-[9999] flex items-center justify-center"
+      )}
+      onClick={onClose}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
-        <div style={{ fontSize: 18, fontWeight: 900 }}>Moderate Players</div>
-        <div style={{ opacity: 0.7, fontSize: 12 }}>Game: {gameId}</div>
-        <div style={{ marginLeft: "auto" }}>
+      <div
+        className={cn(
+          "relative w-[95vw] max-w-[1100px] max-h-[90vh] overflow-y-auto rounded-2xl",
+          "bg-[#0b0f19]/95 p-6 shadow-[0_0_40px_rgba(255,140,0,0.45)]"
+        )}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button
+          onClick={onClose}
+          className={cn(
+            "absolute top-3 right-3 text-white/70 hover:text-white text-xl"
+          )}
+        >
+          ✕
+        </button>
+
+        <h1 className={cn("text-center", "text-2xl", "font-bold", "mb-6")}>
+          Basketball Player Moderation
+        </h1>
+
+        <div className={cn("text-right", "mb-4")}>
           <button
-            onClick={loadAll}
-            style={{
-              padding: "8px 12px",
-              borderRadius: 12,
-              border: "1px solid rgba(148,163,184,0.35)",
-              background: "rgba(15,23,42,0.9)",
-              color: "#fff",
-              fontWeight: 800,
-              cursor: "pointer",
-            }}
+            onClick={handleClearActive}
+            className={cn(
+              "px-4",
+              "py-2",
+              "bg-red-600",
+              "hover:bg-red-700",
+              "text-white",
+              "rounded-lg",
+              "shadow"
+            )}
           >
-            Refresh
+            Clear Active Players
           </button>
         </div>
-      </div>
 
-      {errorMsg && (
-        <div
-          style={{
-            marginBottom: 12,
-            padding: 10,
-            borderRadius: 14,
-            border: "1px solid rgba(248,113,113,0.45)",
-            background: "rgba(127,29,29,0.35)",
-            color: "#fee2e2",
-            fontWeight: 700,
-            fontSize: 13,
-          }}
-        >
-          {errorMsg}
+        <Section
+          title="Pending"
+          color="#ffd966"
+          items={pending}
+          render={(e: Entry) => (
+            <EntryCard
+              key={e.id}
+              entry={e}
+              onApprove={() => handleApprove(e.id)}
+              onReject={() => handleReject(e.id)}
+              onImageClick={setSelectedPhoto}
+            />
+          )}
+        />
+
+        <Section
+          title="Active Players"
+          color="#00ff99"
+          items={active}
+          render={(p: Player) => (
+            <PlayerCard
+              key={p.id}
+              player={p}
+              active
+              onMoveToPending={async () => {
+                // NOTE: you can keep delete if you truly want to remove the player row.
+                // If you'd rather preserve history, update state='removed' instead.
+                await supabase.from("bb_game_players").delete().eq("id", p.id);
+
+                await supabase.from("bb_game_entries").insert([
+                  {
+                    game_id: gameId,
+                    guest_profile_id: p.guest_profile_id,
+                    status: "pending",
+                    first_name: p.display_name?.split(" ")[0] ?? "",
+                    last_name: p.display_name?.split(" ")[1] ?? "",
+                    photo_url: p.selfie_url,
+                  },
+                ]);
+
+                showToast("🔁 Player moved to Pending");
+                loadPlayers();
+                loadEntries();
+              }}
+              onMoveToPrevious={async () => {
+                const nowIso = new Date().toISOString();
+
+                // ✅ IMPORTANT: set state='disconnected' (not just disconnected_at)
+                await supabase
+                  .from("bb_game_players")
+                  .update({
+                    disconnected_at: nowIso,
+                    state: "disconnected",
+                  })
+                  .eq("id", p.id);
+
+                showToast("⏮️ Player moved to Previously Played");
+                loadPlayers();
+              }}
+              onImageClick={setSelectedPhoto}
+            />
+          )}
+        />
+
+        <Section
+          title="Previously Played"
+          color="#66aaff"
+          items={previous}
+          render={(p: Player) => (
+            <PlayerCard
+              key={p.id}
+              player={p}
+              onReAdd={() => handleReAdd(p)}
+              onImageClick={setSelectedPhoto}
+            />
+          )}
+        />
+
+        <Section
+          title="Rejected"
+          color="#ff5555"
+          items={rejected}
+          render={(e: Entry) => (
+            <EntryCard
+              key={e.id}
+              entry={e}
+              rejected
+              onDelete={() => handleDelete(e.id)}
+              onImageClick={setSelectedPhoto}
+            />
+          )}
+        />
+
+        {selectedPhoto && (
+          <div
+            className={cn(
+              "fixed inset-0 bg-black/70 flex items-center justify-center z-[99999]"
+            )}
+            onClick={() => setSelectedPhoto(null)}
+          >
+            <img
+              src={selectedPhoto}
+              className={cn("max-w-[90vw] max-h-[90vh] rounded-xl shadow-xl")}
+            />
+          </div>
+        )}
+
+        {toast && (
+          <div
+            className={cn(
+              "fixed bottom-6 left-1/2 -translate-x-1/2 px-4 py-2 rounded-lg text-black font-semibold"
+            )}
+            style={{ background: toast.color }}
+          >
+            {toast.text}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Section({ title, color, items, render }: any) {
+  return (
+    <div className="mb-6">
+      <h2
+        className={cn("text-xl", "font-semibold", "mb-2")}
+        style={{ borderLeft: `4px solid ${color}`, paddingLeft: 8 }}
+      >
+        {title} ({items.length})
+      </h2>
+
+      {items.length === 0 ? (
+        <p className="text-gray-400">None</p>
+      ) : (
+        <div className={cn("grid gap-3 grid-cols-[repeat(auto-fill,minmax(240px,1fr))]")}>
+          {items.map((item: any) => (
+            <div key={item.id}>{render(item)}</div>
+          ))}
         </div>
       )}
+    </div>
+  );
+}
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 12 }}>
-        {/* Pending Entries */}
-        <div
-          style={{
-            borderRadius: 16,
-            border: "1px solid rgba(148,163,184,0.35)",
-            background: "rgba(15,23,42,0.75)",
-            padding: 12,
-          }}
-        >
-          <div style={{ fontWeight: 900, marginBottom: 10 }}>Pending Queue</div>
+function EntryCard({ entry, onApprove, onReject, onDelete, rejected, onImageClick }: any) {
+  return (
+    <div className={cn("flex bg-[#0f1624] rounded-lg border border-[#333] p-3 gap-3 items-center")}>
+      <img
+        src={entry.photo_url || "/placeholder.png"}
+        className={cn("w-[70px] h-[70px] rounded-full object-cover border-2 border-white/20 shadow cursor-pointer")}
+        onClick={() => entry.photo_url && onImageClick(entry.photo_url)}
+      />
 
-          {loading ? (
-            <div style={{ opacity: 0.8 }}>Loading…</div>
-          ) : entries.length === 0 ? (
-            <div style={{ opacity: 0.8 }}>No pending entries.</div>
-          ) : (
-            <div style={{ display: "grid", gap: 10 }}>
-              {entries.map((e) => {
-                const busy = busyId === e.id;
-                return (
-                  <div
-                    key={e.id}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 10,
-                      padding: 10,
-                      borderRadius: 14,
-                      border: "1px solid rgba(148,163,184,0.25)",
-                      background: "rgba(2,6,23,0.55)",
-                    }}
-                  >
-                    <div
-                      style={{
-                        width: 44,
-                        height: 44,
-                        borderRadius: 999,
-                        overflow: "hidden",
-                        border: "1px solid rgba(226,232,240,0.4)",
-                        background: "rgba(15,23,42,0.8)",
-                        flexShrink: 0,
-                      }}
-                    >
-                      {e.selfie_url ? (
-                        <img
-                          src={e.selfie_url}
-                          alt=""
-                          style={{ width: "100%", height: "100%", objectFit: "cover" }}
-                        />
-                      ) : null}
-                    </div>
-
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontWeight: 900, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                        {e.display_name || "Player"}
-                      </div>
-                      <div style={{ fontSize: 12, opacity: 0.7 }}>
-                        guest_profile_id: {e.guest_profile_id || "—"}
-                      </div>
-                    </div>
-
-                    <button
-                      onClick={() => approveEntry(e)}
-                      disabled={busy}
-                      style={{
-                        padding: "10px 12px",
-                        borderRadius: 14,
-                        border: "1px solid rgba(34,197,94,0.55)",
-                        background: busy
-                          ? "rgba(34,197,94,0.2)"
-                          : "linear-gradient(90deg,#22c55e,#16a34a)",
-                        color: "#fff",
-                        fontWeight: 900,
-                        cursor: busy ? "not-allowed" : "pointer",
-                        minWidth: 92,
-                      }}
-                    >
-                      {busy ? "Approving…" : "Approve"}
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          )}
+      <div className={cn("flex-1 flex flex-col justify-between")}>
+        <div className={cn("font-semibold text-sm")}>
+          {(entry.first_name || "") + " " + (entry.last_name || "")}
         </div>
 
-        {/* Approved Players */}
-        <div
-          style={{
-            borderRadius: 16,
-            border: "1px solid rgba(148,163,184,0.35)",
-            background: "rgba(15,23,42,0.75)",
-            padding: 12,
-          }}
-        >
-          <div style={{ fontWeight: 900, marginBottom: 10 }}>
-            Approved Players <span style={{ opacity: 0.7, fontSize: 12 }}>({approved.length}/10)</span>
+        {!rejected ? (
+          <div className={cn("flex gap-2 text-xs mt-2")}>
+            <button onClick={onApprove} className={cn("flex-1 bg-green-600 text-white rounded py-1")}>
+              Approve
+            </button>
+            <button onClick={onReject} className={cn("flex-1 bg-red-600 text-white rounded py-1")}>
+              Reject
+            </button>
           </div>
+        ) : (
+          <button onClick={onDelete} className={cn("mt-2 w-full bg-[#444] text-white rounded py-1 text-xs")}>
+            Delete
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
 
-          {approved.length === 0 ? (
-            <div style={{ opacity: 0.8 }}>No approved players yet.</div>
-          ) : (
-            <div style={{ display: "grid", gap: 10 }}>
-              {approved
-                .slice()
-                .sort((a, b) => (a.lane_index || 999) - (b.lane_index || 999))
-                .map((p) => (
-                  <div
-                    key={p.id}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 10,
-                      padding: 10,
-                      borderRadius: 14,
-                      border: "1px solid rgba(148,163,184,0.25)",
-                      background: "rgba(2,6,23,0.55)",
-                    }}
-                  >
-                    <div
-                      style={{
-                        width: 44,
-                        height: 44,
-                        borderRadius: 14,
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        fontWeight: 1000,
-                        background: "rgba(59,130,246,0.35)",
-                        border: "1px solid rgba(147,197,253,0.55)",
-                        flexShrink: 0,
-                      }}
-                    >
-                      {p.lane_index ?? "—"}
-                    </div>
+function PlayerCard({ player, active, onReAdd, onMoveToPending, onMoveToPrevious, onImageClick }: any) {
+  return (
+    <div className={cn("flex bg-[#0f1624] rounded-lg border border-[#333] p-3 gap-3 items-center")}>
+      <img
+        src={player.selfie_url || "/placeholder.png"}
+        className={cn("w-[70px] h-[70px] rounded-full object-cover border-2 border-white/20 shadow cursor-pointer")}
+        onClick={() => player.selfie_url && onImageClick(player.selfie_url)}
+      />
 
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontWeight: 900 }}>Player ID: {p.id}</div>
-                      <div style={{ fontSize: 12, opacity: 0.7 }}>state: {p.state}</div>
-                    </div>
+      <div className="flex-1">
+        <div className={cn("font-semibold text-sm")}>{player.display_name || "Unnamed Player"}</div>
+        <div className={cn("text-xs opacity-70")}>Lane: {player.lane_index ?? "—"}</div>
 
-                    <button
-                      onClick={() => removePlayer(p.id)}
-                      style={{
-                        padding: "10px 12px",
-                        borderRadius: 14,
-                        border: "1px solid rgba(248,113,113,0.55)",
-                        background: "linear-gradient(90deg,#ef4444,#b91c1c)",
-                        color: "#fff",
-                        fontWeight: 900,
-                        cursor: "pointer",
-                        minWidth: 92,
-                      }}
-                    >
-                      Remove
-                    </button>
-                  </div>
-                ))}
-            </div>
+        <div className={cn("flex gap-2 mt-2 text-xs")}>
+          {active && (
+            <>
+              <button
+                onClick={onMoveToPrevious}
+                className={cn("flex-1 bg-orange-500 hover:bg-orange-600 text-white rounded py-1")}
+              >
+                Move to Previous
+              </button>
+
+              <button
+                onClick={onMoveToPending}
+                className={cn("flex-1 bg-yellow-500 hover:bg-yellow-600 text-black rounded py-1")}
+              >
+                Move to Pending
+              </button>
+            </>
+          )}
+
+          {!active && onReAdd && (
+            <button onClick={onReAdd} className={cn("flex-1 bg-blue-600 hover:bg-blue-700 text-white rounded py-1")}>
+              Re-Add
+            </button>
           )}
         </div>
-      </div>
-
-      <div style={{ marginTop: 14, fontSize: 12, opacity: 0.7, lineHeight: 1.35 }}>
-        <div>
-          ✅ Approve insert sets <b>state="approved"</b> and <b>approved_at</b> to avoid the check-constraint failure from the
-          table default <b>'active'</b>.
-        </div>
-        <div>✅ lane_index is normalized to 1–10 (your CHECK constraint requirement).</div>
       </div>
     </div>
   );
