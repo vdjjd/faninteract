@@ -21,7 +21,7 @@ export default function BasketballGameCard({
   onDelete,
   onOpenOptions,
   onRefresh,
-}) {
+}: any) {
   const [wallActivated, setWallActivated] = useState(false);
 
   /* Restore wallActivated from DB */
@@ -85,23 +85,16 @@ export default function BasketballGameCard({
   }
 
   /* ------------------------------------------------------------
-     START GAME → COUNTDOWN
+     START GAME (writes DB timer + running)
   ------------------------------------------------------------ */
   async function handleStartGame() {
     if (!wallActivated) return;
     if (!game?.id) return;
 
-    console.log("▶ Sending COUNTDOWN to wall + shooters...");
+    await onStart(game.id);
 
-    // Tell wall popup
-    window._basketballPopup?.postMessage({ type: "start_countdown" }, "*");
-
-    // Tell all shooters & wall
-    await supabase.channel("broadcast").send({
-      type: "broadcast",
-      event: "start_countdown",
-      payload: { gameId: game.id },
-    });
+    // Tell popup to refresh
+    window._basketballPopup?.postMessage({ type: "refresh_wall" }, "*");
 
     await onRefresh();
   }
@@ -114,6 +107,7 @@ export default function BasketballGameCard({
 
     await onStop(game.id);
 
+    // Ensure timer cleared
     await supabase
       .from("bb_games")
       .update({
@@ -122,6 +116,7 @@ export default function BasketballGameCard({
       })
       .eq("id", game.id);
 
+    window._basketballPopup?.postMessage({ type: "refresh_wall" }, "*");
     await onRefresh();
   }
 
@@ -180,7 +175,7 @@ export default function BasketballGameCard({
                 : "bg-blue-600 text-white"
             )}
           >
-            {game.status.toUpperCase()}
+            {String(game.status || "lobby").toUpperCase()}
           </span>
         </p>
       </div>
@@ -257,7 +252,6 @@ export default function BasketballGameCard({
           ⚙ Game Options
         </button>
 
-        {/* 🧪 DEV TEST BUTTON — controlled by SHOW_TEST_BUTTON */}
         {SHOW_TEST_BUTTON && (
           <button
             onClick={() => window.open(`/basketball/${game.id}/test`, "_blank")}
