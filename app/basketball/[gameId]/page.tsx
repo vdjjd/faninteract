@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useEffect, useState } from "react";
+import { use, useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
 import ActiveBasketball from "@/app/basketball/components/Active";
@@ -14,6 +14,8 @@ export default function Page({
   const { gameId } = use(params);
   const [game, setGame] = useState<any>(null);
 
+  const pollRef = useRef<NodeJS.Timeout | null>(null);
+
   if (!gameId) {
     return (
       <div style={{ color: "white", padding: 40, fontSize: 32, textAlign: "center" }}>
@@ -22,37 +24,41 @@ export default function Page({
     );
   }
 
+  async function loadGame() {
+    const { data, error } = await supabase
+      .from("bb_games")
+      .select("*")
+      .eq("id", gameId)
+      .maybeSingle();
+
+    if (error) {
+      console.error("❌ Failed to load bb_game:", error);
+      return;
+    }
+
+    setGame(data || null);
+  }
+
   // Dashboard → wall refresh message
   useEffect(() => {
     function handleMsg(e: MessageEvent) {
-      if (e.data?.type === "refresh_wall") window.location.reload();
+      if (e.data?.type === "refresh_wall") {
+        loadGame();
+      }
     }
     window.addEventListener("message", handleMsg);
     return () => window.removeEventListener("message", handleMsg);
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gameId]);
 
-  // Load once + realtime subscribe (no 1s polling)
+  // Load once
   useEffect(() => {
-    let mounted = true;
+    loadGame();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gameId]);
 
-    async function load() {
-      const { data, error } = await supabase
-        .from("bb_games")
-        .select("*")
-        .eq("id", gameId)
-        .maybeSingle();
-
-      if (!mounted) return;
-
-      if (error) {
-        console.error("❌ Failed to load bb_game:", error);
-        return;
-      }
-      setGame(data || null);
-    }
-
-    load();
-
+  // Realtime subscribe
+  useEffect(() => {
     const channel = supabase
       .channel(`bb-game-${gameId}`)
       .on(
@@ -65,9 +71,23 @@ export default function Page({
       .subscribe();
 
     return () => {
-      mounted = false;
       supabase.removeChannel(channel);
     };
+  }, [gameId]);
+
+  // ✅ Fallback polling (fixes "activate did nothing")
+  useEffect(() => {
+    if (pollRef.current) clearInterval(pollRef.current);
+
+    pollRef.current = setInterval(() => {
+      loadGame();
+    }, 1000);
+
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+      pollRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gameId]);
 
   if (!game) {
@@ -78,5 +98,9 @@ export default function Page({
     );
   }
 
-  return game.wall_active ? <ActiveBasketball gameId={gameId} /> : <InactiveBasketball game={game} />;
+  return game.wall_active ? (
+    <ActiveBasketball gameId={gameId} />
+  ) : (
+    <InactiveBasketball game={game} />
+  );
 }
