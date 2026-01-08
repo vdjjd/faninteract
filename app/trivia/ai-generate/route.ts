@@ -19,28 +19,24 @@ ABSOLUTE LEVEL: Ages 7–9
 - No reasoning
 - Answerable instantly
 `;
-
     case "jr_high":
       return `
 ABSOLUTE LEVEL: Ages 11–13
 - One reasoning step
 - Basic cause and effect
 `;
-
     case "high_school":
       return `
 ABSOLUTE LEVEL: Ages 14–17
 - Conceptual understanding
 - Application of knowledge
 `;
-
     case "college":
       return `
 ABSOLUTE LEVEL: Undergraduate upper division
 - Multi-step reasoning
 - Scenario-based logic
 `;
-
     case "phd":
       return `
 ABSOLUTE LEVEL: Doctoral / Research Expert
@@ -71,6 +67,27 @@ function normalizeCorrectIndex(index: any): number {
   if (typeof index !== "number") return Math.floor(Math.random() * 4);
   if (index < 0 || index > 3) return Math.floor(Math.random() * 4);
   return index;
+}
+
+/**
+ * Remove ```json fences and extract first JSON object block if needed.
+ * Fixes: SyntaxError: Unexpected token '`'
+ */
+function extractJson(raw: string): string {
+  const text = (raw || "").trim();
+
+  // ```json ... ``` or ``` ... ```
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  if (fenced?.[1]) return fenced[1].trim();
+
+  // Fallback: grab first {...} span
+  const firstBrace = text.indexOf("{");
+  const lastBrace = text.lastIndexOf("}");
+  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+    return text.slice(firstBrace, lastBrace + 1).trim();
+  }
+
+  return text;
 }
 
 /**
@@ -143,7 +160,11 @@ YES or NO
 }
 
 export async function POST(req: Request) {
+  let rawText: string | undefined;
+
   try {
+    const body = await req.json();
+
     const {
       publicName,
       privateName,
@@ -154,20 +175,49 @@ export async function POST(req: Request) {
       sameTopicForAllRounds,
       roundTopics,
       hostId,
-      // 🔥 NEW: optional triviaId means "regenerate for this existing card"
-      triviaId,
-    } = await req.json();
+      triviaId, // optional regen
+    } = body ?? {};
+
+    // Basic payload validation (prevents weird prompts / undefined topics)
+    const nRounds = Number(numRounds);
+    const nQuestions = Number(numQuestions);
+
+    if (!Number.isInteger(nRounds) || nRounds < 1) {
+      return NextResponse.json(
+        { success: false, error: "numRounds must be an integer >= 1" },
+        { status: 400 }
+      );
+    }
+
+    if (!Number.isInteger(nQuestions) || nQuestions < 1) {
+      return NextResponse.json(
+        { success: false, error: "numQuestions must be an integer >= 1" },
+        { status: 400 }
+      );
+    }
+
+    if (!sameTopicForAllRounds) {
+      if (!Array.isArray(roundTopics) || roundTopics.length !== nRounds) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: "roundTopics must be an array with length === numRounds",
+          },
+          { status: 400 }
+        );
+      }
+    }
 
     const finalTopicList = sameTopicForAllRounds
-      ? Array(numRounds).fill(topicPrompt)
+      ? Array(nRounds).fill(topicPrompt)
       : roundTopics;
 
-    const difficultySpec = getDifficultySpec(difficulty);
+    const difficultySpec = getDifficultySpec(String(difficulty || ""));
 
     const generationPrompt = `
 You generate structured trivia games.
 
-Create ${numRounds} rounds with ${numQuestions} questions per round.
+Create ${nRounds} rounds with ${nQuestions} questions per round.
 
 DIFFICULTY CONTRACT — VIOLATION INVALIDATES OUTPUT:
 ${difficultySpec}
@@ -178,9 +228,9 @@ RULES:
 - Each question must have exactly 4 options
 - correct_index must be 0–3
 - correct answers must match
-- For PhD difficulty: prefer controversial, edge-case, or debated questions
+- Return ONLY JSON (no markdown fences, no commentary)
 
-Return ONLY valid JSON:
+Return JSON:
 {
   "rounds": [
     {
@@ -203,20 +253,38 @@ Return ONLY valid JSON:
       input: generationPrompt,
     });
 
-    const rawText = response.output_text;
+    rawText = response.output_text;
     if (!rawText) throw new Error("AI returned no output");
 
-    const parsed = JSON.parse(rawText);
+    const cleaned = extractJson(rawText);
 
-    // 🔥 PHd GATEKEEPER
+    let parsed: any;
+    try {
+      parsed = JSON.parse(cleaned);
+    } catch (e: any) {
+      // Show a useful error if parsing fails again
+      throw new Error(
+        `AI output was not valid JSON after cleaning. First 200 chars: ${cleaned.slice(
+          0,
+          200
+        )}`
+      );
+    }
+
+    if (!parsed?.rounds || !Array.isArray(parsed.rounds)) {
+      throw new Error("AI output missing rounds[] array");
+    }
+    if (parsed.rounds.length !== nRounds) {
+      throw new Error(`AI returned ${parsed.rounds.length} rounds; expected ${nRounds}`);
+    }
+
+    // 🔥 PHd GATEKEEPER (NOTE: can be slow for lots of questions)
     if (difficulty === "phd") {
       for (const round of parsed.rounds) {
-        for (const q of round.questions) {
+        for (const q of round.questions || []) {
           const ok = await isTruePhDQuestion(q.question);
           if (!ok) {
-            throw new Error(
-              "Generated question rejected: not true PhD difficulty"
-            );
+            throw new Error("Generated question rejected: not true PhD difficulty");
           }
         }
       }
@@ -230,7 +298,6 @@ Return ONLY valid JSON:
     let triviaCardId: string;
 
     if (triviaId) {
-      // 🔁 REGENERATE EXISTING CARD
       const { data: triviaCard, error: triviaErr } = await supabase
         .from("trivia_cards")
         .update({
@@ -238,8 +305,8 @@ Return ONLY valid JSON:
           private_name: privateName,
           topic_prompt: topicPrompt,
           difficulty,
-          question_count: numQuestions,
-          rounds: numRounds,
+          question_count: nQuestions,
+          rounds: nRounds,
           per_round_topics: sameTopicForAllRounds ? null : roundTopics,
         })
         .eq("id", triviaId)
@@ -250,7 +317,6 @@ Return ONLY valid JSON:
 
       triviaCardId = triviaCard.id;
 
-      // Delete old questions for this card
       const { error: delErr } = await supabase
         .from("trivia_questions")
         .delete()
@@ -258,7 +324,6 @@ Return ONLY valid JSON:
 
       if (delErr) throw delErr;
     } else {
-      // 🆕 CREATE NEW TRIVIA CARD (original behavior)
       const { data: triviaCard, error: triviaErr } = await supabase
         .from("trivia_cards")
         .insert({
@@ -267,8 +332,8 @@ Return ONLY valid JSON:
           private_name: privateName,
           topic_prompt: topicPrompt,
           difficulty,
-          question_count: numQuestions,
-          rounds: numRounds,
+          question_count: nQuestions,
+          rounds: nRounds,
           per_round_topics: sameTopicForAllRounds ? null : roundTopics,
           status: "inactive",
         })
@@ -280,33 +345,52 @@ Return ONLY valid JSON:
       triviaCardId = triviaCard.id;
     }
 
-    // Insert questions (with shuffled options) for triviaCardId
-    for (const round of parsed.rounds) {
-      for (const rawQ of round.questions) {
-        const shuffledQ = shuffleQuestionOptions(rawQ);
-        const safeCorrectIndex = normalizeCorrectIndex(
-          shuffledQ.correct_index
-        );
+    // ✅ Build rows and bulk insert (faster + fewer failure points)
+    const rows: any[] = [];
 
-        const { error } = await supabase.from("trivia_questions").insert({
+    for (const round of parsed.rounds) {
+      const roundNum = Number(round?.round_number) || 1;
+      const topic = String(round?.topic || topicPrompt || "General");
+
+      const qs = Array.isArray(round?.questions) ? round.questions : [];
+      if (qs.length !== nQuestions) {
+        throw new Error(
+          `Round ${roundNum} returned ${qs.length} questions; expected ${nQuestions}`
+        );
+      }
+
+      for (const rawQ of qs) {
+        const shuffledQ = shuffleQuestionOptions(rawQ);
+        const safeCorrectIndex = normalizeCorrectIndex(shuffledQ.correct_index);
+
+        // Hard guard for options
+        if (!Array.isArray(shuffledQ.options) || shuffledQ.options.length !== 4) {
+          throw new Error(`Round ${roundNum} had a question with non-4 options`);
+        }
+
+        rows.push({
           trivia_card_id: triviaCardId,
-          round_number: round.round_number,
-          question_text: shuffledQ.question,
-          options: shuffledQ.options,
+          round_number: roundNum,
+          question_text: String(shuffledQ.question || "").trim(),
+          options: shuffledQ.options.map((x: any) => String(x)),
           correct_index: safeCorrectIndex,
           difficulty,
-          category: round.topic,
+          category: topic,
         });
-
-        if (error) throw error;
       }
     }
 
+    const { error: insErr } = await supabase.from("trivia_questions").insert(rows);
+    if (insErr) throw insErr;
+
     return NextResponse.json({ success: true, triviaId: triviaCardId });
   } catch (err: any) {
-    console.error("❌ TRIVIA GENERATION FAILED:", err);
+    console.error("❌ TRIVIA GENERATION FAILED:", err, {
+      rawPreview: typeof rawText === "string" ? rawText.slice(0, 400) : null,
+    });
+
     return NextResponse.json(
-      { success: false, error: err.message },
+      { success: false, error: err?.message ?? "Server error" },
       { status: 500 }
     );
   }
