@@ -8,6 +8,30 @@ const openai = new OpenAI({
 });
 
 /**
+ * Normalize difficulty coming from UI (e.g. "High School", "PhD")
+ * into API keys used by getDifficultySpec(): elementary|jr_high|high_school|college|phd
+ */
+function normalizeDifficultyKey(raw: any): "" | "elementary" | "jr_high" | "high_school" | "college" | "phd" {
+  const v = String(raw || "").trim().toLowerCase();
+
+  if (v === "elementary") return "elementary";
+
+  if (v === "jr_high" || v === "junior high" || v === "junior_high" || v === "jr high") {
+    return "jr_high";
+  }
+
+  if (v === "high_school" || v === "high school" || v === "highschool") {
+    return "high_school";
+  }
+
+  if (v === "college") return "college";
+
+  if (v === "phd" || v === "ph.d" || v === "ph.d." || v === "ph d") return "phd";
+
+  return "";
+}
+
+/**
  * PHd-level = adversarial research questions ONLY
  */
 function getDifficultySpec(difficulty: string): string {
@@ -178,6 +202,15 @@ export async function POST(req: Request) {
       triviaId, // optional regen
     } = body ?? {};
 
+    // ✅ Normalize difficulty (accept UI labels like "High School", "PhD")
+    const difficultyKey = normalizeDifficultyKey(difficulty);
+    if (!difficultyKey) {
+      return NextResponse.json(
+        { success: false, error: `Unknown difficulty value: "${difficulty}"` },
+        { status: 400 }
+      );
+    }
+
     // Basic payload validation (prevents weird prompts / undefined topics)
     const nRounds = Number(numRounds);
     const nQuestions = Number(numQuestions);
@@ -212,7 +245,7 @@ export async function POST(req: Request) {
       ? Array(nRounds).fill(topicPrompt)
       : roundTopics;
 
-    const difficultySpec = getDifficultySpec(String(difficulty || ""));
+    const difficultySpec = getDifficultySpec(difficultyKey);
 
     const generationPrompt = `
 You generate structured trivia games.
@@ -262,7 +295,6 @@ Return JSON:
     try {
       parsed = JSON.parse(cleaned);
     } catch (e: any) {
-      // Show a useful error if parsing fails again
       throw new Error(
         `AI output was not valid JSON after cleaning. First 200 chars: ${cleaned.slice(
           0,
@@ -279,7 +311,7 @@ Return JSON:
     }
 
     // 🔥 PHd GATEKEEPER (NOTE: can be slow for lots of questions)
-    if (difficulty === "phd") {
+    if (difficultyKey === "phd") {
       for (const round of parsed.rounds) {
         for (const q of round.questions || []) {
           const ok = await isTruePhDQuestion(q.question);
@@ -304,7 +336,7 @@ Return JSON:
           public_name: publicName,
           private_name: privateName,
           topic_prompt: topicPrompt,
-          difficulty,
+          difficulty, // keep original for display
           question_count: nQuestions,
           rounds: nRounds,
           per_round_topics: sameTopicForAllRounds ? null : roundTopics,
@@ -331,7 +363,7 @@ Return JSON:
           public_name: publicName,
           private_name: privateName,
           topic_prompt: topicPrompt,
-          difficulty,
+          difficulty, // keep original for display
           question_count: nQuestions,
           rounds: nRounds,
           per_round_topics: sameTopicForAllRounds ? null : roundTopics,
@@ -363,7 +395,6 @@ Return JSON:
         const shuffledQ = shuffleQuestionOptions(rawQ);
         const safeCorrectIndex = normalizeCorrectIndex(shuffledQ.correct_index);
 
-        // Hard guard for options
         if (!Array.isArray(shuffledQ.options) || shuffledQ.options.length !== 4) {
           throw new Error(`Round ${roundNum} had a question with non-4 options`);
         }
@@ -374,7 +405,7 @@ Return JSON:
           question_text: String(shuffledQ.question || "").trim(),
           options: shuffledQ.options.map((x: any) => String(x)),
           correct_index: safeCorrectIndex,
-          difficulty,
+          difficulty, // keep original display value
           category: topic,
         });
       }
