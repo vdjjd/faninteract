@@ -18,7 +18,7 @@ export default function ShootPage({
 
   const [playerId, setPlayerId] = useState<string | null>(null);
 
-  // ✅ lane_index is stored 1–10
+  // lane_index stored 1–10
   const [laneIndex, setLaneIndex] = useState<number | null>(null);
 
   const [displayName, setDisplayName] = useState<string>("Player");
@@ -32,6 +32,10 @@ export default function ShootPage({
 
   const [toast, setToast] = useState<string | null>(null);
 
+  // ✅ game sync for countdown + shot gating
+  const [game, setGame] = useState<any>(null);
+  const [now, setNow] = useState<number>(() => Date.now());
+
   // swipe tracking
   const startRef = useRef<{ x: number; y: number; t: number } | null>(null);
 
@@ -40,13 +44,81 @@ export default function ShootPage({
   const dunkRAF = useRef<number | null>(null);
   const dunkStart = useRef<number>(0);
 
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 250);
+    return () => clearInterval(id);
+  }, []);
+
+  // ✅ subscribe to bb_games for countdown + running state
+  useEffect(() => {
+    let mounted = true;
+
+    async function load() {
+      const { data, error } = await supabase
+        .from("bb_games")
+        .select("*")
+        .eq("id", gameId)
+        .maybeSingle();
+
+      if (!mounted) return;
+      if (error) return;
+      setGame(data || null);
+    }
+
+    load();
+
+    const ch = supabase
+      .channel(`bb-game-shoot-${gameId}`)
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "bb_games", filter: `id=eq.${gameId}` },
+        (payload) => setGame(payload.new)
+      )
+      .subscribe();
+
+    return () => {
+      mounted = false;
+      supabase.removeChannel(ch);
+    };
+  }, [gameId]);
+
+  const durationSeconds = game?.duration_seconds ?? 90;
+  const timerStartMs = game?.game_timer_start ? new Date(game.game_timer_start).getTime() : null;
+  const countdownMs = 10_000;
+
+  const countdownLeft = useMemo(() => {
+    if (!timerStartMs) return null;
+    const elapsed = now - timerStartMs;
+    if (elapsed < 0) return 10;
+    if (elapsed >= countdownMs) return 0;
+    return Math.max(0, Math.ceil((countdownMs - elapsed) / 1000));
+  }, [timerStartMs, now]);
+
+  const gameSecondsLeft = useMemo(() => {
+    if (!timerStartMs) return durationSeconds;
+    const elapsedAfterCountdown = Math.max(0, (now - timerStartMs - countdownMs) / 1000);
+    return Math.max(0, Math.ceil(durationSeconds - elapsedAfterCountdown));
+  }, [timerStartMs, now, durationSeconds]);
+
+  const acceptingShots =
+    game?.status === "running" &&
+    game?.game_running === true &&
+    !!timerStartMs &&
+    countdownLeft === 0 &&
+    gameSecondsLeft > 0 &&
+    !locked;
+
   const instruction = useMemo(() => {
     if (locked) return "Locked…";
+    if (!game?.wall_active) return "Waiting for host to activate…";
+    if (game?.status !== "running") return "Waiting for host to start…";
+    if (game?.game_running !== true) return "Waiting for host to start…";
+    if (countdownLeft && countdownLeft > 0) return "Get ready…";
+    if (gameSecondsLeft <= 0) return "Game over";
     if (mode === "dunk") return "STOP the bar in the center to DUNK!";
-    if (mode === "three")
-      return `3PT MODE${shotsLeft != null ? ` • ${shotsLeft} to dunk` : ""}`;
+    if (mode === "three") return `3PT MODE${shotsLeft != null ? ` • ${shotsLeft} to dunk` : ""}`;
     return "Swipe up to shoot";
-  }, [mode, shotsLeft, locked]);
+  }, [mode, shotsLeft, locked, game, countdownLeft, gameSecondsLeft]);
 
   // load player from localStorage
   useEffect(() => {
@@ -85,12 +157,7 @@ export default function ShootPage({
       .channel(`bb-player-${playerId}`)
       .on(
         "postgres_changes",
-        {
-          event: "UPDATE",
-          schema: "public",
-          table: "bb_game_players",
-          filter: `id=eq.${playerId}`,
-        },
+        { event: "UPDATE", schema: "public", table: "bb_game_players", filter: `id=eq.${playerId}` },
         (payload) => {
           const next: any = payload.new;
           setScore(next.score ?? 0);
@@ -143,6 +210,9 @@ export default function ShootPage({
         }
       })
       .on("broadcast", { event: "dunked" }, ({ payload }) => {
+        const targets = payload?.target_player_ids as string[] | undefined;
+        if (Array.isArray(targets) && !targets.includes(playerId)) return;
+
         const name = payload?.dunker_name ? String(payload.dunker_name) : "Someone";
         setLocked(true);
         setLockText(`${name} dunked on you`);
@@ -161,7 +231,7 @@ export default function ShootPage({
 
   // dunk meter animation
   useEffect(() => {
-    if (mode !== "dunk" || locked) {
+    if (mode !== "dunk" || locked || !acceptingShots) {
       if (dunkRAF.current) cancelAnimationFrame(dunkRAF.current);
       dunkRAF.current = null;
       return;
@@ -182,19 +252,19 @@ export default function ShootPage({
       if (dunkRAF.current) cancelAnimationFrame(dunkRAF.current);
       dunkRAF.current = null;
     };
-  }, [mode, locked]);
+  }, [mode, locked, acceptingShots]);
 
   async function sendShot(power: number, angle: number) {
+    if (!acceptingShots) return;
     if (!playerId || laneIndex == null) return;
 
-    // ✅ lane_index broadcast stays 1–10
     const channel = supabase.channel(`basketball-${gameId}`);
     await channel.send({
       type: "broadcast",
       event: "shot_attempt",
       payload: {
         player_id: playerId,
-        lane_index: laneIndex,
+        lane_index: laneIndex, // 1–10
         power,
         angle,
         ts: Date.now(),
@@ -204,16 +274,16 @@ export default function ShootPage({
   }
 
   async function sendDunk(accuracy: number) {
+    if (!acceptingShots) return;
     if (!playerId || laneIndex == null) return;
 
-    // ✅ lane_index broadcast stays 1–10
     const channel = supabase.channel(`basketball-${gameId}`);
     await channel.send({
       type: "broadcast",
       event: "dunk_attempt",
       payload: {
         player_id: playerId,
-        lane_index: laneIndex,
+        lane_index: laneIndex, // 1–10
         accuracy,
         ts: Date.now(),
       },
@@ -222,13 +292,13 @@ export default function ShootPage({
   }
 
   function onPointerDown(e: React.PointerEvent) {
-    if (locked) return;
+    if (!acceptingShots) return;
     if (mode === "dunk") return;
     startRef.current = { x: e.clientX, y: e.clientY, t: Date.now() };
   }
 
   function onPointerUp(e: React.PointerEvent) {
-    if (locked) return;
+    if (!acceptingShots) return;
     if (mode === "dunk") return;
 
     const s = startRef.current;
@@ -246,7 +316,6 @@ export default function ShootPage({
     sendShot(power, angle);
   }
 
-  // ✅ lane_index is already 1–10. Do NOT +1.
   const laneLabel = laneIndex != null ? `Lane ${laneIndex}` : "Lane —";
 
   return (
@@ -350,6 +419,7 @@ export default function ShootPage({
               padding: 18,
               background: "rgba(0,0,0,0.65)",
               border: "1px solid rgba(255,255,255,0.18)",
+              opacity: acceptingShots ? 1 : 0.55,
             }}
           >
             <div style={{ textAlign: "center", fontWeight: 1000, fontSize: 22, color: "#fff" }}>
@@ -367,7 +437,6 @@ export default function ShootPage({
                 overflow: "hidden",
               }}
             >
-              {/* center zone */}
               <div
                 style={{
                   position: "absolute",
@@ -378,7 +447,6 @@ export default function ShootPage({
                   background: "rgba(255,209,102,0.35)",
                 }}
               />
-              {/* moving marker */}
               <div
                 style={{
                   position: "absolute",
@@ -394,6 +462,7 @@ export default function ShootPage({
             </div>
 
             <button
+              disabled={!acceptingShots}
               onClick={() => {
                 const accuracy = 1 - Math.abs(dunkProgress - 0.5) / 0.5;
                 sendDunk(clamp(accuracy, 0, 1));
@@ -406,7 +475,7 @@ export default function ShootPage({
                 border: "none",
                 fontWeight: 1000,
                 fontSize: 18,
-                background: "#ffd166",
+                background: acceptingShots ? "#ffd166" : "rgba(255,209,102,0.35)",
                 color: "#111827",
               }}
             >
@@ -459,6 +528,50 @@ export default function ShootPage({
         >
           <div style={{ color: "#fff", fontWeight: 1000, fontSize: 26, lineHeight: 1.2 }}>
             {lockText || "Locked"}
+          </div>
+        </div>
+      )}
+
+      {/* ✅ Countdown overlay on PHONE */}
+      {game?.game_running === true && timerStartMs && countdownLeft && countdownLeft > 0 && (
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            zIndex: 50,
+            background: "rgba(0,0,0,0.90)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontSize: 120,
+            fontWeight: 1000,
+            color: "#fff",
+          }}
+        >
+          {countdownLeft}
+        </div>
+      )}
+
+      {/* ✅ Game over overlay */}
+      {game?.game_running === true && timerStartMs && countdownLeft === 0 && gameSecondsLeft <= 0 && (
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            zIndex: 50,
+            background: "rgba(0,0,0,0.88)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 24,
+            textAlign: "center",
+          }}
+        >
+          <div style={{ color: "#fff", fontWeight: 1000, fontSize: 34, lineHeight: 1.15 }}>
+            Game Over
+            <div style={{ marginTop: 10, fontSize: 18, fontWeight: 900, opacity: 0.85 }}>
+              Final score: {score}
+            </div>
           </div>
         </div>
       )}

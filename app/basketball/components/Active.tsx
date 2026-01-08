@@ -31,27 +31,46 @@ type ShotAnim = {
   made: boolean;
   points: 2 | 3;
   at: number;
+  dx: number; // px drift for arc animation
 };
 
 function clamp(n: number, a: number, b: number) {
   return Math.max(a, Math.min(b, n));
 }
 
-function difficultyNoise(difficulty: string | null) {
+function noiseByDifficulty(difficulty: string | null) {
   const d = (difficulty || "medium").toLowerCase();
-  if (d === "easy") return 0.06;
-  if (d === "hard") return 0.16;
-  return 0.11;
+  if (d === "easy") return 0.03;
+  if (d === "hard") return 0.10;
+  return 0.06;
 }
 
-function baseThreshold(hitzoneSize: string | null) {
+function hoopRadiusBySettings({
+  hitzoneSize,
+  hitzoneMultiplier,
+}: {
+  hitzoneSize: string | null;
+  hitzoneMultiplier: number | null;
+}) {
   const s = (hitzoneSize || "medium").toLowerCase();
-  if (s === "large") return 0.45;
-  if (s === "small") return 0.62;
-  return 0.54;
+  let r = 0.090; // normalized hoop aperture radius (0..1 space)
+
+  if (s === "large") r += 0.020;
+  if (s === "small") r -= 0.020;
+
+  const mult = typeof hitzoneMultiplier === "number" ? hitzoneMultiplier : 1;
+  if (mult > 1) r += 0.010 * (mult - 1);
+
+  return clamp(r, 0.050, 0.140);
 }
 
-function computeMade({
+/**
+ * Simple 2D “ballistic” sim:
+ * - We simulate a parabolic arc in normalized lane-space (0..1 for x/y)
+ * - Shot is MADE if the ball crosses the rim Y level downward while its center is within the rim aperture.
+ * - Difficulty scales with noise applied to input.
+ */
+function computeMadePhysics({
   power,
   angle,
   mode,
@@ -66,23 +85,69 @@ function computeMade({
   hitzoneSize: string | null;
   hitzoneMultiplier: number | null;
 }) {
-  const p = clamp(power, 0, 1);
-  const a = clamp(angle, -1, 1);
+  let p = clamp(power, 0, 1);
+  let a = clamp(angle, -1, 1);
 
-  let accuracy = 1 - Math.abs(a) * 0.65 - (1 - p) * 0.35;
+  // apply difficulty noise
+  const n = noiseByDifficulty(difficulty);
+  p = clamp(p + (Math.random() * 2 - 1) * n * 0.8, 0, 1);
+  a = clamp(a + (Math.random() * 2 - 1) * n * 1.2, -1, 1);
 
-  if (mode === "three") accuracy -= 0.10;
-  if (mode === "dunk") accuracy -= 0.05;
+  // lane-space coordinates
+  const rimX = 0.5;
+  const rimY = 0.78;
 
-  const noise = difficultyNoise(difficulty);
-  accuracy += (Math.random() * 2 - 1) * noise;
+  const hoopR = hoopRadiusBySettings({ hitzoneSize, hitzoneMultiplier });
 
-  let thr = baseThreshold(hitzoneSize);
+  // ball radius in lane-space
+  const ballR = 0.030;
 
-  const mult = typeof hitzoneMultiplier === "number" ? hitzoneMultiplier : 1;
-  if (mult > 1) thr -= 0.04 * (mult - 1);
+  // start positions: straight-on arcade feel
+  const startX = 0.5;
+  const startY = mode === "three" ? 0.12 : 0.18;
 
-  return accuracy >= thr;
+  // velocities (tuned to feel “real”)
+  // vx controlled by angle; vy controlled by power
+  const baseVy = mode === "three" ? 1.70 : 1.55;
+  const vy0 = baseVy + p * (mode === "three" ? 1.25 : 1.10);
+  const vx0 = a * (0.85 + 0.75 * p);
+
+  const g = 2.90; // gravity
+  const dt = 1 / 60;
+  const maxT = 1.55;
+
+  let x = startX;
+  let y = startY;
+  let vx = vx0;
+  let vy = vy0;
+
+  let prevY = y;
+
+  for (let t = 0; t < maxT; t += dt) {
+    x += vx * dt;
+    y += vy * dt;
+    vy -= g * dt;
+
+    // out of bounds / landed
+    if (y < 0) break;
+
+    // check "through rim" crossing: must cross rimY downward
+    const crossedDown = prevY > rimY && y <= rimY && vy < 0;
+
+    if (crossedDown) {
+      const withinAperture = Math.abs(x - rimX) <= hoopR - ballR * 0.85;
+      if (withinAperture) return true;
+      // if it crossed rimY but outside aperture, it's a miss
+      return false;
+    }
+
+    prevY = y;
+
+    // clip bounds (miss if wildly off)
+    if (x < -0.2 || x > 1.2 || y > 1.4) break;
+  }
+
+  return false;
 }
 
 const DEFAULT_MODE_STATE: ModeState = {
@@ -127,7 +192,12 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
       .channel(`bb-game-active-${gameId}`)
       .on(
         "postgres_changes",
-        { event: "UPDATE", schema: "public", table: "bb_games", filter: `id=eq.${gameId}` },
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "bb_games",
+          filter: `id=eq.${gameId}`,
+        },
         (payload) => setGame(payload.new)
       )
       .subscribe();
@@ -144,7 +214,9 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
     async function loadPlayers() {
       const { data, error } = await supabase
         .from("bb_game_players")
-        .select("id,game_id,guest_profile_id,device_token,lane_index,display_name,selfie_url,score,disconnected_at")
+        .select(
+          "id,game_id,guest_profile_id,device_token,lane_index,display_name,selfie_url,score,disconnected_at"
+        )
         .eq("game_id", gameId)
         .is("disconnected_at", null)
         .order("lane_index", { ascending: true });
@@ -168,7 +240,12 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
       .channel(`bb-players-active-${gameId}`)
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "bb_game_players", filter: `game_id=eq.${gameId}` },
+        {
+          event: "*",
+          schema: "public",
+          table: "bb_game_players",
+          filter: `game_id=eq.${gameId}`,
+        },
         () => loadPlayers()
       )
       .subscribe();
@@ -180,7 +257,9 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
   }, [gameId]);
 
   const durationSeconds = game?.duration_seconds ?? 90;
-  const timerStartMs = game?.game_timer_start ? new Date(game.game_timer_start).getTime() : null;
+  const timerStartMs = game?.game_timer_start
+    ? new Date(game.game_timer_start).getTime()
+    : null;
 
   const countdownMs = 10_000;
 
@@ -194,7 +273,10 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
 
   const gameSecondsLeft = useMemo(() => {
     if (!timerStartMs) return durationSeconds;
-    const elapsedAfterCountdown = Math.max(0, (now - timerStartMs - countdownMs) / 1000);
+    const elapsedAfterCountdown = Math.max(
+      0,
+      (now - timerStartMs - countdownMs) / 1000
+    );
     return Math.max(0, Math.ceil(durationSeconds - elapsedAfterCountdown));
   }, [timerStartMs, now, durationSeconds]);
 
@@ -205,7 +287,11 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
     countdownLeft === 0 &&
     gameSecondsLeft > 0;
 
-  async function sendPlayerMode(playerId: string, mode: Mode, shotsLeft?: number | null) {
+  async function sendPlayerMode(
+    playerId: string,
+    mode: Mode,
+    shotsLeft?: number | null
+  ) {
     if (!channelRef.current) return;
     await channelRef.current.send({
       type: "broadcast",
@@ -243,16 +329,18 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
     const current = players.find((p) => p.id === playerId)?.score ?? 0;
     const next = current + delta;
 
-    setPlayers((prev) => prev.map((p) => (p.id === playerId ? { ...p, score: next } : p)));
+    setPlayers((prev) =>
+      prev.map((p) => (p.id === playerId ? { ...p, score: next } : p))
+    );
 
     await supabase.from("bb_game_players").update({ score: next }).eq("id", playerId);
   }
 
-  function pushAnim(lane: number, made: boolean, points: 2 | 3) {
+  function pushAnim(lane: number, made: boolean, points: 2 | 3, dx: number) {
     const id = `${lane}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
-    const item: ShotAnim = { id, lane, made, points, at: Date.now() };
-    setAnims((prev) => [item, ...prev].slice(0, 40));
-    setTimeout(() => setAnims((prev) => prev.filter((x) => x.id !== id)), 900);
+    const item: ShotAnim = { id, lane, made, points, at: Date.now(), dx };
+    setAnims((prev) => [item, ...prev].slice(0, 60));
+    setTimeout(() => setAnims((prev) => prev.filter((x) => x.id !== id)), 950);
   }
 
   useEffect(() => {
@@ -267,7 +355,7 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
         if (!acceptingShots) return;
 
         const playerId = payload?.player_id as string;
-        const lane = payload?.lane_index as number;
+        const lane = Number(payload?.lane_index ?? 0);
         const power = Number(payload?.power ?? 0);
         const angle = Number(payload?.angle ?? 0);
 
@@ -276,9 +364,11 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
         const p = players.find((x) => x.id === playerId);
         if (!p) return;
 
-        const st: ModeState = modeRef.current[playerId] ? { ...modeRef.current[playerId] } : { ...DEFAULT_MODE_STATE };
+        const st: ModeState = modeRef.current[playerId]
+          ? { ...modeRef.current[playerId] }
+          : { ...DEFAULT_MODE_STATE };
 
-        const made = computeMade({
+        const made = computeMadePhysics({
           power,
           angle,
           mode: st.mode,
@@ -287,8 +377,10 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
           hitzoneMultiplier: game?.hitzone_multiplier ?? 1,
         });
 
+        const dxPx = clamp(angle, -1, 1) * 70;
+
         if (st.mode === "normal") {
-          pushAnim(lane, made, 2);
+          pushAnim(lane, made, 2, dxPx);
           if (made) {
             await bumpScore(playerId, 2);
             st.twoStreak += 1;
@@ -304,7 +396,7 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
             st.twoStreak = 0;
           }
         } else if (st.mode === "three") {
-          pushAnim(lane, made, 3);
+          pushAnim(lane, made, 3, dxPx);
           if (made) {
             await bumpScore(playerId, 3);
             st.threeStreak += 1;
@@ -334,7 +426,7 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
         if (!acceptingShots) return;
 
         const playerId = payload?.player_id as string;
-        const lane = payload?.lane_index as number;
+        const lane = Number(payload?.lane_index ?? 0);
         const accuracy = Number(payload?.accuracy ?? 0);
 
         if (!playerId || !lane) return;
@@ -352,11 +444,11 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
         await sendPlayerMode(playerId, "normal", null);
 
         if (!success) {
-          pushAnim(lane, false, 2);
+          pushAnim(lane, false, 2, 0);
           return;
         }
 
-        pushAnim(lane, true, 2);
+        pushAnim(lane, true, 2, 0);
         await bumpScore(playerId, 2);
 
         const targets = players
@@ -364,7 +456,11 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
           .map((x) => x.id);
 
         if (targets.length) {
-          await broadcastDunked({ dunkerName, targetPlayerIds: targets, durationMs: 2000 });
+          await broadcastDunked({
+            dunkerName,
+            targetPlayerIds: targets,
+            durationMs: 2000,
+          });
         }
       })
       .subscribe();
@@ -381,7 +477,8 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
     const map = new Map<number, PlayerRow>();
     for (const p of players) map.set(p.lane_index, p);
 
-    const arr: Array<{ lane: number; player: PlayerRow | null; mode: ModeState }> = [];
+    const arr: Array<{ lane: number; player: PlayerRow | null; mode: ModeState }> =
+      [];
     for (let lane = 1; lane <= 10; lane++) {
       const pl = map.get(lane) || null;
 
@@ -473,12 +570,13 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
                   position: "relative",
                 }}
               >
+                {/* Lane label */}
                 <div
                   style={{
                     position: "absolute",
                     top: 10,
                     left: 10,
-                    zIndex: 5,
+                    zIndex: 7,
                     padding: "6px 10px",
                     borderRadius: 999,
                     background: "rgba(255,255,255,0.10)",
@@ -491,6 +589,56 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
                   LANE {lane}
                 </div>
 
+                {/* Hoop + board (simple shapes, per lane) */}
+                <div style={{ position: "absolute", top: 20, left: 0, right: 0, height: 150, zIndex: 3 }}>
+                  {/* backboard */}
+                  <div
+                    style={{
+                      position: "absolute",
+                      left: "50%",
+                      top: 8,
+                      transform: "translateX(-50%)",
+                      width: 86,
+                      height: 70,
+                      borderRadius: 8,
+                      background: "rgba(255,255,255,0.10)",
+                      border: "2px solid rgba(255,255,255,0.22)",
+                      boxShadow: "0 0 18px rgba(255,255,255,0.12)",
+                    }}
+                  />
+                  {/* rim */}
+                  <div
+                    style={{
+                      position: "absolute",
+                      left: "50%",
+                      top: 68,
+                      transform: "translateX(-50%)",
+                      width: 76,
+                      height: 10,
+                      borderRadius: 999,
+                      background: "#ff7a00",
+                      boxShadow: "0 0 18px rgba(255,122,0,0.55)",
+                    }}
+                  />
+                  {/* net */}
+                  <div
+                    style={{
+                      position: "absolute",
+                      left: "50%",
+                      top: 78,
+                      transform: "translateX(-50%)",
+                      width: 64,
+                      height: 52,
+                      borderRadius: "0 0 18px 18px",
+                      borderLeft: "2px solid rgba(255,255,255,0.25)",
+                      borderRight: "2px solid rgba(255,255,255,0.25)",
+                      borderBottom: "2px solid rgba(255,255,255,0.22)",
+                      opacity: 0.75,
+                    }}
+                  />
+                </div>
+
+                {/* Player pill (mode indicator) */}
                 <div
                   style={{
                     position: "absolute",
@@ -501,10 +649,12 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
                     borderRadius: 999,
                     border: mode.mode === "three" ? "3px solid #ffd166" : "3px solid rgba(255,255,255,0.75)",
                     boxShadow: mode.mode === "three" ? "0 0 16px rgba(255,209,102,0.45)" : "0 0 10px rgba(255,255,255,0.20)",
+                    zIndex: 7,
                   }}
                 />
 
-                <div style={{ position: "absolute", left: 12, right: 12, bottom: 14 }}>
+                {/* Footer */}
+                <div style={{ position: "absolute", left: 12, right: 12, bottom: 14, zIndex: 7 }}>
                   <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
                     <div
                       style={{
@@ -518,7 +668,11 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
                       }}
                     >
                       {selfie ? (
-                        <img src={selfie} alt="selfie" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                        <img
+                          src={selfie}
+                          alt="selfie"
+                          style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                        />
                       ) : null}
                     </div>
 
@@ -538,12 +692,15 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
 
                       <div style={{ color: "rgba(255,255,255,0.75)", fontWeight: 900, fontSize: 13 }}>
                         Score: {player?.score ?? 0}
-                        {modeLabel ? <span style={{ marginLeft: 10, color: "#ffd166" }}>{modeLabel}</span> : null}
+                        {modeLabel ? (
+                          <span style={{ marginLeft: 10, color: "#ffd166" }}>{modeLabel}</span>
+                        ) : null}
                       </div>
                     </div>
                   </div>
                 </div>
 
+                {/* Shot anims */}
                 {laneAnims.map((a) => (
                   <div
                     key={a.id}
@@ -557,16 +714,17 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
                       borderRadius: 999,
                       background: "#ff7a00",
                       boxShadow: "0 0 18px rgba(255,122,0,0.65)",
-                      animation: `bbBallUp 700ms ease-out forwards`,
+                      animation: `bbArc 820ms ease-out forwards`,
                       zIndex: 6,
+                      ["--dx" as any]: `${a.dx}px`,
                     }}
                   >
                     <div
                       style={{
                         position: "absolute",
                         top: -30,
-                        left: -30,
-                        right: -30,
+                        left: -34,
+                        right: -34,
                         textAlign: "center",
                         color: a.made ? "#00ff99" : "#ff5c5c",
                         fontWeight: 1000,
@@ -583,6 +741,7 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
         </div>
       </div>
 
+      {/* Countdown overlay on wall */}
       {game?.game_running === true && timerStartMs && countdownLeft && countdownLeft > 0 && (
         <div
           style={{
@@ -603,9 +762,10 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
       )}
 
       <style>{`
-        @keyframes bbBallUp {
+        @keyframes bbArc {
           0%   { transform: translate(-50%, 0) scale(1); opacity: 1; }
-          100% { transform: translate(-50%, -160px) scale(0.8); opacity: 0.2; }
+          55%  { transform: translate(calc(-50% + var(--dx)), -210px) scale(0.90); opacity: 1; }
+          100% { transform: translate(calc(-50% + var(--dx)), -165px) scale(0.82); opacity: 0.25; }
         }
       `}</style>
     </div>
