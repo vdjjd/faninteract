@@ -212,9 +212,13 @@ function readHerdEnabled(row: any): boolean {
 }
 
 /* ---------------------------------------------------------
-   ✅ QUESTION ORDERING (MATCH WALL LOGIC)
+   ✅ QUESTION ORDERING (MATCH WALL LOGIC + ROUNDS)
 --------------------------------------------------------- */
-type QuestionOrderMode = "question_number" | "round_number" | "created_at";
+type QuestionOrderMode =
+  | "question_number"
+  | "round_then_question"
+  | "round_number"
+  | "created_at";
 
 function normalizeQuestions(qsRaw: any[]): {
   list: any[];
@@ -223,20 +227,22 @@ function normalizeQuestions(qsRaw: any[]): {
   const list = Array.isArray(qsRaw) ? [...qsRaw] : [];
   if (!list.length) return { list: [], mode: "created_at" };
 
-  const hasAllQN = list.every(
+  const hasAnyQN = list.some(
     (q) =>
-      typeof q?.question_number === "number" &&
-      Number.isFinite(q.question_number)
+      typeof q?.question_number === "number" && Number.isFinite(q.question_number)
   );
-  const hasAllRN = list.every(
+  const hasAnyRN = list.some(
     (q) => typeof q?.round_number === "number" && Number.isFinite(q.round_number)
   );
 
-  const mode: QuestionOrderMode = hasAllQN
-    ? "question_number"
-    : hasAllRN
-    ? "round_number"
-    : "created_at";
+  const mode: QuestionOrderMode =
+    hasAnyRN && hasAnyQN
+      ? "round_then_question"
+      : hasAnyQN
+      ? "question_number"
+      : hasAnyRN
+      ? "round_number"
+      : "created_at";
 
   const time = (v: any) => {
     const t = new Date(v || 0).getTime();
@@ -244,35 +250,36 @@ function normalizeQuestions(qsRaw: any[]): {
   };
 
   list.sort((a, b) => {
-    if (mode === "question_number")
-      return (a.question_number || 0) - (b.question_number || 0);
-    if (mode === "round_number")
-      return (a.round_number || 0) - (b.round_number || 0);
+    if (mode === "round_then_question") {
+      const ar = Number.isFinite(a?.round_number) ? a.round_number : 0;
+      const br = Number.isFinite(b?.round_number) ? b.round_number : 0;
+      if (ar !== br) return ar - br;
+
+      const aq = Number.isFinite(a?.question_number) ? a.question_number : 0;
+      const bq = Number.isFinite(b?.question_number) ? b.question_number : 0;
+      if (aq !== bq) return aq - bq;
+
+      return time(a?.created_at) - time(b?.created_at);
+    }
+
+    if (mode === "question_number") {
+      const aq = Number.isFinite(a?.question_number) ? a.question_number : 0;
+      const bq = Number.isFinite(b?.question_number) ? b.question_number : 0;
+      if (aq !== bq) return aq - bq;
+      return time(a?.created_at) - time(b?.created_at);
+    }
+
+    if (mode === "round_number") {
+      const ar = Number.isFinite(a?.round_number) ? a.round_number : 0;
+      const br = Number.isFinite(b?.round_number) ? b.round_number : 0;
+      if (ar !== br) return ar - br;
+      return time(a?.created_at) - time(b?.created_at);
+    }
+
     return time(a?.created_at) - time(b?.created_at);
   });
 
   return { list, mode };
-}
-
-function pickQuestionForCurrent(
-  qs: any[],
-  currentQuestion: number,
-  mode: QuestionOrderMode
-): any | null {
-  if (!qs?.length || !currentQuestion || currentQuestion < 1) return null;
-
-  if (mode === "question_number") {
-    const hit = qs.find((q) => q?.question_number === currentQuestion);
-    if (hit) return hit;
-  }
-
-  if (mode === "round_number") {
-    const hit = qs.find((q) => q?.round_number === currentQuestion);
-    if (hit) return hit;
-  }
-
-  const idx = Math.max(0, Math.min(qs.length - 1, currentQuestion - 1));
-  return qs[idx] ?? null;
 }
 
 /* ---------------------------------------------------------
@@ -326,7 +333,7 @@ const STREAK_FIRE_VIDEO = "/videos/fi-streak-fire.mp4";
 --------------------------------------------------------- */
 function getEffectiveQuestionStartMs(args: {
   questionStartedAt: string | null;
-  currentQuestionNumber: number | null;
+  currentQuestionNumber: number | null; // GLOBAL question number
   countdownStartedAt: string | null;
   countdownSeconds: number | null;
 }) {
@@ -344,7 +351,7 @@ function getEffectiveQuestionStartMs(args: {
 
   let startMs = baseStart;
 
-  // If Q1 question_started_at got stamped before countdown finished,
+  // If GLOBAL Q1 question_started_at got stamped before countdown finished,
   // shift effective start to countdown end.
   if (currentQuestionNumber === 1 && countdownStartedAt) {
     const cStart = new Date(countdownStartedAt).getTime();
@@ -423,7 +430,7 @@ export default function TriviaUserInterfacePage() {
   const [ads, setAds] = useState<SlideAd[]>([]);
   const [adsLoading, setAdsLoading] = useState(false);
 
-  // lock ad to question number (prevents mid-question jumping)
+  // lock ad to GLOBAL question number (prevents mid-question jumping)
   const [adLockedQuestion, setAdLockedQuestion] = useState<number>(1);
   const [lockedAdIndex, setLockedAdIndex] = useState<number>(0);
 
@@ -647,10 +654,6 @@ export default function TriviaUserInterfacePage() {
       setSession(sessionRow as TriviaSession);
       setQuestionStartedAt((sessionRow as any).question_started_at ?? null);
 
-      // seed ad lock to current question immediately
-      const initialQ = Number((sessionRow as any)?.current_question ?? 1);
-      setAdLockedQuestion(initialQ);
-
       // 4) ensure player row
       setLoadingMessage("Finding your player seat…");
 
@@ -690,10 +693,11 @@ export default function TriviaUserInterfacePage() {
         return;
       }
 
-      // ✅ Make question ordering + mode match wall logic
+      // ✅ Make ordering + mode match wall logic (and support rounds)
       const { list, mode } = normalizeQuestions(qsRaw);
       setQuestions(list);
       setQuestionOrderMode(mode);
+
       setLoading(false);
     }
 
@@ -703,6 +707,114 @@ export default function TriviaUserInterfacePage() {
       cancelled = true;
     };
   }, [gameId, profile?.id, router]);
+
+  /* ---------------------------------------------------------
+     Derived current question (ROUND-AWARE + GLOBAL INDEX)
+  --------------------------------------------------------- */
+  const timerSeconds: number = trivia?.timer_seconds ?? 30;
+  const scoringMode: string = trivia?.scoring_mode ?? "100s";
+
+  const hasRounds = useMemo(() => {
+    return questions.some(
+      (q) => typeof q?.round_number === "number" && Number.isFinite(q.round_number)
+    );
+  }, [questions]);
+
+  const currentRoundNumber = session?.current_round ?? 1;
+
+  const roundQuestions = useMemo(() => {
+    if (!hasRounds) return questions;
+
+    const filtered = questions.filter((q) => {
+      const rn = typeof q?.round_number === "number" ? q.round_number : null;
+      return rn === currentRoundNumber;
+    });
+
+    return filtered.length ? filtered : questions;
+  }, [questions, hasRounds, currentRoundNumber]);
+
+  const roundOrderMode = useMemo(() => {
+    const hasAllQN = roundQuestions.every(
+      (q) =>
+        typeof q?.question_number === "number" && Number.isFinite(q.question_number)
+    );
+    return hasAllQN ? ("question_number" as const) : ("created_at" as const);
+  }, [roundQuestions]);
+
+  const currentQuestion = useMemo(() => {
+    const cq = Number(session?.current_question ?? 1);
+    if (!roundQuestions.length) return null;
+
+    if (roundOrderMode === "question_number") {
+      const hit = roundQuestions.find((q) => q?.question_number === cq);
+      if (hit) return hit;
+    }
+
+    const idx = Math.max(0, Math.min(roundQuestions.length - 1, cq - 1));
+    return roundQuestions[idx] ?? null;
+  }, [roundQuestions, roundOrderMode, session?.current_question]);
+
+  const currentQuestionGlobalIndex = useMemo(() => {
+    if (!currentQuestion?.id) return 0;
+    const idx = questions.findIndex((q) => q.id === currentQuestion.id);
+    return idx === -1 ? 0 : idx;
+  }, [questions, currentQuestion?.id]);
+
+  const globalQuestionNumber = currentQuestionGlobalIndex + 1;
+
+  const currentQuestionIndex = useMemo(() => {
+    if (!currentQuestion?.id) return 0;
+    const idx = roundQuestions.findIndex((q) => q.id === currentQuestion.id);
+    return idx === -1 ? 0 : idx;
+  }, [roundQuestions, currentQuestion?.id]);
+
+  const isRunning = session?.status === "running";
+  const isPaused = Boolean(session?.status) && session?.status !== "running";
+
+  const wallPhase = (session?.wall_phase || "question") as
+    | "question"
+    | "overlay"
+    | "reveal"
+    | "leaderboard"
+    | "podium";
+
+  /* ---------------------------------------------------------
+     ✅ Session over detection + close handler + continue button
+  --------------------------------------------------------- */
+  const isFinalSessionOver = session?.status === "finished";
+  const isRoundOver = wallPhase === "podium" && !isFinalSessionOver;
+
+  // convenience: block interaction during either
+  const isGameOver = isFinalSessionOver || isRoundOver;
+
+  function handleCloseTab() {
+    try {
+      window.open("", "_self");
+      window.close();
+    } catch {}
+    setTimeout(() => {
+      try {
+        window.location.href = "about:blank";
+      } catch {}
+    }, 50);
+  }
+
+  function handleContinueToNextRound() {
+    if (!gameId) return;
+    // Important: tell the thanks page this is a trivia flow
+    router.push(`/thanks/${gameId}?type=trivia`);
+  }
+
+  /* ---------------------------------------------------------
+     ✅ If host hits STOP, send user to thank-you page
+     (assuming dashboard sets status = "stopped")
+  --------------------------------------------------------- */
+  useEffect(() => {
+    if (!gameId) return;
+    if (session?.status === "stopped") {
+      router.replace(`/thanks/${gameId}?type=trivia`);
+    }
+  }, [session?.status, gameId, router]);
 
   /* ---------------------------------------------------------
      Load Slide Ads when allowed (GLOBAL + TRIVIA)
@@ -792,13 +904,7 @@ export default function TriviaUserInterfacePage() {
       }));
 
       setQuestionStartedAt((data as any).question_started_at ?? null);
-
-      // ✅ lock ad ONLY when question number changes
-      const q = Number((data as any)?.current_question ?? 1);
-      setAdLockedQuestion((prevQ) => {
-        if (q !== prevQ) return q;
-        return prevQ;
-      });
+      // NOTE: ad lock is driven by globalQuestionNumber (derived), not by this poll
     };
 
     doPoll();
@@ -807,73 +913,15 @@ export default function TriviaUserInterfacePage() {
   }, [session?.id, gameId]);
 
   /* ---------------------------------------------------------
-     Derived current question (MATCHES WALL'S SELECTION)
-  --------------------------------------------------------- */
-  const timerSeconds: number = trivia?.timer_seconds ?? 30;
-  const scoringMode: string = trivia?.scoring_mode ?? "100s";
-
-  const currentQuestionIndex =
-    session?.current_question && questions.length > 0
-      ? (() => {
-          const picked = pickQuestionForCurrent(
-            questions,
-            session.current_question || 1,
-            questionOrderMode
-          );
-          if (!picked) return 0;
-          const idx = questions.findIndex((q) => q.id === picked.id);
-          return idx === -1 ? 0 : idx;
-        })()
-      : 0;
-
-  const currentQuestion = questions[currentQuestionIndex] || null;
-  const isRunning = session?.status === "running";
-  const isPaused = Boolean(session?.status) && session?.status !== "running";
-
-  const wallPhase = (session?.wall_phase || "question") as
-    | "question"
-    | "overlay"
-    | "reveal"
-    | "leaderboard"
-    | "podium";
-
-  /* ---------------------------------------------------------
-     ✅ Session over detection + close handler + continue button
-  --------------------------------------------------------- */
-
-  // Manual-advance friendly: only host controls "session over"
-  const isSessionOver =
-    session?.status === "finished" ||
-    wallPhase === "podium";
-
-  function handleCloseTab() {
-    try {
-      window.open("", "_self");
-      window.close();
-    } catch {}
-    setTimeout(() => {
-      try {
-        window.location.href = "about:blank";
-      } catch {}
-    }, 50);
-  }
-
-  function handleContinueToNextRound() {
-    if (!gameId) return;
-    // Important: tell the thanks page this is a trivia flow
-    router.push(`/thanks/${gameId}?type=trivia`);
-  }
-
-  /* ---------------------------------------------------------
-     ✅ If host hits STOP, send user to thank-you page
-     (assuming dashboard sets status = "stopped")
+     Seed/lock ad ONLY when GLOBAL question changes
   --------------------------------------------------------- */
   useEffect(() => {
-    if (!gameId) return;
-    if (session?.status === "stopped") {
-      router.replace(`/thanks/${gameId}?type=trivia`);
-    }
-  }, [session?.status, gameId, router]);
+    if (!Number.isFinite(globalQuestionNumber)) return;
+    setAdLockedQuestion((prevQ) => {
+      if (globalQuestionNumber !== prevQ) return globalQuestionNumber;
+      return prevQ;
+    });
+  }, [globalQuestionNumber]);
 
   /* ---------------------------------------------------------
      Detect video
@@ -889,7 +937,7 @@ export default function TriviaUserInterfacePage() {
     lockedAd.type.toLowerCase().includes("video");
 
   /* ---------------------------------------------------------
-     Advance ad index ONLY when question changes
+     Advance ad index ONLY when GLOBAL question changes
   --------------------------------------------------------- */
   useEffect(() => {
     if (!adsEnabled) return;
@@ -902,7 +950,7 @@ export default function TriviaUserInterfacePage() {
   }, [adsEnabled, ads, adLockedQuestion]);
 
   /* ---------------------------------------------------------
-     Follow wall phase
+     Follow wall phase (match overlays)
   --------------------------------------------------------- */
   useEffect(() => {
     if (wallPhase === "leaderboard") setView("leaderboard");
@@ -912,9 +960,12 @@ export default function TriviaUserInterfacePage() {
     setRevealAnswer(wallPhase === "reveal");
 
     setLocked(
-      wallPhase !== "question" || isPaused || isCountdownRunning || isSessionOver
+      wallPhase !== "question" ||
+        isPaused ||
+        isCountdownRunning ||
+        isGameOver
     );
-  }, [wallPhase, isPaused, isCountdownRunning, isSessionOver]);
+  }, [wallPhase, isPaused, isCountdownRunning, isGameOver]);
 
   /* ---------------------------------------------------------
      When question changes → reset local answer state
@@ -962,7 +1013,7 @@ export default function TriviaUserInterfacePage() {
 
     const effectiveStartMs = getEffectiveQuestionStartMs({
       questionStartedAt,
-      currentQuestionNumber: session?.current_question ?? null,
+      currentQuestionNumber: globalQuestionNumber ?? null, // ✅ GLOBAL
       countdownStartedAt,
       countdownSeconds,
     });
@@ -999,7 +1050,7 @@ export default function TriviaUserInterfacePage() {
       if (snap.remainingMs <= 0) setLocked(true);
     };
 
-    if (isPaused || !isRunning || isCountdownRunning || isSessionOver) {
+    if (isPaused || !isRunning || isCountdownRunning || isGameOver) {
       const nowMs = Date.now() + serverOffsetMs;
       apply(computeRemaining(nowMs));
       setLocked(true);
@@ -1024,13 +1075,13 @@ export default function TriviaUserInterfacePage() {
     isRunning,
     isPaused,
     isCountdownRunning,
-    isSessionOver,
+    isGameOver,
     currentQuestion?.id,
     questionStartedAt,
     timerSeconds,
     serverOffsetMs,
     wallPhase,
-    session?.current_question,
+    globalQuestionNumber,
     countdownStartedAt,
     countdownSeconds,
   ]);
@@ -1042,7 +1093,7 @@ export default function TriviaUserInterfacePage() {
     if (!progressiveWrongRemovalEnabled) return 0;
     if (!currentQuestion?.id) return 0;
     if (wallPhase !== "question") return 0;
-    if (!isRunning || isPaused || isCountdownRunning || isSessionOver) return 0;
+    if (!isRunning || isPaused || isCountdownRunning || isGameOver) return 0;
     if (revealAnswer) return 0;
 
     // progress is "remaining fraction". elapsed is 1 - progress.
@@ -1057,7 +1108,7 @@ export default function TriviaUserInterfacePage() {
     isRunning,
     isPaused,
     isCountdownRunning,
-    isSessionOver,
+    isGameOver,
     revealAnswer,
     progress,
   ]);
@@ -1110,7 +1161,7 @@ export default function TriviaUserInterfacePage() {
       isRunning &&
       wallPhase === "question" &&
       !isCountdownRunning &&
-      !isSessionOver,
+      !isGameOver,
 
     paused: isPaused,
     revealAnswer,
@@ -1338,7 +1389,6 @@ export default function TriviaUserInterfacePage() {
       setPlayerStreak(streak);
     }
 
-    // initial fetch + interval
     pollStreak();
     const id = window.setInterval(pollStreak, 2000);
 
@@ -1412,7 +1462,7 @@ export default function TriviaUserInterfacePage() {
     if (hasAnswered || locked) return;
     if (wallPhase !== "question") return;
     if (isCountdownRunning) return;
-    if (isSessionOver) return;
+    if (isGameOver) return;
 
     if (removedWrongIndices.has(idx) && selectedIndex !== idx) return;
 
@@ -1447,9 +1497,9 @@ export default function TriviaUserInterfacePage() {
             startMs = nowMs;
           }
 
-          // For question 1, if we know when the countdown started,
+          // For GLOBAL question 1, if we know when the countdown started,
           // shift scoring start to the *end* of the countdown ONLY.
-          if ((session?.current_question ?? null) === 1 && countdownStartedAt) {
+          if (globalQuestionNumber === 1 && countdownStartedAt) {
             const cStart = new Date(countdownStartedAt).getTime();
             if (Number.isFinite(cStart)) {
               const cSecs =
@@ -1469,7 +1519,6 @@ export default function TriviaUserInterfacePage() {
               nowMs,
             } as any);
           } catch {
-            // fallback if computeTriviaPoints signature changes
             return computeTriviaPoints({
               scoringMode,
               timerSeconds,
@@ -1493,7 +1542,8 @@ export default function TriviaUserInterfacePage() {
         const streakBefore = computeStreakBeforeCurrentQuestion({
           answers: prev as any,
           questions,
-          currentQuestionIndex,
+          // ✅ IMPORTANT: use GLOBAL index so streak respects full session order
+          currentQuestionIndex: currentQuestionGlobalIndex,
         });
 
         streakAfter = streakBefore + 1;
@@ -1606,6 +1656,10 @@ export default function TriviaUserInterfacePage() {
   let footerText = "";
   if (!isRunning) {
     footerText = "Game is paused. Waiting for the host…";
+  } else if (isRoundOver) {
+    footerText = "Round complete — waiting for the next round…";
+  } else if (isFinalSessionOver) {
+    footerText = "This trivia session is complete.";
   } else if (wallPhase === "leaderboard") {
     footerText = "Leaderboard — next question starting soon…";
   } else if (wallPhase === "overlay") {
@@ -1639,11 +1693,13 @@ export default function TriviaUserInterfacePage() {
     wallPhase === "question" &&
     !revealAnswer &&
     !isCountdownRunning &&
-    !isSessionOver;
+    !isGameOver;
 
   // 🔥 Fire streak logic (streak >= 3 lights the video)
   const hasFireStreak =
-    streakMultiplierEnabled && typeof playerStreak === "number" && playerStreak >= 3;
+    streakMultiplierEnabled &&
+    typeof playerStreak === "number" &&
+    playerStreak >= 3;
 
   return (
     <>
@@ -1716,6 +1772,10 @@ export default function TriviaUserInterfacePage() {
             <div style={{ fontSize: "0.75rem", opacity: 0.75, marginTop: 2 }}>
               {view === "leaderboard"
                 ? "Leaderboard"
+                : hasRounds
+                ? `Round ${currentRoundNumber} — Question ${
+                    currentQuestionIndex + 1
+                  } of ${roundQuestions.length}`
                 : `Question ${currentQuestionIndex + 1} of ${questions.length}`}
             </div>
           </div>
@@ -1748,9 +1808,7 @@ export default function TriviaUserInterfacePage() {
               >
                 <span aria-hidden="true">⭐</span>
                 <span>
-                  {playerStreak >= 2
-                    ? `x${playerStreak} streak`
-                    : "Streak multiplier"}
+                  {playerStreak >= 2 ? `x${playerStreak} streak` : "Streak multiplier"}
                 </span>
               </div>
 
@@ -1808,9 +1866,7 @@ export default function TriviaUserInterfacePage() {
               width: "100%",
             }}
           >
-            {view === "leaderboard"
-              ? "Leaderboard — Top Players"
-              : currentQuestion.question_text}
+            {view === "leaderboard" ? "Leaderboard — Top Players" : currentQuestion.question_text}
           </div>
         </div>
 
@@ -1890,8 +1946,7 @@ export default function TriviaUserInterfacePage() {
 
               {!leaderLoading &&
                 leaderRows.map((row) => {
-                  const hasHotStreak =
-                    row.points > 0 && (row.streak ?? 0) >= 2;
+                  const hasHotStreak = row.points > 0 && (row.streak ?? 0) >= 2;
 
                   return (
                     <div
@@ -1977,10 +2032,8 @@ export default function TriviaUserInterfacePage() {
                               style={{
                                 padding: "2px 8px",
                                 borderRadius: 999,
-                                border:
-                                  "1px solid rgba(251,191,36,0.75)",
-                                background:
-                                  "rgba(251,191,36,0.15)",
+                                border: "1px solid rgba(251,191,36,0.75)",
+                                background: "rgba(251,191,36,0.15)",
                                 fontSize: "0.7rem",
                                 fontWeight: 800,
                                 letterSpacing: 0.4,
@@ -2027,7 +2080,7 @@ export default function TriviaUserInterfacePage() {
                 locked ||
                 wallPhase !== "question" ||
                 isCountdownRunning ||
-                isSessionOver ||
+                isGameOver ||
                 isPaused ||
                 isRemoved;
 
@@ -2336,8 +2389,8 @@ export default function TriviaUserInterfacePage() {
         )}
       </div>
 
-      {/* ✅ SESSION OVER OVERLAY */}
-      {isSessionOver && (
+      {/* ✅ ROUND OVER / SESSION OVER OVERLAY */}
+      {(isRoundOver || isFinalSessionOver) && (
         <div
           style={{
             position: "fixed",
@@ -2371,7 +2424,7 @@ export default function TriviaUserInterfacePage() {
                 marginBottom: 10,
               }}
             >
-              This Trivia Session Is Over
+              {isFinalSessionOver ? "This Trivia Session Is Over" : "Round Complete"}
             </div>
 
             <div
@@ -2384,26 +2437,27 @@ export default function TriviaUserInterfacePage() {
               Thanks for playing!
             </div>
 
-            {/* ➕ NEW: Continue to Next Round (send to /thanks/[id]?type=trivia) */}
-            <button
-              onClick={handleContinueToNextRound}
-              style={{
-                width: "100%",
-                padding: "12px 14px",
-                borderRadius: 16,
-                border: "1px solid rgba(59,130,246,0.6)",
-                background: "linear-gradient(90deg,#3b82f6,#0ea5e9)",
-                color: "#fff",
-                fontWeight: 900,
-                fontSize: "1rem",
-                cursor: "pointer",
-                marginBottom: 10,
-              }}
-            >
-              Continue to Next Round
-            </button>
+            {/* ➕ Continue only when round ends (podium) */}
+            {isRoundOver && (
+              <button
+                onClick={handleContinueToNextRound}
+                style={{
+                  width: "100%",
+                  padding: "12px 14px",
+                  borderRadius: 16,
+                  border: "1px solid rgba(59,130,246,0.6)",
+                  background: "linear-gradient(90deg,#3b82f6,#0ea5e9)",
+                  color: "#fff",
+                  fontWeight: 900,
+                  fontSize: "1rem",
+                  cursor: "pointer",
+                  marginBottom: 10,
+                }}
+              >
+                Continue to Next Round
+              </button>
+            )}
 
-            {/* Existing Close button */}
             <button
               onClick={handleCloseTab}
               style={{
