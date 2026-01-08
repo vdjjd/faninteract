@@ -16,9 +16,12 @@ export default function ShootPage({
 }) {
   const { gameId } = use(params);
 
+  const [game, setGame] = useState<any>(null);
+  const [now, setNow] = useState<number>(() => Date.now());
+
   const [playerId, setPlayerId] = useState<string | null>(null);
 
-  // lane_index stored 1–10
+  // lane_index is 1–10
   const [laneIndex, setLaneIndex] = useState<number | null>(null);
 
   const [displayName, setDisplayName] = useState<string>("Player");
@@ -31,10 +34,6 @@ export default function ShootPage({
   const [lockText, setLockText] = useState<string>("");
 
   const [toast, setToast] = useState<string | null>(null);
-
-  // ✅ game sync for countdown + shot gating
-  const [game, setGame] = useState<any>(null);
-  const [now, setNow] = useState<number>(() => Date.now());
 
   // swipe tracking
   const startRef = useRef<{ x: number; y: number; t: number } | null>(null);
@@ -49,19 +48,18 @@ export default function ShootPage({
     return () => clearInterval(id);
   }, []);
 
-  // ✅ subscribe to bb_games for countdown + running state
+  // load game state + realtime
   useEffect(() => {
     let mounted = true;
 
     async function load() {
-      const { data, error } = await supabase
+      const { data } = await supabase
         .from("bb_games")
-        .select("*")
+        .select("id,status,game_running,game_timer_start,duration_seconds")
         .eq("id", gameId)
         .maybeSingle();
 
       if (!mounted) return;
-      if (error) return;
       setGame(data || null);
     }
 
@@ -105,20 +103,17 @@ export default function ShootPage({
     game?.game_running === true &&
     !!timerStartMs &&
     countdownLeft === 0 &&
-    gameSecondsLeft > 0 &&
-    !locked;
+    gameSecondsLeft > 0;
 
   const instruction = useMemo(() => {
-    if (locked) return "Locked…";
-    if (!game?.wall_active) return "Waiting for host to activate…";
-    if (game?.status !== "running") return "Waiting for host to start…";
-    if (game?.game_running !== true) return "Waiting for host to start…";
+    if (!game?.game_running) return "Waiting for host…";
     if (countdownLeft && countdownLeft > 0) return "Get ready…";
-    if (gameSecondsLeft <= 0) return "Game over";
+    if (locked) return "Locked…";
     if (mode === "dunk") return "STOP the bar in the center to DUNK!";
-    if (mode === "three") return `3PT MODE${shotsLeft != null ? ` • ${shotsLeft} to dunk` : ""}`;
+    if (mode === "three")
+      return `3PT MODE${shotsLeft != null ? ` • ${shotsLeft} to dunk` : ""}`;
     return "Swipe up to shoot";
-  }, [mode, shotsLeft, locked, game, countdownLeft, gameSecondsLeft]);
+  }, [game?.game_running, countdownLeft, locked, mode, shotsLeft]);
 
   // load player from localStorage
   useEffect(() => {
@@ -198,21 +193,7 @@ export default function ShootPage({
           setShotsLeft(null);
         }
       })
-      .on("broadcast", { event: "lock" }, ({ payload }) => {
-        const isLocked = !!payload?.locked;
-        setLocked(isLocked);
-
-        if (isLocked) {
-          const name = payload?.dunker_name ? String(payload.dunker_name) : "Someone";
-          setLockText(`${name} dunked on you`);
-        } else {
-          setLockText("");
-        }
-      })
       .on("broadcast", { event: "dunked" }, ({ payload }) => {
-        const targets = payload?.target_player_ids as string[] | undefined;
-        if (Array.isArray(targets) && !targets.includes(playerId)) return;
-
         const name = payload?.dunker_name ? String(payload.dunker_name) : "Someone";
         setLocked(true);
         setLockText(`${name} dunked on you`);
@@ -231,7 +212,7 @@ export default function ShootPage({
 
   // dunk meter animation
   useEffect(() => {
-    if (mode !== "dunk" || locked || !acceptingShots) {
+    if (mode !== "dunk" || locked) {
       if (dunkRAF.current) cancelAnimationFrame(dunkRAF.current);
       dunkRAF.current = null;
       return;
@@ -239,8 +220,8 @@ export default function ShootPage({
 
     dunkStart.current = performance.now();
 
-    const tick = (now: number) => {
-      const t = (now - dunkStart.current) / 650;
+    const tick = (tNow: number) => {
+      const t = (tNow - dunkStart.current) / 650;
       const p = (Math.sin(t * Math.PI * 2) + 1) / 2;
       setDunkProgress(p);
       dunkRAF.current = requestAnimationFrame(tick);
@@ -252,7 +233,7 @@ export default function ShootPage({
       if (dunkRAF.current) cancelAnimationFrame(dunkRAF.current);
       dunkRAF.current = null;
     };
-  }, [mode, locked, acceptingShots]);
+  }, [mode, locked]);
 
   async function sendShot(power: number, angle: number) {
     if (!acceptingShots) return;
@@ -293,12 +274,14 @@ export default function ShootPage({
 
   function onPointerDown(e: React.PointerEvent) {
     if (!acceptingShots) return;
+    if (locked) return;
     if (mode === "dunk") return;
     startRef.current = { x: e.clientX, y: e.clientY, t: Date.now() };
   }
 
   function onPointerUp(e: React.PointerEvent) {
     if (!acceptingShots) return;
+    if (locked) return;
     if (mode === "dunk") return;
 
     const s = startRef.current;
@@ -404,7 +387,9 @@ export default function ShootPage({
             <div style={{ fontSize: 18, fontWeight: 900, color: "#fff", marginBottom: 8 }}>
               Shoot by swiping up
             </div>
-            <div>Swipe stronger for more power.</div>
+            <div style={{ opacity: 0.9 }}>
+              {acceptingShots ? "Swipe stronger for more power." : "Wait for the countdown…"}
+            </div>
             <div style={{ marginTop: 10, opacity: 0.85 }}>
               Make <b>3 in a row</b> to unlock <b>3PT mode</b>. <br />
               Hit <b>3 straight 3s</b> to unlock <b>DUNK</b>.
@@ -419,7 +404,7 @@ export default function ShootPage({
               padding: 18,
               background: "rgba(0,0,0,0.65)",
               border: "1px solid rgba(255,255,255,0.18)",
-              opacity: acceptingShots ? 1 : 0.55,
+              opacity: acceptingShots ? 1 : 0.5,
             }}
           >
             <div style={{ textAlign: "center", fontWeight: 1000, fontSize: 22, color: "#fff" }}>
@@ -511,35 +496,14 @@ export default function ShootPage({
         </div>
       )}
 
-      {/* Lock overlay */}
-      {locked && (
-        <div
-          style={{
-            position: "absolute",
-            inset: 0,
-            zIndex: 30,
-            background: "rgba(0,0,0,0.85)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: 24,
-            textAlign: "center",
-          }}
-        >
-          <div style={{ color: "#fff", fontWeight: 1000, fontSize: 26, lineHeight: 1.2 }}>
-            {lockText || "Locked"}
-          </div>
-        </div>
-      )}
-
-      {/* ✅ Countdown overlay on PHONE */}
+      {/* Countdown overlay (PHONE) */}
       {game?.game_running === true && timerStartMs && countdownLeft && countdownLeft > 0 && (
         <div
           style={{
             position: "absolute",
             inset: 0,
             zIndex: 50,
-            background: "rgba(0,0,0,0.90)",
+            background: "rgba(0,0,0,0.85)",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -552,14 +516,14 @@ export default function ShootPage({
         </div>
       )}
 
-      {/* ✅ Game over overlay */}
-      {game?.game_running === true && timerStartMs && countdownLeft === 0 && gameSecondsLeft <= 0 && (
+      {/* Lock overlay */}
+      {locked && (
         <div
           style={{
             position: "absolute",
             inset: 0,
-            zIndex: 50,
-            background: "rgba(0,0,0,0.88)",
+            zIndex: 60,
+            background: "rgba(0,0,0,0.85)",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -567,11 +531,8 @@ export default function ShootPage({
             textAlign: "center",
           }}
         >
-          <div style={{ color: "#fff", fontWeight: 1000, fontSize: 34, lineHeight: 1.15 }}>
-            Game Over
-            <div style={{ marginTop: 10, fontSize: 18, fontWeight: 900, opacity: 0.85 }}>
-              Final score: {score}
-            </div>
+          <div style={{ color: "#fff", fontWeight: 1000, fontSize: 26, lineHeight: 1.2 }}>
+            {lockText || "Locked"}
           </div>
         </div>
       )}

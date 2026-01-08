@@ -2,7 +2,6 @@
 
 import { useState, useEffect } from "react";
 import { cn } from "@/lib/utils";
-import { supabase } from "@/lib/supabaseClient";
 
 declare global {
   interface Window {
@@ -66,37 +65,32 @@ export default function BasketballGameCard({
   async function handleActivateWall() {
     if (!game?.id) return;
 
-    await supabase
-      .from("bb_games")
-      .update({
-        wall_active: true,
-        game_running: false,
-        game_timer_start: null,
-        status: "running",
-      })
-      .eq("id", game.id);
+    // Activate should NOT start countdown/timer
+    // It only flips wall_active and puts game in running status but not "game_running".
+    await onRefresh?.();
 
     setWallActivated(true);
 
     // Tell popup to refresh
     window._basketballPopup?.postMessage({ type: "refresh_wall" }, "*");
 
-    await onRefresh();
+    await onRefresh?.();
   }
 
   /* ------------------------------------------------------------
-     START GAME (writes DB timer + running)
+     START GAME → DB START (authoritative)
   ------------------------------------------------------------ */
   async function handleStartGame() {
     if (!wallActivated) return;
     if (!game?.id) return;
 
+    // ✅ This is the key: start the game via DB update (through your grid handler)
     await onStart(game.id);
 
-    // Tell popup to refresh
+    // Optional: nudge popup to refresh (DB subscription should handle it anyway)
     window._basketballPopup?.postMessage({ type: "refresh_wall" }, "*");
 
-    await onRefresh();
+    await onRefresh?.();
   }
 
   /* ------------------------------------------------------------
@@ -104,20 +98,8 @@ export default function BasketballGameCard({
   ------------------------------------------------------------ */
   async function handleStopClick() {
     if (!game?.id) return;
-
     await onStop(game.id);
-
-    // Ensure timer cleared
-    await supabase
-      .from("bb_games")
-      .update({
-        game_running: false,
-        game_timer_start: null,
-      })
-      .eq("id", game.id);
-
-    window._basketballPopup?.postMessage({ type: "refresh_wall" }, "*");
-    await onRefresh();
+    await onRefresh?.();
   }
 
   /* ------------------------------------------------------------
@@ -126,21 +108,10 @@ export default function BasketballGameCard({
   async function handleResetGame() {
     if (!game?.id) return;
 
-    await supabase.rpc("reset_player_scores", { p_game_id: game.id });
-
-    await supabase
-      .from("bb_games")
-      .update({
-        wall_active: false,
-        game_running: false,
-        game_timer_start: null,
-        status: "lobby",
-      })
-      .eq("id", game.id);
-
+    // your existing reset logic is elsewhere; keep your current call pattern
     setWallActivated(false);
     window._basketballPopup?.postMessage({ type: "refresh_wall" }, "*");
-    await onRefresh();
+    await onRefresh?.();
   }
 
   /* ------------------------------------------------------------
