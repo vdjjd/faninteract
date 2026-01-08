@@ -19,6 +19,27 @@ function getStoredGuestProfile() {
   }
 }
 
+/* ✅ Basketball device token (stable per phone) */
+function getOrCreateBbDeviceToken() {
+  const KEY = "bb_device_token";
+  let tok = "";
+  try {
+    tok = localStorage.getItem(KEY) || "";
+  } catch {}
+
+  if (!tok) {
+    tok =
+      (globalThis.crypto && "randomUUID" in globalThis.crypto
+        ? (globalThis.crypto as any).randomUUID()
+        : `bb_${Math.random().toString(16).slice(2)}_${Date.now()}`);
+    try {
+      localStorage.setItem(KEY, tok);
+    } catch {}
+  }
+
+  return tok;
+}
+
 async function recordVisit({
   device_id,
   guest_profile_id,
@@ -175,7 +196,6 @@ export default function ThankYouPage() {
         }
       }
 
-      // If nothing matched, stay "lead"
       setType("lead");
     })();
 
@@ -193,13 +213,11 @@ export default function ThankYouPage() {
 
   /* ---------------------------------------------------------
      Load host + background (FK-based join)
-     NOTE: hosts only has branding_logo_url
   --------------------------------------------------------- */
   useEffect(() => {
     if (!gameId) return;
 
     (async () => {
-      // If this is /thanks and we haven't determined type yet, wait
       if (isThanksPath && type === "lead" && !rawType) {
         setData(null);
         return;
@@ -284,7 +302,7 @@ export default function ThankYouPage() {
   }, [data]);
 
   /* ---------------------------------------------------------
-     Record visit (loyalty / badge)
+     Record visit (loyalty / badge) — requires guest profile
   --------------------------------------------------------- */
   useEffect(() => {
     if (!profile || !host?.id) return;
@@ -330,45 +348,56 @@ export default function ThankYouPage() {
   }, [type]);
 
   /* ---------------------------------------------------------
-     Basketball: Poll for approval → redirect to shooter
+     ✅ Basketball: Poll for approval by DEVICE TOKEN → redirect
   --------------------------------------------------------- */
   useEffect(() => {
-    if (type !== "basketball" || !profile?.id || !gameId) return;
+    if (type !== "basketball" || !gameId) return;
+
+    const bbToken = getOrCreateBbDeviceToken();
 
     async function pollApproval() {
-      const { data: entry } = await supabase
+      // 1) Check if an approved entry exists for this phone token
+      const { data: entry, error: entryErr } = await supabase
         .from("bb_game_entries")
-        .select("id")
+        .select("id, device_token")
         .eq("game_id", gameId)
-        .eq("guest_profile_id", profile.id)
+        .eq("device_token", bbToken)
         .eq("status", "approved")
         .maybeSingle();
 
+      if (entryErr) return;
       if (!entry) return;
 
-      const { data: player } = await supabase
+      // 2) Find active player row for this phone token
+      const { data: player, error: playerErr } = await supabase
         .from("bb_game_players")
-        .select("id")
+        .select("id, device_token")
         .eq("game_id", gameId)
-        .eq("guest_profile_id", profile.id)
+        .eq("device_token", bbToken)
         .is("disconnected_at", null)
         .maybeSingle();
 
+      if (playerErr) return;
       if (!player) return;
 
-      localStorage.setItem("bb_player_id", player.id);
+      // Store player id for shooter page
+      try {
+        localStorage.setItem("bb_player_id", player.id);
+        localStorage.setItem("bb_device_token", bbToken);
+      } catch {}
 
       if (pollRef.current) clearInterval(pollRef.current);
 
       router.replace(`/basketball/${gameId}/shoot`);
     }
 
-    pollRef.current = setInterval(pollApproval, 2000);
+    // faster + smoother
+    pollRef.current = setInterval(pollApproval, 1200);
 
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
     };
-  }, [type, profile, gameId, supabase, router]);
+  }, [type, gameId, supabase, router]);
 
   /* ---------------------------------------------------------
      Trivia server-time sync
@@ -531,7 +560,7 @@ export default function ThankYouPage() {
   --------------------------------------------------------- */
   const bg =
     type === "basketball"
-      ? `url(/newbackground.png)`
+      ? `url(/bbgame1920x1080.png)` // ✅ FIXED
       : type === "trivia"
       ? "linear-gradient(135deg,#0a2540,#1b2b44,#000000)"
       : data?.background_value?.includes?.("http")
@@ -743,7 +772,13 @@ export default function ThankYouPage() {
               {badge.label}
             </div>
 
-            <div style={{ fontSize: "0.95rem", color: "#f1f5f9", opacity: 0.95 }}>
+            <div
+              style={{
+                fontSize: "0.95rem",
+                color: "#f1f5f9",
+                opacity: 0.95,
+              }}
+            >
               {badge.description}
             </div>
           </div>

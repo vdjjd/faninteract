@@ -2,10 +2,6 @@
 
 import ActiveBasketballPage from "./ActiveBasketballPage";
 
-export default function ActiveBasketball({
-  gameId,
-}: {
-  gameId: string;
-}) {
+export default function ActiveBasketball({ gameId }: { gameId: string }) {
   return <ActiveBasketballPage gameId={gameId} />;
 }

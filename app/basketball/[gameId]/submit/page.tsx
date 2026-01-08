@@ -1,13 +1,13 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter, useParams } from "next/navigation";
-import Cropper from "react-easy-crop";
+import Cropper, { Area } from "react-easy-crop";
 import imageCompression from "browser-image-compression";
 import { supabase } from "@/lib/supabaseClient";
 
 /* -------------------------------------------------------------- */
-/* Load stored guest profile                                      */
+/* Guest Profile                                                  */
 /* -------------------------------------------------------------- */
 function getStoredGuestProfile() {
   try {
@@ -18,6 +18,75 @@ function getStoredGuestProfile() {
   } catch {
     return null;
   }
+}
+
+/* -------------------------------------------------------------- */
+/* Basketball device token (stable per phone)                      */
+/* -------------------------------------------------------------- */
+function getOrCreateBbDeviceToken() {
+  const KEY = "bb_device_token";
+  let tok = "";
+  try {
+    tok = localStorage.getItem(KEY) || "";
+  } catch {}
+
+  if (!tok) {
+    tok =
+      (globalThis.crypto && "randomUUID" in globalThis.crypto
+        ? (globalThis.crypto as any).randomUUID()
+        : `bb_${Math.random().toString(16).slice(2)}_${Date.now()}`);
+    try {
+      localStorage.setItem(KEY, tok);
+    } catch {}
+  }
+
+  return tok;
+}
+
+/* -------------------------------------------------------------- */
+/* Crop helpers (canvas)                                          */
+/* -------------------------------------------------------------- */
+function createImage(url: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.addEventListener("load", () => resolve(img));
+    img.addEventListener("error", (err) => reject(err));
+    img.crossOrigin = "anonymous";
+    img.src = url;
+  });
+}
+
+async function getCroppedBlob(imageSrc: string, cropPixels: Area): Promise<Blob> {
+  const image = await createImage(imageSrc);
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Canvas context unavailable");
+
+  canvas.width = cropPixels.width;
+  canvas.height = cropPixels.height;
+
+  ctx.drawImage(
+    image,
+    cropPixels.x,
+    cropPixels.y,
+    cropPixels.width,
+    cropPixels.height,
+    0,
+    0,
+    cropPixels.width,
+    cropPixels.height
+  );
+
+  return new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => {
+        if (!blob) return reject(new Error("Failed to create blob"));
+        resolve(blob);
+      },
+      "image/jpeg",
+      0.92
+    );
+  });
 }
 
 export default function BasketballSubmissionPage() {
@@ -31,11 +100,13 @@ export default function BasketballSubmissionPage() {
   const [game, setGame] = useState<any>(null);
   const [profile, setProfile] = useState<any>(null);
 
+  const [deviceToken, setDeviceToken] = useState<string>("");
+
   // Image Crop State
   const [imageSrc, setImageSrc] = useState<string | null>(null);
   const [crop, setCrop] = useState({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
-  const [croppedAreaPixels, setCroppedAreaPixels] = useState<any>(null);
+  const [croppedAreaPixels, setCroppedAreaPixels] = useState<Area | null>(null);
 
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
@@ -52,16 +123,18 @@ export default function BasketballSubmissionPage() {
       return;
     }
     setProfile(stored);
+    setDeviceToken(getOrCreateBbDeviceToken());
   }, [router, gameId]);
 
   /* -------------------------------------------------------------- */
-  /* LOAD GAME — Correct Supabase Join                              */
+  /* LOAD GAME                                                      */
   /* -------------------------------------------------------------- */
   useEffect(() => {
     async function loadGame() {
       const { data, error } = await supabase
         .from("bb_games")
-        .select(`
+        .select(
+          `
           id,
           title,
           status,
@@ -71,7 +144,8 @@ export default function BasketballSubmissionPage() {
             branding_logo_url,
             logo_url
           )
-        `)
+        `
+        )
         .eq("id", gameId)
         .single();
 
@@ -100,9 +174,10 @@ export default function BasketballSubmissionPage() {
     const file = e.target.files?.[0];
     if (!file) return;
 
+    // compress before cropping to keep memory sane
     const compressed = await imageCompression(file, {
-      maxSizeMB: 0.6,
-      maxWidthOrHeight: 1080,
+      maxSizeMB: 0.8,
+      maxWidthOrHeight: 1400,
       useWebWorker: true,
     });
 
@@ -111,21 +186,23 @@ export default function BasketballSubmissionPage() {
     reader.readAsDataURL(compressed);
   };
 
-  function base64ToBlob(dataURL: string) {
-    const [header, base64] = dataURL.split(",");
-    const mime = header.match(/:(.*?);/)?.[1] || "image/jpeg";
-    const binary = atob(base64);
-    const len = binary.length;
-    const buffer = new ArrayBuffer(len);
-    const view = new Uint8Array(buffer);
-    for (let i = 0; i < len; i++) view[i] = binary.charCodeAt(i);
-    return new Blob([buffer], { type: mime });
-  }
+  const onCropComplete = useCallback((_croppedArea: Area, croppedPixels: Area) => {
+    setCroppedAreaPixels(croppedPixels);
+  }, []);
 
-  const uploadImage = async () => {
-    if (!imageSrc) return null;
+  const uploadCroppedImage = async () => {
+    if (!imageSrc || !croppedAreaPixels) return null;
 
-    const blob = base64ToBlob(imageSrc);
+    // crop to blob
+    let blob = await getCroppedBlob(imageSrc, croppedAreaPixels);
+
+    // optional: compress AFTER crop so uploads are small & consistent
+    blob = await imageCompression(new File([blob], "bb.jpg", { type: "image/jpeg" }), {
+      maxSizeMB: 0.35,
+      maxWidthOrHeight: 900,
+      useWebWorker: true,
+    });
+
     const fileName = `${profile.id}-${Date.now()}-bb.jpg`;
 
     const { error } = await supabase.storage
@@ -137,10 +214,7 @@ export default function BasketballSubmissionPage() {
       return null;
     }
 
-    const { data } = supabase.storage
-      .from("guest_uploads")
-      .getPublicUrl(fileName);
-
+    const { data } = supabase.storage.from("guest_uploads").getPublicUrl(fileName);
     return data.publicUrl;
   };
 
@@ -151,28 +225,37 @@ export default function BasketballSubmissionPage() {
     e.preventDefault();
     setErrorMsg("");
 
-    // Require selfie
     if (!imageSrc) {
       setErrorMsg("You must upload a selfie to continue.");
       return;
     }
 
+    if (!croppedAreaPixels) {
+      setErrorMsg("Please adjust the crop before submitting.");
+      return;
+    }
+
     const hasEmail = profile?.email?.trim();
     const hasPhone = profile?.phone?.trim();
-
     if (!hasEmail && !hasPhone) {
       setErrorMsg("You must provide either email or phone.");
       return;
     }
 
+    if (!deviceToken) {
+      setErrorMsg("Device token missing — please refresh and try again.");
+      return;
+    }
+
     setSubmitting(true);
 
-    const photoUrl = await uploadImage();
+    const photoUrl = await uploadCroppedImage();
 
-    await supabase.from("bb_game_entries").insert([
+    const { error } = await supabase.from("bb_game_entries").insert([
       {
         game_id: gameId,
         guest_profile_id: profile.id,
+        device_token: deviceToken,
         photo_url: photoUrl,
         first_name: profile.first_name,
         last_name: profile.last_name,
@@ -180,25 +263,26 @@ export default function BasketballSubmissionPage() {
       },
     ]);
 
-    // FINAL FIX — Correct Thank You Redirect
+    if (error) {
+      console.error("❌ bb_game_entries insert error:", error);
+      setErrorMsg("Submission failed. Please try again.");
+      setSubmitting(false);
+      return;
+    }
+
     router.push(`/thanks/${gameId}?type=basketball`);
   };
 
   if (!game || !profile) return null;
 
-  /* -------------------------------------------------------------- */
-  /* BACKGROUND + LOGO                                              */
-  /* -------------------------------------------------------------- */
-  const bg = "url(/BBgamebackground.png)";
+  // ✅ NEW background
+  const bg = "url(/bbgame1920x1080.png)";
 
   const displayLogo =
     game?.host?.branding_logo_url ||
     game?.host?.logo_url ||
     "/faninteractlogo.png";
 
-  /* -------------------------------------------------------------- */
-  /* UI                                                             */
-  /* -------------------------------------------------------------- */
   return (
     <div
       style={{
@@ -219,7 +303,6 @@ export default function BasketballSubmissionPage() {
         }}
       />
 
-      {/* MAIN SUBMISSION FORM */}
       <form
         onSubmit={submitEntry}
         style={{
@@ -235,9 +318,9 @@ export default function BasketballSubmissionPage() {
           textAlign: "center",
         }}
       >
-        {/* Logo */}
         <img
           src={displayLogo}
+          alt="logo"
           style={{
             width: "70%",
             margin: "0 auto 12px",
@@ -248,7 +331,6 @@ export default function BasketballSubmissionPage() {
 
         <h2 style={{ marginBottom: 16 }}>{game.title}</h2>
 
-        {/* Cropper */}
         <div
           style={{
             width: "100%",
@@ -269,7 +351,7 @@ export default function BasketballSubmissionPage() {
               aspect={1}
               onCropChange={setCrop}
               onZoomChange={setZoom}
-              onCropComplete={(_, area) => setCroppedAreaPixels(area)}
+              onCropComplete={onCropComplete}
             />
           ) : (
             <div
@@ -323,40 +405,26 @@ export default function BasketballSubmissionPage() {
         <input
           ref={fileRef}
           type="file"
-          hidden
           accept="image/*"
           onChange={handleFile}
-        />
-
-        <input
-          value={`${profile.first_name} ${profile.last_name}`}
-          readOnly
-          style={{
-            width: "100%",
-            padding: 12,
-            borderRadius: 10,
-            marginTop: 10,
-            background: "rgba(0,0,0,0.4)",
-            color: "#fff",
-            textAlign: "center",
-            border: "1px solid #334155",
-          }}
+          style={{ display: "none" }}
         />
 
         <button
+          type="submit"
           disabled={submitting}
           style={{
             width: "100%",
-            padding: 12,
-            borderRadius: 10,
-            marginTop: 20,
-            background: "linear-gradient(90deg,#ff8a00,#ff3d00)",
-            color: "#fff",
-            fontWeight: 700,
-            opacity: submitting ? 0.6 : 1,
+            padding: 14,
+            borderRadius: 12,
+            background: submitting ? "#333" : "#ff6a00",
+            color: "#000",
+            fontWeight: 900,
+            fontSize: 18,
+            cursor: submitting ? "not-allowed" : "pointer",
           }}
         >
-          {submitting ? "Submitting…" : "Enter Basketball Game"}
+          {submitting ? "Submitting..." : "Submit"}
         </button>
       </form>
     </div>

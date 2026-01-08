@@ -11,46 +11,30 @@ export default function Page({
 }: {
   params: Promise<{ gameId: string }>;
 }) {
-  // ✅ REQUIRED for Next.js 16 — unwrap params with React.use()
   const { gameId } = use(params);
-
   const [game, setGame] = useState<any>(null);
 
-  /* ------------------------------------------------------------
-     SAFETY CHECK — invalid or undefined gameId
-  ------------------------------------------------------------ */
   if (!gameId) {
     return (
-      <div
-        style={{
-          color: "white",
-          padding: 40,
-          fontSize: 32,
-          textAlign: "center",
-        }}
-      >
+      <div style={{ color: "white", padding: 40, fontSize: 32, textAlign: "center" }}>
         ❌ ERROR: Invalid or Missing Game ID
       </div>
     );
   }
 
-  /* ------------------------------------------------------------
-     LISTEN FOR DASHBOARD → WALL RELOAD MESSAGE
-  ------------------------------------------------------------ */
+  // Dashboard → wall refresh message
   useEffect(() => {
     function handleMsg(e: MessageEvent) {
-      if (e.data?.type === "refresh_wall") {
-        window.location.reload();
-      }
+      if (e.data?.type === "refresh_wall") window.location.reload();
     }
     window.addEventListener("message", handleMsg);
     return () => window.removeEventListener("message", handleMsg);
   }, []);
 
-  /* ------------------------------------------------------------
-     LOAD GAME FROM SUPABASE
-  ------------------------------------------------------------ */
+  // Load once + realtime subscribe (no 1s polling)
   useEffect(() => {
+    let mounted = true;
+
     async function load() {
       const { data, error } = await supabase
         .from("bb_games")
@@ -58,43 +42,41 @@ export default function Page({
         .eq("id", gameId)
         .maybeSingle();
 
+      if (!mounted) return;
+
       if (error) {
         console.error("❌ Failed to load bb_game:", error);
         return;
       }
-
       setGame(data || null);
     }
 
     load();
-    const interval = setInterval(load, 1000); // stay synced
-    return () => clearInterval(interval);
+
+    const channel = supabase
+      .channel(`bb-game-${gameId}`)
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "bb_games", filter: `id=eq.${gameId}` },
+        (payload) => {
+          setGame(payload.new);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      mounted = false;
+      supabase.removeChannel(channel);
+    };
   }, [gameId]);
 
-  /* ------------------------------------------------------------
-     LOADING STATE
-  ------------------------------------------------------------ */
   if (!game) {
     return (
-      <div
-        style={{
-          color: "white",
-          padding: 40,
-          fontSize: 32,
-          textAlign: "center",
-        }}
-      >
+      <div style={{ color: "white", padding: 40, fontSize: 32, textAlign: "center" }}>
         Loading game…
       </div>
     );
   }
 
-  /* ------------------------------------------------------------
-     RENDER — Switch Between Inactive / Active Wall
-  ------------------------------------------------------------ */
-  return game.wall_active ? (
-    <ActiveBasketball gameId={gameId} />
-  ) : (
-    <InactiveBasketball game={game} />
-  );
+  return game.wall_active ? <ActiveBasketball gameId={gameId} /> : <InactiveBasketball game={game} />;
 }

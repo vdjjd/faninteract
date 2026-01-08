@@ -1,12 +1,10 @@
+// components/BasketballModerationModal.tsx
 "use client";
 
 import { useState, useEffect } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { cn } from "@/lib/utils";
 
-/* ============================================================
-   TYPES
-============================================================ */
 interface Entry {
   id: string;
   game_id: string;
@@ -22,7 +20,7 @@ interface Entry {
     last_name: string | null;
     email: string | null;
     phone: string | null;
-  };
+  } | null;
 }
 
 interface Player {
@@ -36,9 +34,6 @@ interface Player {
   disconnected_at: string | null;
 }
 
-/* ============================================================
-   MAIN MODAL
-============================================================ */
 export default function BasketballModerationModal({
   gameId,
   onClose,
@@ -49,34 +44,23 @@ export default function BasketballModerationModal({
   const [entries, setEntries] = useState<Entry[]>([]);
   const [players, setPlayers] = useState<Player[]>([]);
   const [selectedPhoto, setSelectedPhoto] = useState<string | null>(null);
-  const [toast, setToast] = useState<{ text: string; color: string } | null>(
-    null
-  );
+  const [toast, setToast] = useState<{ text: string; color: string } | null>(null);
 
-  /* ============================================================
-     Toast Helper
-  ============================================================ */
   function showToast(text: string, color = "#00ff88") {
     setToast({ text, color });
     setTimeout(() => setToast(null), 2400);
   }
 
-  /* ============================================================
-     LOAD ENTRIES
-  ============================================================ */
   async function loadEntries() {
     const { data } = await supabase
       .from("bb_game_entries")
-      .select("*, guest_profiles(*)")
+      .select("id,game_id,guest_profile_id,status,photo_url,first_name,last_name,created_at, guest_profiles(first_name,last_name,email,phone)")
       .eq("game_id", gameId)
       .order("created_at", { ascending: false });
 
-    setEntries(data || []);
+    setEntries((data ?? []) as unknown as Entry[]);
   }
 
-  /* ============================================================
-     LOAD PLAYERS
-  ============================================================ */
   async function loadPlayers() {
     const { data } = await supabase
       .from("bb_game_players")
@@ -84,25 +68,18 @@ export default function BasketballModerationModal({
       .eq("game_id", gameId)
       .order("lane_index", { ascending: true });
 
-    setPlayers(data || []);
+    setPlayers((data || []) as Player[]);
   }
 
-  /* ============================================================
-     GET NEXT OPEN LANE INDEX (0–9)
-  ============================================================ */
   function getNextLane() {
     const used = new Set(
       players.filter((p) => p.disconnected_at === null).map((p) => p.lane_index)
     );
 
-    for (let i = 0; i < 10; i++) if (!used.has(i)) return i;
+    for (let lane = 1; lane <= 10; lane++) if (!used.has(lane)) return lane;
     return null;
   }
 
-  /* ============================================================
-     APPROVE ENTRY → ACTIVE PLAYER
-     (🔥 PATCHED — triggers ThankYou instant redirect)
-  ============================================================ */
   async function handleApprove(entryId: string) {
     const entry = entries.find((e) => e.id === entryId);
     if (!entry) return;
@@ -115,8 +92,7 @@ export default function BasketballModerationModal({
 
     const displayName = `${entry.first_name ?? ""} ${entry.last_name ?? ""}`.trim();
 
-    // 🔥 INSERT PLAYER AND RETURN THE ROW
-    const { data: insertedPlayer, error: insertErr } = await supabase
+    const { error: insertErr } = await supabase
       .from("bb_game_players")
       .insert([
         {
@@ -128,9 +104,7 @@ export default function BasketballModerationModal({
           score: 0,
           disconnected_at: null,
         },
-      ])
-      .select()
-      .single();
+      ]);
 
     if (insertErr) {
       console.error("❌ Insert error:", insertErr);
@@ -138,43 +112,23 @@ export default function BasketballModerationModal({
       return;
     }
 
-    console.log("🔥 Player inserted (ThankYouPage will redirect):", insertedPlayer);
-
-    // UPDATE ENTRY → approved
-    await supabase
-      .from("bb_game_entries")
-      .update({ status: "approved" })
-      .eq("id", entryId);
+    await supabase.from("bb_game_entries").update({ status: "approved" }).eq("id", entryId);
 
     showToast("✅ Player Approved");
   }
 
-  /* ============================================================
-     REJECT ENTRY
-  ============================================================ */
   async function handleReject(entryId: string) {
-    await supabase
-      .from("bb_game_entries")
-      .update({ status: "rejected" })
-      .eq("id", entryId);
-
+    await supabase.from("bb_game_entries").update({ status: "rejected" }).eq("id", entryId);
     showToast("🚫 Rejected", "#ff4444");
   }
 
-  /* ============================================================
-     DELETE ENTRY
-  ============================================================ */
   async function handleDelete(entryId: string) {
     await supabase.from("bb_game_entries").delete().eq("id", entryId);
     showToast("🗑 Deleted", "#888");
   }
 
-  /* ============================================================
-     CLEAR ACTIVE → move all to PREVIOUS
-  ============================================================ */
   async function handleClearActive() {
     const activePlayers = players.filter((p) => p.disconnected_at === null);
-
     if (activePlayers.length === 0) {
       showToast("No active players to clear.", "#ffaa22");
       return;
@@ -189,9 +143,6 @@ export default function BasketballModerationModal({
     showToast("🔄 Active players moved to Previously Played");
   }
 
-  /* ============================================================
-     RE-ADD PLAYER FROM PREVIOUS
-  ============================================================ */
   async function handleReAdd(player: Player) {
     const lane = getNextLane();
     if (lane === null) {
@@ -211,9 +162,6 @@ export default function BasketballModerationModal({
     showToast("🔁 Player Re-Added");
   }
 
-  /* ============================================================
-     REALTIME LISTENING + POLLING
-  ============================================================ */
   useEffect(() => {
     loadEntries();
     loadPlayers();
@@ -258,23 +206,15 @@ export default function BasketballModerationModal({
     };
   }, [gameId]);
 
-  /* ============================================================
-     GROUPINGS
-  ============================================================ */
   const pending = entries.filter((e) => e.status === "pending");
   const rejected = entries.filter((e) => e.status === "rejected");
 
   const active = players.filter((p) => p.disconnected_at === null);
   const previous = players.filter((p) => p.disconnected_at !== null);
 
-  /* ============================================================
-     RENDER
-  ============================================================ */
   return (
     <div
-      className={cn(
-        "fixed inset-0 bg-black/70 backdrop-blur-xl z-[9999] flex items-center justify-center"
-      )}
+      className={cn("fixed inset-0 bg-black/70 backdrop-blur-xl z-[9999] flex items-center justify-center")}
       onClick={onClose}
     >
       <div
@@ -284,29 +224,23 @@ export default function BasketballModerationModal({
         )}
         onClick={(e) => e.stopPropagation()}
       >
-        {/* CLOSE */}
-        <button
-          onClick={onClose}
-          className={cn("absolute top-3 right-3 text-white/70 hover:text-white text-xl")}
-        >
+        <button onClick={onClose} className={cn("absolute top-3 right-3 text-white/70 hover:text-white text-xl")}>
           ✕
         </button>
 
-        <h1 className={cn('text-center', 'text-2xl', 'font-bold', 'mb-6')}>
+        <h1 className={cn("text-center", "text-2xl", "font-bold", "mb-6")}>
           Basketball Player Moderation
         </h1>
 
-        {/* CLEAR ACTIVE */}
-        <div className={cn('text-right', 'mb-4')}>
+        <div className={cn("text-right", "mb-4")}>
           <button
             onClick={handleClearActive}
-            className={cn('px-4', 'py-2', 'bg-red-600', 'hover:bg-red-700', 'text-white', 'rounded-lg', 'shadow')}
+            className={cn("px-4", "py-2", "bg-red-600", "hover:bg-red-700", "text-white", "rounded-lg", "shadow")}
           >
             Clear Active Players
           </button>
         </div>
 
-        {/* PENDING */}
         <Section
           title="Pending"
           color="#ffd966"
@@ -322,7 +256,6 @@ export default function BasketballModerationModal({
           )}
         />
 
-        {/* ACTIVE */}
         <Section
           title="Active Players"
           color="#00ff99"
@@ -363,54 +296,36 @@ export default function BasketballModerationModal({
           )}
         />
 
-        {/* PREVIOUS */}
         <Section
           title="Previously Played"
           color="#66aaff"
           items={previous}
           render={(p: Player) => (
-            <PlayerCard
-              key={p.id}
-              player={p}
-              onReAdd={() => handleReAdd(p)}
-              onImageClick={setSelectedPhoto}
-            />
+            <PlayerCard key={p.id} player={p} onReAdd={() => handleReAdd(p)} onImageClick={setSelectedPhoto} />
           )}
         />
 
-        {/* REJECTED */}
         <Section
           title="Rejected"
           color="#ff5555"
           items={rejected}
           render={(e: Entry) => (
-            <EntryCard
-              key={e.id}
-              entry={e}
-              rejected
-              onDelete={() => handleDelete(e.id)}
-              onImageClick={setSelectedPhoto}
-            />
+            <EntryCard key={e.id} entry={e} rejected onDelete={() => handleDelete(e.id)} onImageClick={setSelectedPhoto} />
           )}
         />
 
-        {/* IMAGE PREVIEW */}
         {selectedPhoto && (
           <div
-            className={cn('fixed', 'inset-0', 'bg-black/70', 'flex', 'items-center', 'justify-center', 'z-[99999]')}
+            className={cn("fixed inset-0 bg-black/70 flex items-center justify-center z-[99999]")}
             onClick={() => setSelectedPhoto(null)}
           >
-            <img
-              src={selectedPhoto}
-              className={cn('max-w-[90vw]', 'max-h-[90vh]', 'rounded-xl', 'shadow-xl')}
-            />
+            <img src={selectedPhoto} className={cn("max-w-[90vw] max-h-[90vh] rounded-xl shadow-xl")} />
           </div>
         )}
 
-        {/* TOAST */}
         {toast && (
           <div
-            className={cn('fixed', 'bottom-6', 'left-1/2', '-translate-x-1/2', 'px-4', 'py-2', 'rounded-lg', 'text-black', 'font-semibold')}
+            className={cn("fixed bottom-6 left-1/2 -translate-x-1/2 px-4 py-2 rounded-lg text-black font-semibold")}
             style={{ background: toast.color }}
           >
             {toast.text}
@@ -421,23 +336,17 @@ export default function BasketballModerationModal({
   );
 }
 
-/* ============================================================
-   SECTION WRAPPER
-============================================================ */
 function Section({ title, color, items, render }: any) {
   return (
     <div className="mb-6">
-      <h2
-        className={cn('text-xl', 'font-semibold', 'mb-2')}
-        style={{ borderLeft: `4px solid ${color}`, paddingLeft: 8 }}
-      >
+      <h2 className={cn("text-xl", "font-semibold", "mb-2")} style={{ borderLeft: `4px solid ${color}`, paddingLeft: 8 }}>
         {title} ({items.length})
       </h2>
 
       {items.length === 0 ? (
         <p className="text-gray-400">None</p>
       ) : (
-        <div className={cn('grid', 'gap-3', 'grid-cols-[repeat(auto-fill,minmax(240px,1fr))]')}>
+        <div className={cn("grid gap-3 grid-cols-[repeat(auto-fill,minmax(240px,1fr))]")}>
           {items.map((item: any) => (
             <div key={item.id}>{render(item)}</div>
           ))}
@@ -447,50 +356,29 @@ function Section({ title, color, items, render }: any) {
   );
 }
 
-/* ============================================================
-   ENTRY CARD
-============================================================ */
-function EntryCard({
-  entry,
-  onApprove,
-  onReject,
-  onDelete,
-  rejected,
-  onImageClick,
-}: any) {
+function EntryCard({ entry, onApprove, onReject, onDelete, rejected, onImageClick }: any) {
   return (
-    <div className={cn('flex', 'bg-[#0f1624]', 'rounded-lg', 'border', 'border-[#333]', 'p-3', 'gap-3', 'items-center')}>
+    <div className={cn("flex bg-[#0f1624] rounded-lg border border-[#333] p-3 gap-3 items-center")}>
       <img
         src={entry.photo_url || "/placeholder.png"}
-        className={cn('w-[70px]', 'h-[70px]', 'rounded-full', 'object-cover', 'border-2', 'border-white/20', 'shadow', 'cursor-pointer')}
+        className={cn("w-[70px] h-[70px] rounded-full object-cover border-2 border-white/20 shadow cursor-pointer")}
         onClick={() => entry.photo_url && onImageClick(entry.photo_url)}
       />
 
-      <div className={cn('flex-1', 'flex', 'flex-col', 'justify-between')}>
-        <div className={cn('font-semibold', 'text-sm')}>
-          {(entry.first_name || "") + " " + (entry.last_name || "")}
-        </div>
+      <div className={cn("flex-1 flex flex-col justify-between")}>
+        <div className={cn("font-semibold text-sm")}>{(entry.first_name || "") + " " + (entry.last_name || "")}</div>
 
         {!rejected ? (
-          <div className={cn('flex', 'gap-2', 'text-xs', 'mt-2')}>
-            <button
-              onClick={onApprove}
-              className={cn('flex-1', 'bg-green-600', 'text-white', 'rounded', 'py-1')}
-            >
+          <div className={cn("flex gap-2 text-xs mt-2")}>
+            <button onClick={onApprove} className={cn("flex-1 bg-green-600 text-white rounded py-1")}>
               Approve
             </button>
-            <button
-              onClick={onReject}
-              className={cn('flex-1', 'bg-red-600', 'text-white', 'rounded', 'py-1')}
-            >
+            <button onClick={onReject} className={cn("flex-1 bg-red-600 text-white rounded py-1")}>
               Reject
             </button>
           </div>
         ) : (
-          <button
-            onClick={onDelete}
-            className={cn('mt-2', 'w-full', 'bg-[#444]', 'text-white', 'rounded', 'py-1', 'text-xs')}
-          >
+          <button onClick={onDelete} className={cn("mt-2 w-full bg-[#444] text-white rounded py-1 text-xs")}>
             Delete
           </button>
         )}
@@ -499,46 +387,32 @@ function EntryCard({
   );
 }
 
-/* ============================================================
-   PLAYER CARD
-============================================================ */
-function PlayerCard({
-  player,
-  active,
-  onReAdd,
-  onMoveToPending,
-  onMoveToPrevious,
-  onImageClick,
-}: any) {
+function PlayerCard({ player, active, onReAdd, onMoveToPending, onMoveToPrevious, onImageClick }: any) {
   return (
-    <div className={cn('flex', 'bg-[#0f1624]', 'rounded-lg', 'border', 'border-[#333]', 'p-3', 'gap-3', 'items-center')}>
+    <div className={cn("flex bg-[#0f1624] rounded-lg border border-[#333] p-3 gap-3 items-center")}>
       <img
         src={player.selfie_url || "/placeholder.png"}
-        className={cn('w-[70px]', 'h-[70px]', 'rounded-full', 'object-cover', 'border-2', 'border-white/20', 'shadow', 'cursor-pointer')}
+        className={cn("w-[70px] h-[70px] rounded-full object-cover border-2 border-white/20 shadow cursor-pointer")}
         onClick={() => player.selfie_url && onImageClick(player.selfie_url)}
       />
 
       <div className="flex-1">
-        <div className={cn('font-semibold', 'text-sm')}>
-          {player.display_name || "Unnamed Player"}
-        </div>
-        <div className={cn('text-xs', 'opacity-70')}>
-          Lane: {player.lane_index + 1}
-        </div>
+        <div className={cn("font-semibold text-sm")}>{player.display_name || "Unnamed Player"}</div>
+        <div className={cn("text-xs opacity-70")}>Lane: {player.lane_index}</div>
 
-        <div className={cn('flex', 'gap-2', 'mt-2', 'text-xs')}>
+        <div className={cn("flex gap-2 mt-2 text-xs")}>
           {active && (
             <>
               <button
                 onClick={onMoveToPrevious}
-                className={cn('flex-1', 'bg-orange-500', 'hover:bg-orange-600', 'text-white', 'rounded', 'py-1')}
+                className={cn("flex-1 bg-orange-500 hover:bg-orange-600 text-white rounded py-1")}
               >
                 Move to Previous
               </button>
 
               <button
                 onClick={onMoveToPending}
-                className={cn('flex-1', 'bg-yellow-500', 'hover:bg-yellow-600', 'text-black', 'rounded', 'py-1')}
+                className={cn("flex-1 bg-yellow-500 hover:bg-yellow-600 text-black rounded py-1")}
               >
                 Move to Pending
               </button>
@@ -546,10 +420,7 @@ function PlayerCard({
           )}
 
           {!active && onReAdd && (
-            <button
-              onClick={onReAdd}
-              className={cn('flex-1', 'bg-blue-600', 'hover:bg-blue-700', 'text-white', 'rounded', 'py-1')}
-            >
+            <button onClick={onReAdd} className={cn("flex-1 bg-blue-600 hover:bg-blue-700 text-white rounded py-1")}>
               Re-Add
             </button>
           )}
