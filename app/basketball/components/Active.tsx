@@ -123,7 +123,7 @@ const DEFAULT_TUNING: ShotTuning = {
 
 function loadTuning(): ShotTuning {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY_TUNING);
+    const raw = typeof window !== "undefined" ? localStorage.getItem(STORAGE_KEY_TUNING) : null;
     if (!raw) return DEFAULT_TUNING;
     const p = JSON.parse(raw);
     return {
@@ -141,6 +141,7 @@ function loadTuning(): ShotTuning {
 
 function saveTuning(t: ShotTuning) {
   try {
+    if (typeof window === "undefined") return;
     localStorage.setItem(STORAGE_KEY_TUNING, JSON.stringify(t));
   } catch {}
 }
@@ -207,7 +208,9 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
     async function loadPlayers() {
       const { data, error } = await supabase
         .from("bb_game_players")
-        .select("id,game_id,guest_profile_id,device_token,lane_index,display_name,selfie_url,score,disconnected_at")
+        .select(
+          "id,game_id,guest_profile_id,device_token,lane_index,display_name,selfie_url,score,disconnected_at"
+        )
         .eq("game_id", gameId)
         .is("disconnected_at", null)
         .order("lane_index", { ascending: true });
@@ -314,7 +317,7 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
     const id = `${lane}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
     const item: ShotAnim = { id, lane, made, points, at: Date.now() };
     setAnims((prev) => [item, ...prev].slice(0, 60));
-    setTimeout(() => setAnims((prev) => prev.filter((x) => x.id !== id)), 1250);
+    setTimeout(() => setAnims((prev) => prev.filter((x) => x.id !== id)), 1350);
   }
 
   useEffect(() => {
@@ -389,6 +392,7 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
             await sendPlayerMode(playerId, "normal", null);
           }
         } else {
+          // dunk mode is handled in dunk_attempt
           return;
         }
 
@@ -544,8 +548,8 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
           </div>
 
           <div style={{ marginTop: 8, fontSize: 12, opacity: 0.9 }}>
-            Spawn ({tuning.spawnX.toFixed(0)}%, {tuning.spawnY.toFixed(0)}%) • Rim ({tuning.rimX.toFixed(0)}%,{" "}
-            {tuning.rimY.toFixed(0)}%)
+            Spawn ({tuning.spawnX.toFixed(0)}%, {tuning.spawnY.toFixed(0)}%) • Rim (
+            {tuning.rimX.toFixed(0)}%, {tuning.rimY.toFixed(0)}%)
           </div>
 
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 10 }}>
@@ -884,7 +888,11 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
                         }}
                       >
                         {selfie ? (
-                          <img src={selfie} alt="selfie" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                          <img
+                            src={selfie}
+                            alt="selfie"
+                            style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                          />
                         ) : null}
                       </div>
 
@@ -902,18 +910,27 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
                           {name}
                         </div>
 
-                        <div style={{ color: "rgba(255,255,255,0.95)", fontWeight: 900, fontSize: 13 }}>
+                        <div
+                          style={{
+                            color: "rgba(255,255,255,0.95)",
+                            fontWeight: 900,
+                            fontSize: 13,
+                          }}
+                        >
                           Score: {player?.score ?? 0}
-                          {modeLabel ? <span style={{ marginLeft: 10, color: "#ffd166" }}>{modeLabel}</span> : null}
+                          {modeLabel ? (
+                            <span style={{ marginLeft: 10, color: "#ffd166" }}>{modeLabel}</span>
+                          ) : null}
                         </div>
                       </div>
                     </div>
                   </div>
 
-                  {/* ✅ Shot anims: lane-% travel + arc + drop */}
+                  {/* Shot anims */}
                   {laneAnims.map((a) => {
-                    const peak = Math.max(0, tuning.arcPx + (Math.random() * 18 - 9)); // px
-                    const drop = 55; // % (rimY + drop)
+                    // smoother: no random jitter
+                    const peak = Math.max(0, tuning.arcPx);
+                    const drop = 50; // % the ball falls below rim
 
                     const styleVars: any = {
                       ["--sx" as any]: tuning.spawnX,
@@ -923,11 +940,15 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
                       ["--peak" as any]: peak,
                       ["--drop" as any]: drop,
                       ["--ball" as any]: `${tuning.ballPx}px`,
-                      ["--dur" as any]: a.made ? "980ms" : "940ms",
+                      ["--dur" as any]: a.made ? "1150ms" : "1050ms",
                     };
 
                     return (
-                      <div key={a.id} className={`bbShot ${a.made ? "isMade" : "isMiss"}`} style={styleVars}>
+                      <div
+                        key={a.id}
+                        className={`bbShot ${a.made ? "isMade" : "isMiss"}`}
+                        style={styleVars}
+                      >
                         <div className="bbBall" />
                         <div className="bbLabel">{a.made ? `+${a.points}` : "MISS"}</div>
                       </div>
@@ -971,15 +992,62 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
             pointer-events:none;
             animation-duration: var(--dur);
             animation-fill-mode: forwards;
+            will-change: transform, left, top;
           }
 
           .bbBall{
+            position: relative;
             width:100%;
             height:100%;
             border-radius:999px;
-            background:#ff7a00;
-            box-shadow: 0 0 18px rgba(255,122,0,0.65);
-            animation: bbSpin 420ms linear infinite;
+            background:
+              radial-gradient(circle at 28% 22%, #ffe1b0 0, #ffbb66 30%, transparent 60%),
+              radial-gradient(circle at 80% 80%, #7f2b03 0, #4a1400 55%, transparent 85%),
+              radial-gradient(circle at 50% 50%, #ff8420 0, #f66510 45%, #d44705 80%);
+            box-shadow:
+              0 4px 10px rgba(0, 0, 0, 0.55),
+              0 0 18px rgba(255, 140, 40, 0.55);
+            /* you can turn spin off if you want to see shrink more clearly */
+            animation: bbSpin 900ms linear infinite;
+            overflow: hidden;
+            will-change: transform;
+          }
+
+          .bbBall::before,
+          .bbBall::after {
+            content: "";
+            position: absolute;
+            inset: 0;
+            border-radius: inherit;
+            pointer-events: none;
+          }
+
+          .bbBall::before {
+            background:
+              linear-gradient(
+                to right,
+                transparent 48%,
+                rgba(40, 12, 0, 0.9) 49%,
+                rgba(40, 12, 0, 0.9) 51%,
+                transparent 52%
+              ),
+              linear-gradient(
+                to bottom,
+                transparent 48%,
+                rgba(40, 12, 0, 0.9) 49%,
+                rgba(40, 12, 0, 0.9) 51%,
+                transparent 52%
+              );
+            opacity: 0.9;
+          }
+
+          .bbBall::after {
+            border: 2px solid rgba(40, 12, 0, 0.75);
+            border-left-color: transparent;
+            border-right-color: transparent;
+            transform: scale(1.06);
+            opacity: 0.9;
+            box-shadow: 0 0 16px rgba(255, 160, 70, 0.55);
           }
 
           .bbLabel{
@@ -998,26 +1066,32 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
             0%{
               left: calc(var(--sx) * 1%);
               top:  calc(var(--sy) * 1%);
-              transform: translate(-50%,-50%) scale(1);
+              transform: translate(-50%, -50%) scale(1.8);
               opacity: 1;
             }
-            52%{
+            30%{
               left: calc(((var(--sx) + var(--rx)) / 2) * 1%);
               top:  calc(((var(--sy) + var(--ry)) / 2) * 1%);
-              transform: translate(-50%,-50%) translateY(calc(-1px * var(--peak))) scale(0.84);
+              transform: translate(-50%, -50%) translateY(calc(-1px * var(--peak))) scale(1.3);
               opacity: 1;
             }
-            68%{
+            55%{
+              left: calc(((var(--sx) + var(--rx)) / 2) * 1%);
+              top:  calc(((var(--sy) + var(--ry)) / 2 + 2) * 1%);
+              transform: translate(-50%, -50%) translateY(calc(-1px * (var(--peak) * 0.8))) scale(1.0);
+              opacity: 1;
+            }
+            80%{
               left: calc(var(--rx) * 1%);
               top:  calc(var(--ry) * 1%);
-              transform: translate(-50%,-50%) scale(0.78);
+              transform: translate(-50%, -50%) scale(0.7);
               opacity: 1;
             }
             100%{
               left: calc(var(--rx) * 1%);
               top:  calc((var(--ry) + var(--drop)) * 1%);
-              transform: translate(-50%,-50%) scale(0.92);
-              opacity: 0.25;
+              transform: translate(-50%, -50%) scale(0.4);
+              opacity: 0.2;
             }
           }
 
@@ -1025,25 +1099,25 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
             0%{
               left: calc(var(--sx) * 1%);
               top:  calc(var(--sy) * 1%);
-              transform: translate(-50%,-50%) scale(1);
+              transform: translate(-50%, -50%) scale(1.8);
               opacity: 1;
             }
-            50%{
+            32%{
               left: calc(((var(--sx) + var(--rx)) / 2) * 1%);
               top:  calc(((var(--sy) + var(--ry)) / 2) * 1%);
-              transform: translate(-50%,-50%) translateY(calc(-1px * (var(--peak) * 0.85))) scale(0.86);
+              transform: translate(-50%, -50%) translateY(calc(-1px * (var(--peak) * 0.85))) scale(1.3);
               opacity: 1;
             }
-            70%{
-              left: calc((var(--rx) + 7) * 1%);
-              top:  calc((var(--ry) + 3) * 1%);
-              transform: translate(-50%,-50%) scale(0.80);
+            60%{
+              left: calc((var(--rx) + 5) * 1%);
+              top:  calc((var(--ry) + 2) * 1%);
+              transform: translate(-50%, -50%) scale(0.9);
               opacity: 0.95;
             }
             100%{
               left: calc((var(--rx) + 14) * 1%);
-              top:  calc((var(--ry) + var(--drop) + 6) * 1%);
-              transform: translate(-50%,-50%) scale(0.90);
+              top:  calc((var(--ry) + var(--drop) + 4) * 1%);
+              transform: translate(-50%, -50%) scale(0.5);
               opacity: 0.15;
             }
           }
@@ -1053,8 +1127,14 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
             to   { transform: rotate(360deg); }
           }
 
-          .bbShot.isMade { animation-name: bbMade; animation-timing-function: cubic-bezier(.2,.9,.2,1); }
-          .bbShot.isMiss { animation-name: bbMiss; animation-timing-function: cubic-bezier(.2,.9,.2,1); }
+          .bbShot.isMade {
+            animation-name: bbMade;
+            animation-timing-function: cubic-bezier(0.25, 0.8, 0.4, 1);
+          }
+          .bbShot.isMiss {
+            animation-name: bbMiss;
+            animation-timing-function: cubic-bezier(0.25, 0.8, 0.4, 1);
+          }
         `}</style>
       </div>
     </div>
