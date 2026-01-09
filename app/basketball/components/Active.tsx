@@ -31,10 +31,6 @@ type ShotAnim = {
   made: boolean;
   points: 2 | 3;
   at: number;
-
-  // ✅ PATCH: store the swipe data so animation can use it
-  power: number; // 0..1
-  angle: number; // -1..1
 };
 
 function clamp(n: number, a: number, b: number) {
@@ -100,45 +96,20 @@ const LANE_BG = "/newbackground.png";
 
 // Debug visuals
 const HOOP_OVERLAY_VISIBLE = true;
-
-// ✅ PATCH: change hoop outline color so it’s NOT confusing with playfield box
 const HOOP_DEBUG_STYLE = true;
-
 const LANE_SCRIM = true;
 
-// ✅ Ball tuning + debug
+// Ball tuning + debug
 const BALL_DEBUG_VISIBLE_DEFAULT = true;
-const STORAGE_KEY_TUNING = "bb_shot_tuning_v2"; // bump key so you don’t inherit old values
+const STORAGE_KEY_TUNING = "bb_shot_tuning_v1";
 
 type ShotTuning = {
-  // Spawn + rim (percent inside lane)
   spawnX: number; // %
   spawnY: number; // %
   rimX: number; // %
   rimY: number; // %
-
-  // Visual size
   ballPx: number; // px
-  endScale: number; // 0.2..1 (how small at the end)
-
-  // Arc tuning
-  arcBasePx: number; // px
-  arcPowerPx: number; // px
-
-  // Horizontal drift from swipe angle
-  driftBasePct: number; // %
-  driftPowerPct: number; // %
-
-  // Flight timing
-  durBaseMs: number; // ms
-  durPowerMs: number; // ms
-
-  // OPTIONAL: one “playfield” dotted box you can resize (your old “mystery” box)
-  showPlayfield: boolean;
-  playLeft: number; // %
-  playTop: number; // %
-  playW: number; // %
-  playH: number; // %
+  arcPx: number; // px
 };
 
 const DEFAULT_TUNING: ShotTuning = {
@@ -146,24 +117,8 @@ const DEFAULT_TUNING: ShotTuning = {
   spawnY: 84,
   rimX: 50,
   rimY: 28,
-
-  ballPx: 34, // ✅ default bigger
-  endScale: 0.38, // ✅ shrink more (distance feel)
-
-  arcBasePx: 220, // ✅ much higher arc
-  arcPowerPx: 260, // ✅ more arc with power
-
-  driftBasePct: 10,
-  driftPowerPct: 18,
-
-  durBaseMs: 900,
-  durPowerMs: 380,
-
-  showPlayfield: true,
-  playLeft: 18,
-  playTop: 8,
-  playW: 64,
-  playH: 78,
+  ballPx: 26,
+  arcPx: 150,
 };
 
 function loadTuning(): ShotTuning {
@@ -171,34 +126,13 @@ function loadTuning(): ShotTuning {
     const raw = localStorage.getItem(STORAGE_KEY_TUNING);
     if (!raw) return DEFAULT_TUNING;
     const p = JSON.parse(raw);
-    const n = (k: keyof ShotTuning, fallback: number) =>
-      typeof p[k] === "number" ? (p[k] as number) : fallback;
-    const b = (k: keyof ShotTuning, fallback: boolean) =>
-      typeof p[k] === "boolean" ? (p[k] as boolean) : fallback;
-
     return {
-      spawnX: n("spawnX", DEFAULT_TUNING.spawnX),
-      spawnY: n("spawnY", DEFAULT_TUNING.spawnY),
-      rimX: n("rimX", DEFAULT_TUNING.rimX),
-      rimY: n("rimY", DEFAULT_TUNING.rimY),
-
-      ballPx: n("ballPx", DEFAULT_TUNING.ballPx),
-      endScale: n("endScale", DEFAULT_TUNING.endScale),
-
-      arcBasePx: n("arcBasePx", DEFAULT_TUNING.arcBasePx),
-      arcPowerPx: n("arcPowerPx", DEFAULT_TUNING.arcPowerPx),
-
-      driftBasePct: n("driftBasePct", DEFAULT_TUNING.driftBasePct),
-      driftPowerPct: n("driftPowerPct", DEFAULT_TUNING.driftPowerPct),
-
-      durBaseMs: n("durBaseMs", DEFAULT_TUNING.durBaseMs),
-      durPowerMs: n("durPowerMs", DEFAULT_TUNING.durPowerMs),
-
-      showPlayfield: b("showPlayfield", DEFAULT_TUNING.showPlayfield),
-      playLeft: n("playLeft", DEFAULT_TUNING.playLeft),
-      playTop: n("playTop", DEFAULT_TUNING.playTop),
-      playW: n("playW", DEFAULT_TUNING.playW),
-      playH: n("playH", DEFAULT_TUNING.playH),
+      spawnX: typeof p.spawnX === "number" ? p.spawnX : DEFAULT_TUNING.spawnX,
+      spawnY: typeof p.spawnY === "number" ? p.spawnY : DEFAULT_TUNING.spawnY,
+      rimX: typeof p.rimX === "number" ? p.rimX : DEFAULT_TUNING.rimX,
+      rimY: typeof p.rimY === "number" ? p.rimY : DEFAULT_TUNING.rimY,
+      ballPx: typeof p.ballPx === "number" ? p.ballPx : DEFAULT_TUNING.ballPx,
+      arcPx: typeof p.arcPx === "number" ? p.arcPx : DEFAULT_TUNING.arcPx,
     };
   } catch {
     return DEFAULT_TUNING;
@@ -220,7 +154,6 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
   const modeRef = useRef<Record<string, ModeState>>({});
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
 
-  // tuning UI
   const [debugBall, setDebugBall] = useState<boolean>(BALL_DEBUG_VISIBLE_DEFAULT);
   const [tuning, setTuning] = useState<ShotTuning>(() => {
     if (typeof window === "undefined") return DEFAULT_TUNING;
@@ -240,7 +173,12 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
     let mounted = true;
 
     async function load() {
-      const { data, error } = await supabase.from("bb_games").select("*").eq("id", gameId).maybeSingle();
+      const { data, error } = await supabase
+        .from("bb_games")
+        .select("*")
+        .eq("id", gameId)
+        .maybeSingle();
+
       if (!mounted) return;
       if (error) return;
       setGame(data || null);
@@ -250,8 +188,10 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
 
     const ch = supabase
       .channel(`bb-game-active-${gameId}`)
-      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "bb_games", filter: `id=eq.${gameId}` }, (payload) =>
-        setGame(payload.new)
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "bb_games", filter: `id=eq.${gameId}` },
+        (payload) => setGame(payload.new)
       )
       .subscribe();
 
@@ -279,7 +219,9 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
       setPlayers(list);
 
       for (const p of list) {
-        if (!modeRef.current[p.id]) modeRef.current[p.id] = { ...DEFAULT_MODE_STATE };
+        if (!modeRef.current[p.id]) {
+          modeRef.current[p.id] = { ...DEFAULT_MODE_STATE };
+        }
       }
     }
 
@@ -287,8 +229,10 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
 
     const ch = supabase
       .channel(`bb-players-active-${gameId}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: "bb_game_players", filter: `game_id=eq.${gameId}` }, () =>
-        loadPlayers()
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "bb_game_players", filter: `game_id=eq.${gameId}` },
+        () => loadPlayers()
       )
       .subscribe();
 
@@ -317,14 +261,22 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
   }, [timerStartMs, now, durationSeconds]);
 
   const acceptingShots =
-    game?.status === "running" && game?.game_running === true && !!timerStartMs && countdownLeft === 0 && gameSecondsLeft > 0;
+    game?.status === "running" &&
+    game?.game_running === true &&
+    !!timerStartMs &&
+    countdownLeft === 0 &&
+    gameSecondsLeft > 0;
 
   async function sendPlayerMode(playerId: string, mode: Mode, shotsLeft?: number | null) {
     if (!channelRef.current) return;
     await channelRef.current.send({
       type: "broadcast",
       event: "player_mode",
-      payload: { player_id: playerId, mode, shots_left: typeof shotsLeft === "number" ? shotsLeft : null },
+      payload: {
+        player_id: playerId,
+        mode,
+        shots_left: typeof shotsLeft === "number" ? shotsLeft : null,
+      },
     });
   }
 
@@ -341,7 +293,11 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
     await channelRef.current.send({
       type: "broadcast",
       event: "dunked",
-      payload: { dunker_name: dunkerName, target_player_ids: targetPlayerIds, duration_ms: durationMs },
+      payload: {
+        dunker_name: dunkerName,
+        target_player_ids: targetPlayerIds,
+        duration_ms: durationMs,
+      },
     });
   }
 
@@ -350,23 +306,15 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
     const next = current + delta;
 
     setPlayers((prev) => prev.map((p) => (p.id === playerId ? { ...p, score: next } : p)));
+
     await supabase.from("bb_game_players").update({ score: next }).eq("id", playerId);
   }
 
-  // ✅ PATCH: include power + angle in stored animation
-  function pushAnim(lane: number, made: boolean, points: 2 | 3, power: number, angle: number) {
+  function pushAnim(lane: number, made: boolean, points: 2 | 3) {
     const id = `${lane}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
-    const item: ShotAnim = {
-      id,
-      lane,
-      made,
-      points,
-      at: Date.now(),
-      power: clamp(power, 0, 1),
-      angle: clamp(angle, -1, 1),
-    };
-    setAnims((prev) => [item, ...prev].slice(0, 90));
-    setTimeout(() => setAnims((prev) => prev.filter((x) => x.id !== id)), 1500);
+    const item: ShotAnim = { id, lane, made, points, at: Date.now() };
+    setAnims((prev) => [item, ...prev].slice(0, 60));
+    setTimeout(() => setAnims((prev) => prev.filter((x) => x.id !== id)), 1250);
   }
 
   useEffect(() => {
@@ -390,7 +338,9 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
         const p = players.find((x) => x.id === playerId);
         if (!p) return;
 
-        const st: ModeState = modeRef.current[playerId] ? { ...modeRef.current[playerId] } : { ...DEFAULT_MODE_STATE };
+        const st: ModeState = modeRef.current[playerId]
+          ? { ...modeRef.current[playerId] }
+          : { ...DEFAULT_MODE_STATE };
 
         const made = computeMade({
           power,
@@ -402,8 +352,7 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
         });
 
         if (st.mode === "normal") {
-          pushAnim(lane, made, 2, power, angle);
-
+          pushAnim(lane, made, 2);
           if (made) {
             await bumpScore(playerId, 2);
             st.twoStreak += 1;
@@ -419,8 +368,7 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
             st.twoStreak = 0;
           }
         } else if (st.mode === "three") {
-          pushAnim(lane, made, 3, power, angle);
-
+          pushAnim(lane, made, 3);
           if (made) {
             await bumpScore(playerId, 3);
             st.threeStreak += 1;
@@ -468,14 +416,16 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
         await sendPlayerMode(playerId, "normal", null);
 
         if (!success) {
-          pushAnim(lane, false, 2, 1, 0);
+          pushAnim(lane, false, 2);
           return;
         }
 
-        pushAnim(lane, true, 2, 1, 0);
+        pushAnim(lane, true, 2);
         await bumpScore(playerId, 2);
 
-        const targets = players.filter((x) => x.id !== playerId && x.disconnected_at === null).map((x) => x.id);
+        const targets = players
+          .filter((x) => x.id !== playerId && x.disconnected_at === null)
+          .map((x) => x.id);
 
         if (targets.length) {
           await broadcastDunked({ dunkerName, targetPlayerIds: targets, durationMs: 2000 });
@@ -498,15 +448,18 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
     const arr: Array<{ lane: number; player: PlayerRow | null; mode: ModeState }> = [];
     for (let lane = 1; lane <= 10; lane++) {
       const pl = map.get(lane) || null;
-      const st: ModeState = pl?.id && modeRef.current[pl.id] ? modeRef.current[pl.id] : { ...DEFAULT_MODE_STATE };
+      const st: ModeState =
+        pl?.id && modeRef.current[pl.id] ? modeRef.current[pl.id] : { ...DEFAULT_MODE_STATE };
       arr.push({ lane, player: pl, mode: st });
     }
     return arr;
-  }, [players]);
+  }, [players, now]);
 
   async function goFullscreen() {
     try {
-      if (!document.fullscreenElement) await document.documentElement.requestFullscreen();
+      if (!document.fullscreenElement) {
+        await document.documentElement.requestFullscreen();
+      }
     } catch {}
   }
 
@@ -562,7 +515,7 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
             left: 14,
             top: 14,
             zIndex: 30,
-            width: 360,
+            width: 320,
             padding: 12,
             borderRadius: 14,
             background: "rgba(0,0,0,0.55)",
@@ -590,76 +543,87 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
             </button>
           </div>
 
-          <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+          <div style={{ marginTop: 8, fontSize: 12, opacity: 0.9 }}>
+            Spawn ({tuning.spawnX.toFixed(0)}%, {tuning.spawnY.toFixed(0)}%) • Rim ({tuning.rimX.toFixed(0)}%,{" "}
+            {tuning.rimY.toFixed(0)}%)
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 10 }}>
             <label style={{ fontSize: 12, opacity: 0.9 }}>
               Spawn X
-              <input type="range" min={0} max={100} value={tuning.spawnX} onChange={(e) => setTuning((t) => ({ ...t, spawnX: Number(e.target.value) }))} style={{ width: "100%" }} />
+              <input
+                type="range"
+                min={0}
+                max={100}
+                value={tuning.spawnX}
+                onChange={(e) => setTuning((t) => ({ ...t, spawnX: Number(e.target.value) }))}
+                style={{ width: "100%" }}
+              />
             </label>
             <label style={{ fontSize: 12, opacity: 0.9 }}>
               Spawn Y
-              <input type="range" min={0} max={100} value={tuning.spawnY} onChange={(e) => setTuning((t) => ({ ...t, spawnY: Number(e.target.value) }))} style={{ width: "100%" }} />
+              <input
+                type="range"
+                min={0}
+                max={100}
+                value={tuning.spawnY}
+                onChange={(e) => setTuning((t) => ({ ...t, spawnY: Number(e.target.value) }))}
+                style={{ width: "100%" }}
+              />
             </label>
 
             <label style={{ fontSize: 12, opacity: 0.9 }}>
               Rim X
-              <input type="range" min={0} max={100} value={tuning.rimX} onChange={(e) => setTuning((t) => ({ ...t, rimX: Number(e.target.value) }))} style={{ width: "100%" }} />
+              <input
+                type="range"
+                min={0}
+                max={100}
+                value={tuning.rimX}
+                onChange={(e) => setTuning((t) => ({ ...t, rimX: Number(e.target.value) }))}
+                style={{ width: "100%" }}
+              />
             </label>
             <label style={{ fontSize: 12, opacity: 0.9 }}>
               Rim Y
-              <input type="range" min={0} max={100} value={tuning.rimY} onChange={(e) => setTuning((t) => ({ ...t, rimY: Number(e.target.value) }))} style={{ width: "100%" }} />
+              <input
+                type="range"
+                min={0}
+                max={100}
+                value={tuning.rimY}
+                onChange={(e) => setTuning((t) => ({ ...t, rimY: Number(e.target.value) }))}
+                style={{ width: "100%" }}
+              />
             </label>
 
             <label style={{ fontSize: 12, opacity: 0.9 }}>
               Ball px
-              <input type="range" min={12} max={80} value={tuning.ballPx} onChange={(e) => setTuning((t) => ({ ...t, ballPx: Number(e.target.value) }))} style={{ width: "100%" }} />
+              <input
+                type="range"
+                min={12}
+                max={80}
+                value={tuning.ballPx}
+                onChange={(e) => setTuning((t) => ({ ...t, ballPx: Number(e.target.value) }))}
+                style={{ width: "100%" }}
+              />
             </label>
             <label style={{ fontSize: 12, opacity: 0.9 }}>
-              End Scale
-              <input type="range" min={0.2} max={0.9} step={0.01} value={tuning.endScale} onChange={(e) => setTuning((t) => ({ ...t, endScale: Number(e.target.value) }))} style={{ width: "100%" }} />
-            </label>
-
-            <label style={{ fontSize: 12, opacity: 0.9 }}>
-              Arc Base
-              <input type="range" min={0} max={520} value={tuning.arcBasePx} onChange={(e) => setTuning((t) => ({ ...t, arcBasePx: Number(e.target.value) }))} style={{ width: "100%" }} />
-            </label>
-            <label style={{ fontSize: 12, opacity: 0.9 }}>
-              Arc +Power
-              <input type="range" min={0} max={520} value={tuning.arcPowerPx} onChange={(e) => setTuning((t) => ({ ...t, arcPowerPx: Number(e.target.value) }))} style={{ width: "100%" }} />
-            </label>
-
-            <label style={{ fontSize: 12, opacity: 0.9 }}>
-              Drift Base %
-              <input type="range" min={0} max={50} value={tuning.driftBasePct} onChange={(e) => setTuning((t) => ({ ...t, driftBasePct: Number(e.target.value) }))} style={{ width: "100%" }} />
-            </label>
-            <label style={{ fontSize: 12, opacity: 0.9 }}>
-              Drift +Power %
-              <input type="range" min={0} max={50} value={tuning.driftPowerPct} onChange={(e) => setTuning((t) => ({ ...t, driftPowerPct: Number(e.target.value) }))} style={{ width: "100%" }} />
-            </label>
-
-            <label style={{ fontSize: 12, opacity: 0.9 }}>
-              Dur Base ms
-              <input type="range" min={400} max={1800} value={tuning.durBaseMs} onChange={(e) => setTuning((t) => ({ ...t, durBaseMs: Number(e.target.value) }))} style={{ width: "100%" }} />
-            </label>
-            <label style={{ fontSize: 12, opacity: 0.9 }}>
-              Dur +Power ms
-              <input type="range" min={0} max={900} value={tuning.durPowerMs} onChange={(e) => setTuning((t) => ({ ...t, durPowerMs: Number(e.target.value) }))} style={{ width: "100%" }} />
+              Arc px
+              <input
+                type="range"
+                min={0}
+                max={320}
+                value={tuning.arcPx}
+                onChange={(e) => setTuning((t) => ({ ...t, arcPx: Number(e.target.value) }))}
+                style={{ width: "100%" }}
+              />
             </label>
           </div>
 
-          <div style={{ marginTop: 10, display: "flex", gap: 10, alignItems: "center" }}>
-            <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12, opacity: 0.9 }}>
-              <input
-                type="checkbox"
-                checked={tuning.showPlayfield}
-                onChange={(e) => setTuning((t) => ({ ...t, showPlayfield: e.target.checked }))}
-              />
-              Show playfield box
-            </label>
-
+          <div style={{ marginTop: 10, display: "flex", gap: 10 }}>
             <button
               onClick={() => setTuning(DEFAULT_TUNING)}
               style={{
-                marginLeft: "auto",
+                flex: 1,
                 padding: "8px 10px",
                 borderRadius: 12,
                 border: "1px solid rgba(255,255,255,0.25)",
@@ -669,30 +633,9 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
                 cursor: "pointer",
               }}
             >
-              Reset All
+              Reset
             </button>
           </div>
-
-          {tuning.showPlayfield && (
-            <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-              <label style={{ fontSize: 12, opacity: 0.9 }}>
-                Box Left %
-                <input type="range" min={0} max={60} value={tuning.playLeft} onChange={(e) => setTuning((t) => ({ ...t, playLeft: Number(e.target.value) }))} style={{ width: "100%" }} />
-              </label>
-              <label style={{ fontSize: 12, opacity: 0.9 }}>
-                Box Top %
-                <input type="range" min={0} max={60} value={tuning.playTop} onChange={(e) => setTuning((t) => ({ ...t, playTop: Number(e.target.value) }))} style={{ width: "100%" }} />
-              </label>
-              <label style={{ fontSize: 12, opacity: 0.9 }}>
-                Box W %
-                <input type="range" min={20} max={100} value={tuning.playW} onChange={(e) => setTuning((t) => ({ ...t, playW: Number(e.target.value) }))} style={{ width: "100%" }} />
-              </label>
-              <label style={{ fontSize: 12, opacity: 0.9 }}>
-                Box H %
-                <input type="range" min={20} max={100} value={tuning.playH} onChange={(e) => setTuning((t) => ({ ...t, playH: Number(e.target.value) }))} style={{ width: "100%" }} />
-              </label>
-            </div>
-          )}
         </div>
 
         {/* GRID */}
@@ -717,10 +660,6 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
                   : player?.id && mode.mode === "dunk"
                   ? "DUNK"
                   : "";
-
-              // base (rim - spawn)
-              const baseDx = tuning.rimX - tuning.spawnX; // %
-              const baseDy = tuning.rimY - tuning.spawnY; // %
 
               return (
                 <div
@@ -769,24 +708,6 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
                     LANE {lane}
                   </div>
 
-                  {/* ✅ ONE CLEAR dotted box (resizable) */}
-                  {debugBall && tuning.showPlayfield && (
-                    <div
-                      style={{
-                        position: "absolute",
-                        left: `${tuning.playLeft}%`,
-                        top: `${tuning.playTop}%`,
-                        width: `${tuning.playW}%`,
-                        height: `${tuning.playH}%`,
-                        border: "2px dashed rgba(0,255,180,0.95)",
-                        borderRadius: 14,
-                        zIndex: 6,
-                        pointerEvents: "none",
-                        boxShadow: "0 0 0 2px rgba(0,0,0,0.25) inset",
-                      }}
-                    />
-                  )}
-
                   {/* HOOP OVERLAY */}
                   <div
                     style={{
@@ -806,8 +727,7 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
                         position: "relative",
                         width: "46%",
                         height: 83,
-                        // ✅ cyan dashed (not the same green as playfield box)
-                        outline: HOOP_DEBUG_STYLE ? "2px dashed rgba(0,180,255,0.9)" : "none",
+                        outline: HOOP_DEBUG_STYLE ? "2px dashed rgba(0,255,180,0.95)" : "none",
                         outlineOffset: 2,
                       }}
                       data-lane={lane}
@@ -882,10 +802,10 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
                     </div>
                   </div>
 
-                  {/* Spawn + rim markers */}
+                  {/* Spawn + Rim markers */}
                   {debugBall && (
                     <>
-                      {/* spawn */}
+                      {/* spawn marker */}
                       <div
                         style={{
                           position: "absolute",
@@ -901,7 +821,22 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
                           pointerEvents: "none",
                         }}
                       />
-                      {/* rim */}
+                      <div
+                        style={{
+                          position: "absolute",
+                          left: `${tuning.spawnX}%`,
+                          top: `${tuning.spawnY}%`,
+                          transform: "translate(-50%,-50%)",
+                          width: 6,
+                          height: 6,
+                          borderRadius: 999,
+                          background: "rgba(255,255,255,0.95)",
+                          zIndex: 12,
+                          pointerEvents: "none",
+                        }}
+                      />
+
+                      {/* rim marker */}
                       <div
                         style={{
                           position: "absolute",
@@ -914,6 +849,20 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
                           border: "2px solid rgba(255,106,0,0.95)",
                           background: "rgba(255,106,0,0.20)",
                           zIndex: 11,
+                          pointerEvents: "none",
+                        }}
+                      />
+                      <div
+                        style={{
+                          position: "absolute",
+                          left: `${tuning.rimX}%`,
+                          top: `${tuning.rimY}%`,
+                          transform: "translate(-50%,-50%)",
+                          width: 4,
+                          height: 4,
+                          borderRadius: 999,
+                          background: "rgba(255,106,0,0.95)",
+                          zIndex: 12,
                           pointerEvents: "none",
                         }}
                       />
@@ -961,57 +910,26 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
                     </div>
                   </div>
 
-                  {/* Shot anims */}
+                  {/* ✅ Shot anims: lane-% travel + arc + drop */}
                   {laneAnims.map((a) => {
-                    const drift = a.angle * (tuning.driftBasePct + a.power * tuning.driftPowerPct);
-                    const dxPct = `${(baseDx + drift).toFixed(2)}%`;
-                    const dyPct = `${baseDy.toFixed(2)}%`;
-
-                    const arcPx = tuning.arcBasePx + a.power * tuning.arcPowerPx;
-                    const durMs = tuning.durBaseMs + a.power * tuning.durPowerMs;
+                    const peak = Math.max(0, tuning.arcPx + (Math.random() * 18 - 9)); // px
+                    const drop = 55; // % (rimY + drop)
 
                     const styleVars: any = {
-                      ["--dx" as any]: dxPct,
-                      ["--dy" as any]: dyPct,
-                      ["--arcPx" as any]: `${arcPx}px`,
-                      ["--endScale" as any]: `${tuning.endScale}`,
-                      ["--dur" as any]: `${durMs}ms`,
+                      ["--sx" as any]: tuning.spawnX,
+                      ["--sy" as any]: tuning.spawnY,
+                      ["--rx" as any]: tuning.rimX,
+                      ["--ry" as any]: tuning.rimY,
+                      ["--peak" as any]: peak,
+                      ["--drop" as any]: drop,
+                      ["--ball" as any]: `${tuning.ballPx}px`,
+                      ["--dur" as any]: a.made ? "980ms" : "940ms",
                     };
 
                     return (
-                      <div
-                        key={a.id}
-                        style={{
-                          position: "absolute",
-                          left: `${tuning.spawnX}%`,
-                          top: `${tuning.spawnY}%`,
-                          width: tuning.ballPx,
-                          height: tuning.ballPx,
-                          borderRadius: 999,
-                          background: "#ff7a00",
-                          boxShadow: "0 0 18px rgba(255,122,0,0.65)",
-                          zIndex: 12,
-                          transform: "translate(-50%,-50%)",
-                          ...styleVars,
-                          animation: a.made
-                            ? "bbArcMade var(--dur) cubic-bezier(.2,.9,.2,1) forwards"
-                            : "bbArcMiss var(--dur) cubic-bezier(.2,.9,.2,1) forwards",
-                        }}
-                      >
-                        <div
-                          style={{
-                            position: "absolute",
-                            top: -30,
-                            left: -60,
-                            right: -60,
-                            textAlign: "center",
-                            color: a.made ? "#00ff99" : "#ff5c5c",
-                            fontWeight: 1000,
-                            fontSize: 16,
-                          }}
-                        >
-                          {a.made ? `+${a.points}` : "MISS"}
-                        </div>
+                      <div key={a.id} className={`bbShot ${a.made ? "isMade" : "isMiss"}`} style={styleVars}>
+                        <div className="bbBall" />
+                        <div className="bbLabel">{a.made ? `+${a.points}` : "MISS"}</div>
                       </div>
                     );
                   })}
@@ -1042,18 +960,101 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
         )}
 
         <style>{`
-          @keyframes bbArcMade {
-            0%   { transform: translate(-50%,-50%) scale(1); opacity: 1; }
-            45%  { transform: translate(calc(-50% + var(--dx) * 0.45), calc(-50% + var(--dy) * 0.45 - var(--arcPx))) scale(0.72); opacity: 1; }
-            78%  { transform: translate(calc(-50% + var(--dx) * 0.86), calc(-50% + var(--dy) * 0.86 - calc(var(--arcPx) * 0.22))) scale(0.52); opacity: 0.95; }
-            100% { transform: translate(calc(-50% + var(--dx)), calc(-50% + var(--dy))) scale(var(--endScale)); opacity: 0.16; }
+          .bbShot{
+            position:absolute;
+            left: calc(var(--sx) * 1%);
+            top:  calc(var(--sy) * 1%);
+            width: var(--ball);
+            height: var(--ball);
+            transform: translate(-50%,-50%);
+            z-index: 12;
+            pointer-events:none;
+            animation-duration: var(--dur);
+            animation-fill-mode: forwards;
           }
 
-          @keyframes bbArcMiss {
-            0%   { transform: translate(-50%,-50%) scale(1); opacity: 1; }
-            45%  { transform: translate(calc(-50% + var(--dx) * 0.5), calc(-50% + var(--dy) * 0.5 - calc(var(--arcPx) * 0.95))) scale(0.75); opacity: 1; }
-            100% { transform: translate(calc(-50% + var(--dx) * 1.15), calc(-50% + var(--dy) * 1.25 + 16%)) scale(calc(var(--endScale) * 0.9)); opacity: 0.08; }
+          .bbBall{
+            width:100%;
+            height:100%;
+            border-radius:999px;
+            background:#ff7a00;
+            box-shadow: 0 0 18px rgba(255,122,0,0.65);
+            animation: bbSpin 420ms linear infinite;
           }
+
+          .bbLabel{
+            position:absolute;
+            top:-30px;
+            left:-60px;
+            right:-60px;
+            text-align:center;
+            font-weight:1000;
+            font-size:16px;
+          }
+          .bbShot.isMade .bbLabel{ color:#00ff99; }
+          .bbShot.isMiss .bbLabel{ color:#ff5c5c; }
+
+          @keyframes bbMade {
+            0%{
+              left: calc(var(--sx) * 1%);
+              top:  calc(var(--sy) * 1%);
+              transform: translate(-50%,-50%) scale(1);
+              opacity: 1;
+            }
+            52%{
+              left: calc(((var(--sx) + var(--rx)) / 2) * 1%);
+              top:  calc(((var(--sy) + var(--ry)) / 2) * 1%);
+              transform: translate(-50%,-50%) translateY(calc(-1px * var(--peak))) scale(0.84);
+              opacity: 1;
+            }
+            68%{
+              left: calc(var(--rx) * 1%);
+              top:  calc(var(--ry) * 1%);
+              transform: translate(-50%,-50%) scale(0.78);
+              opacity: 1;
+            }
+            100%{
+              left: calc(var(--rx) * 1%);
+              top:  calc((var(--ry) + var(--drop)) * 1%);
+              transform: translate(-50%,-50%) scale(0.92);
+              opacity: 0.25;
+            }
+          }
+
+          @keyframes bbMiss {
+            0%{
+              left: calc(var(--sx) * 1%);
+              top:  calc(var(--sy) * 1%);
+              transform: translate(-50%,-50%) scale(1);
+              opacity: 1;
+            }
+            50%{
+              left: calc(((var(--sx) + var(--rx)) / 2) * 1%);
+              top:  calc(((var(--sy) + var(--ry)) / 2) * 1%);
+              transform: translate(-50%,-50%) translateY(calc(-1px * (var(--peak) * 0.85))) scale(0.86);
+              opacity: 1;
+            }
+            70%{
+              left: calc((var(--rx) + 7) * 1%);
+              top:  calc((var(--ry) + 3) * 1%);
+              transform: translate(-50%,-50%) scale(0.80);
+              opacity: 0.95;
+            }
+            100%{
+              left: calc((var(--rx) + 14) * 1%);
+              top:  calc((var(--ry) + var(--drop) + 6) * 1%);
+              transform: translate(-50%,-50%) scale(0.90);
+              opacity: 0.15;
+            }
+          }
+
+          @keyframes bbSpin {
+            from { transform: rotate(0deg); }
+            to   { transform: rotate(360deg); }
+          }
+
+          .bbShot.isMade { animation-name: bbMade; animation-timing-function: cubic-bezier(.2,.9,.2,1); }
+          .bbShot.isMiss { animation-name: bbMiss; animation-timing-function: cubic-bezier(.2,.9,.2,1); }
         `}</style>
       </div>
     </div>
