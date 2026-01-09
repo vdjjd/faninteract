@@ -317,7 +317,7 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
     const id = `${lane}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
     const item: ShotAnim = { id, lane, made, points, at: Date.now() };
     setAnims((prev) => [item, ...prev].slice(0, 60));
-    setTimeout(() => setAnims((prev) => prev.filter((x) => x.id !== id)), 1300);
+    setTimeout(() => setAnims((prev) => prev.filter((x) => x.id !== id)), 1450);
   }
 
   useEffect(() => {
@@ -392,7 +392,6 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
             await sendPlayerMode(playerId, "normal", null);
           }
         } else {
-          // dunk mode is handled in dunk_attempt
           return;
         }
 
@@ -457,7 +456,7 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
       arr.push({ lane, player: pl, mode: st });
     }
     return arr;
-  }, [players]); // ← removed "now" so animation isn't fighting re-renders
+  }, [players]);
 
   async function goFullscreen() {
     try {
@@ -655,7 +654,7 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
           >
             {laneCells.map(({ lane, player, mode }) => {
               const laneAnims = anims.filter((a) => a.lane === lane);
-              const name = player?.display_name || `Lane {lane}`;
+              const name = player?.display_name || `Lane ${lane}`;
               const selfie = player?.selfie_url || "";
 
               const modeLabel =
@@ -939,7 +938,7 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
                       ["--peak" as any]: peak,
                       ["--drop" as any]: drop,
                       ["--ball" as any]: `${tuning.ballPx}px`,
-                      ["--dur" as any]: a.made ? "1100ms" : "1050ms",
+                      ["--dur" as any]: a.made ? "1400ms" : "1300ms",
                     };
 
                     return (
@@ -1060,22 +1059,30 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
           .bbShot.isMade .bbLabel{ color:#00ff99; }
           .bbShot.isMiss .bbLabel{ color:#ff5c5c; }
 
-          /* Smooth, parabolic-ish arc: only start and end positions,
-             the "arc" is in translateY, so no more step/hang look. */
+          /* Higher arc + slower descent:
+             - apex at 35% of the animation
+             - stays "in the air" until ~75%
+             - only start (0%) and end (100%) change left/top positions,
+               so movement is smooth with no jitter. */
+
           @keyframes bbMade {
-            0%{
+            0% {
               left: calc(var(--sx) * 1%);
               top:  calc(var(--sy) * 1%);
               transform: translate(-50%, -50%) scale(1.8);
               opacity: 1;
             }
-            50%{
-              /* browser interpolates left/top halfway between start & end;
-                 we just push the ball upward for the arc and shrink a bit */
-              transform: translate(-50%, calc(-50% - 1px * var(--peak))) scale(1.15);
+            35% {
+              /* go high up: 1.6x arc slider */
+              transform: translate(-50%, calc(-50% - 1px * (var(--peak) * 1.6))) scale(1.35);
               opacity: 1;
             }
-            100%{
+            75% {
+              /* coming down toward rim but still above it a bit */
+              transform: translate(-50%, calc(-50% - 1px * (var(--peak) * 0.25))) scale(0.9);
+              opacity: 1;
+            }
+            100% {
               left: calc(var(--rx) * 1%);
               top:  calc((var(--ry) + var(--drop)) * 1%);
               transform: translate(-50%, -50%) scale(0.4);
@@ -1084,17 +1091,21 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
           }
 
           @keyframes bbMiss {
-            0%{
+            0% {
               left: calc(var(--sx) * 1%);
               top:  calc(var(--sy) * 1%);
               transform: translate(-50%, -50%) scale(1.8);
               opacity: 1;
             }
-            50%{
-              transform: translate(-50%, calc(-50% - 1px * (var(--peak) * 0.9))) scale(1.25);
+            35% {
+              transform: translate(-50%, calc(-50% - 1px * (var(--peak) * 1.4))) scale(1.35);
               opacity: 1;
             }
-            100%{
+            75% {
+              transform: translate(-50%, calc(-50% - 1px * (var(--peak) * 0.2))) scale(0.95);
+              opacity: 0.9;
+            }
+            100% {
               left: calc((var(--rx) + 14) * 1%);
               top:  calc((var(--ry) + var(--drop) + 4) * 1%);
               transform: translate(-50%, -50%) scale(0.5);
@@ -1109,11 +1120,11 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
 
           .bbShot.isMade {
             animation-name: bbMade;
-            animation-timing-function: cubic-bezier(0.25, 0.8, 0.4, 1);
+            animation-timing-function: cubic-bezier(0.18, 0.72, 0.25, 1);
           }
           .bbShot.isMiss {
             animation-name: bbMiss;
-            animation-timing-function: cubic-bezier(0.25, 0.8, 0.4, 1);
+            animation-timing-function: cubic-bezier(0.18, 0.72, 0.25, 1);
           }
         `}</style>
       </div>
