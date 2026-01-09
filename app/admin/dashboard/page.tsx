@@ -136,9 +136,16 @@ export default function DashboardPage() {
     setBasketballGames(basketballData.data || []);
   }
 
-  async function loadHostAndGate() {
-    setGate("loading");
-    setGateMsg("");
+  // ✅ PATCHED: silent refresh option to prevent flicker
+  async function loadHostAndGate(opts?: { silent?: boolean }) {
+    const silent = !!opts?.silent;
+
+    // Only show full-screen loading on initial load
+    if (!silent) {
+      setGate("loading");
+      setGateMsg("");
+      setLoading(true);
+    }
 
     const { data: userRes } = await supabase.auth.getUser();
     const user = userRes?.user;
@@ -205,8 +212,10 @@ export default function DashboardPage() {
 
     // unlocked
     setGate("ok");
-    if (checkoutSuccess) setGateMsg("✅ Subscription success! Loading your dashboard…");
-    if (checkoutCanceled) setGateMsg("⚠️ Checkout canceled.");
+
+    // Don't constantly clear+re-set on silent refresh
+    if (checkoutSuccess) setGateMsg("✅ Subscription success! Updating your dashboard…");
+    else if (checkoutCanceled) setGateMsg("⚠️ Checkout canceled.");
 
     if (hostRow?.id) await refreshAll(hostRow.id);
 
@@ -226,7 +235,7 @@ export default function DashboardPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // After Stripe success, webhook may take a moment -> light polling
+  // After Stripe success, webhook may take a moment -> light polling (silent to prevent flicker)
   useEffect(() => {
     if (!checkoutSuccess) return;
 
@@ -234,7 +243,7 @@ export default function DashboardPage() {
     const id = setInterval(async () => {
       tries++;
       try {
-        await loadHostAndGate();
+        await loadHostAndGate({ silent: true });
       } catch {}
       if (tries >= 10) clearInterval(id);
     }, 1000);
@@ -246,11 +255,7 @@ export default function DashboardPage() {
   // Guard wrapper
   function requireUnlocked(fn: () => void) {
     if (gate !== "ok") {
-      alert(
-        gate === "verify"
-          ? "Please verify your email first."
-          : "Please subscribe to unlock creation."
-      );
+      alert(gate === "verify" ? "Please verify your email first." : "Please subscribe to unlock creation.");
       return;
     }
     fn();
@@ -271,7 +276,7 @@ export default function DashboardPage() {
     }
   }
 
-  // ✅ FULLY FIXED checkout starter
+  // ✅ checkout starter
   async function startCheckout() {
     try {
       const hostId = host?.id;
@@ -283,7 +288,7 @@ export default function DashboardPage() {
       const res = await fetch("/api/create-checkout-session", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ hostId }), // ✅ matches route.ts
+        body: JSON.stringify({ hostId }),
       });
 
       const contentType = res.headers.get("content-type") || "";
@@ -361,7 +366,7 @@ export default function DashboardPage() {
             </button>
 
             <button
-              onClick={() => loadHostAndGate()}
+              onClick={() => loadHostAndGate({ silent: true })}
               className={cn("w-full rounded-xl border border-white/15 bg-white/5 hover:bg-white/10 font-semibold py-3")}
             >
               I Verified — Refresh
@@ -417,7 +422,7 @@ export default function DashboardPage() {
             </button>
 
             <button
-              onClick={() => loadHostAndGate()}
+              onClick={() => loadHostAndGate({ silent: true })}
               className={cn("w-full rounded-xl border border-white/15 bg-white/5 hover:bg-white/10 font-semibold py-3")}
             >
               Refresh Status
@@ -744,7 +749,11 @@ export default function DashboardPage() {
       )}
 
       {showBuilderModal && builderAdId && (
-        <AdBuilderModal adId={builderAdId} hostId={host?.id} onClose={() => setShowBuilderModal(false)} />
+        <AdBuilderModal
+          adId={builderAdId}
+          hostId={host?.id}
+          onClose={() => setShowBuilderModal(false)}
+        />
       )}
 
       {selectedTriviaForModeration && (
