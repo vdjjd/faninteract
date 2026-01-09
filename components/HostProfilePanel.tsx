@@ -1,12 +1,7 @@
 "use client";
 
 import { useState, useRef } from "react";
-import {
-  Sheet,
-  SheetContent,
-  SheetTrigger,
-} from "@/components/ui/sheet";
-
+import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/lib/supabaseClient";
 
@@ -33,10 +28,7 @@ interface HostProfilePanelProps {
   setHost: React.Dispatch<React.SetStateAction<any>>;
 }
 
-export default function HostProfilePanel({
-  host,
-  setHost,
-}: HostProfilePanelProps) {
+export default function HostProfilePanel({ host, setHost }: HostProfilePanelProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [showEmailModal, setShowEmailModal] = useState(false);
   const [showPassModal, setShowPassModal] = useState(false);
@@ -46,67 +38,114 @@ export default function HostProfilePanel({
   const [uploadingLogo, setUploadingLogo] = useState(false);
   const [logoPreview, setLogoPreview] = useState(host?.branding_logo_url || "");
 
+  // ✅ Billing portal button state
+  const [billingLoading, setBillingLoading] = useState(false);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   async function handleLogout() {
     await supabase.auth.signOut();
     window.location.href = "/";
   }
-/* ---------------------- EXPORT GUEST DATA ---------------------- */
-function exportGuestsCSV() {
-  if (!host?.id) return;
-  window.open(`/api/export/guests?hostId=${host.id}`, "_blank");
-}
 
-function printGuestsPDF() {
-  if (!host?.id) return;
-  window.open(`/api/export/guests/print?hostId=${host.id}`, "_blank");
-}
+  /* ---------------------- EXPORT GUEST DATA ---------------------- */
+  function exportGuestsCSV() {
+    if (!host?.id) return;
+    window.open(`/api/export/guests?hostId=${host.id}`, "_blank");
+  }
+
+  function printGuestsPDF() {
+    if (!host?.id) return;
+    window.open(`/api/export/guests/print?hostId=${host.id}`, "_blank");
+  }
 
   async function updateGuestOption(field: string, value: boolean) {
     await supabase.from("hosts").update({ [field]: value }).eq("id", host.id);
     setHost((prev: any) => ({ ...prev, [field]: value }));
   }
 
-/* ---------------- AGE RESTRICTIONS ---------------- */
-const minimumAge = host?.minimum_age ?? null;
-const is18 = minimumAge === 18;
-const is21 = minimumAge === 21;
+  /* ---------------------- BILLING: STRIPE PORTAL ---------------------- */
+  async function handleManageBilling() {
+    try {
+      if (!host?.id) return alert("Host not ready.");
 
-async function toggleAgeRestriction(age: 18 | 21, enabled: boolean) {
-  if (!host?.id) return;
+      setBillingLoading(true);
 
-  if (enabled) {
-    await supabase
-      .from("hosts")
-      .update({
+      const { data } = await supabase.auth.getSession();
+      const token = data?.session?.access_token;
+      if (!token) {
+        alert("You must be logged in.");
+        return;
+      }
+
+      const res = await fetch("/api/stripe/create-portal-session", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ hostId: host.id }),
+      });
+
+      const payload = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        alert(payload?.error || "Could not open billing portal.");
+        return;
+      }
+
+      if (!payload?.url) {
+        alert("Billing portal response missing url.");
+        return;
+      }
+
+      window.location.href = payload.url;
+    } catch (e: any) {
+      console.error("handleManageBilling error:", e);
+      alert(e?.message || "Billing portal error");
+    } finally {
+      setBillingLoading(false);
+    }
+  }
+
+  /* ---------------- AGE RESTRICTIONS ---------------- */
+  const minimumAge = host?.minimum_age ?? null;
+  const is18 = minimumAge === 18;
+  const is21 = minimumAge === 21;
+
+  async function toggleAgeRestriction(age: 18 | 21, enabled: boolean) {
+    if (!host?.id) return;
+
+    if (enabled) {
+      await supabase
+        .from("hosts")
+        .update({
+          require_age: true,
+          minimum_age: age,
+        })
+        .eq("id", host.id);
+
+      setHost((prev: any) => ({
+        ...prev,
         require_age: true,
         minimum_age: age,
-      })
-      .eq("id", host.id);
+      }));
+    } else {
+      await supabase
+        .from("hosts")
+        .update({
+          require_age: false,
+          minimum_age: null,
+        })
+        .eq("id", host.id);
 
-    setHost((prev: any) => ({
-      ...prev,
-      require_age: true,
-      minimum_age: age,
-    }));
-  } else {
-    await supabase
-      .from("hosts")
-      .update({
+      setHost((prev: any) => ({
+        ...prev,
         require_age: false,
         minimum_age: null,
-      })
-      .eq("id", host.id);
-
-    setHost((prev: any) => ({
-      ...prev,
-      require_age: false,
-      minimum_age: null,
-    }));
+      }));
+    }
   }
-}
-
 
   /* --------------------------- LOGO UPLOAD --------------------------- */
   async function handleLogoUpload(e: any) {
@@ -155,16 +194,10 @@ async function toggleAgeRestriction(age: 18 | 21, enabled: boolean) {
         return;
       }
 
-      const { data } = supabase.storage
-        .from("host-logos")
-        .getPublicUrl(filePath);
-
+      const { data } = supabase.storage.from("host-logos").getPublicUrl(filePath);
       const cacheBusted = `${data.publicUrl}?t=${Date.now()}`;
 
-      await supabase
-        .from("hosts")
-        .update({ branding_logo_url: cacheBusted })
-        .eq("id", host.id);
+      await supabase.from("hosts").update({ branding_logo_url: cacheBusted }).eq("id", host.id);
 
       setHost((prev: any) => ({ ...prev, branding_logo_url: cacheBusted }));
       setLogoPreview(cacheBusted);
@@ -184,9 +217,7 @@ async function toggleAgeRestriction(age: 18 | 21, enabled: boolean) {
     const filename = url.split("/").pop()?.split("?")[0];
     if (!filename) return alert("Could not extract logo filename.");
 
-    const { error: deleteError } = await supabase.storage
-      .from("host-logos")
-      .remove([filename]);
+    const { error: deleteError } = await supabase.storage.from("host-logos").remove([filename]);
 
     if (deleteError) {
       console.error(deleteError);
@@ -194,10 +225,7 @@ async function toggleAgeRestriction(age: 18 | 21, enabled: boolean) {
       return;
     }
 
-    await supabase
-      .from("hosts")
-      .update({ branding_logo_url: null })
-      .eq("id", host.id);
+    await supabase.from("hosts").update({ branding_logo_url: null }).eq("id", host.id);
 
     setHost((prev: any) => ({ ...prev, branding_logo_url: null }));
     setLogoPreview("");
@@ -207,14 +235,25 @@ async function toggleAgeRestriction(age: 18 | 21, enabled: boolean) {
   const GuestOptionsModal = () => (
     <Modal isOpen={showGuestModal} onClose={() => setShowGuestModal(false)}>
       <div className="text-white">
-        <h2 className={cn('text-xl', 'font-semibold', 'text-center', 'text-sky-300', 'mb-4')}>
+        <h2 className={cn("text-xl", "font-semibold", "text-center", "text-sky-300", "mb-4")}>
           Guest Sign Up Options
         </h2>
 
         <div className="space-y-4">
-          <div className={cn('flex', 'items-center', 'justify-between', 'p-2', 'bg-black/40', 'rounded-lg', 'border', 'border-white/10')}>
-            <span className={cn('font-medium', 'text-gray-200')}>First Name</span>
-            <span className={cn('text-gray-400', 'text-sm', 'italic')}>(always required)</span>
+          <div
+            className={cn(
+              "flex",
+              "items-center",
+              "justify-between",
+              "p-2",
+              "bg-black/40",
+              "rounded-lg",
+              "border",
+              "border-white/10"
+            )}
+          >
+            <span className={cn("font-medium", "text-gray-200")}>First Name</span>
+            <span className={cn("text-gray-400", "text-sm", "italic")}>(always required)</span>
           </div>
 
           {[
@@ -229,13 +268,19 @@ async function toggleAgeRestriction(age: 18 | 21, enabled: boolean) {
           ].map((field) => (
             <div
               key={field.key}
-              className={cn('flex', 'items-center', 'justify-between', 'p-2', 'bg-black/40', 'rounded-lg', 'border', 'border-white/10')}
+              className={cn(
+                "flex",
+                "items-center",
+                "justify-between",
+                "p-2",
+                "bg-black/40",
+                "rounded-lg",
+                "border",
+                "border-white/10"
+              )}
             >
               <span className="font-medium">{field.label}</span>
-              <Switch
-                checked={host[field.key]}
-                onCheckedChange={(v) => updateGuestOption(field.key, v)}
-              />
+              <Switch checked={host[field.key]} onCheckedChange={(v) => updateGuestOption(field.key, v)} />
             </div>
           ))}
         </div>
@@ -245,46 +290,45 @@ async function toggleAgeRestriction(age: 18 | 21, enabled: boolean) {
 
   /* --------------------------- RENDER PANEL --------------------------- */
   if (!host) {
-    return (
-      <div className={cn('flex', 'items-center', 'justify-center', 'text-gray-400', 'text-sm', 'py-6')}>
-        Loading profile…
-      </div>
-    );
+    return <div className={cn("flex", "items-center", "justify-center", "text-gray-400", "text-sm", "py-6")}>Loading profile…</div>;
   }
 
   return (
     <Sheet open={isOpen} onOpenChange={setIsOpen}>
       {/* Trigger Button */}
       <SheetTrigger asChild>
-        <button className={cn('rounded-full', 'w-10', 'h-10', 'overflow-hidden', 'border', 'border-gray-500', 'hover:ring-2', 'hover:ring-blue-500', 'transition-all')}>
-          <div className={cn('bg-gray-700', 'w-full', 'h-full', 'flex', 'items-center', 'justify-center', 'text-gray-200', 'font-bold')}>
-            {host?.first_name?.[0]?.toUpperCase() ||
-              host?.venue_name?.[0]?.toUpperCase() ||
-              "H"}
+        <button
+          className={cn(
+            "rounded-full",
+            "w-10",
+            "h-10",
+            "overflow-hidden",
+            "border",
+            "border-gray-500",
+            "hover:ring-2",
+            "hover:ring-blue-500",
+            "transition-all"
+          )}
+        >
+          <div className={cn("bg-gray-700", "w-full", "h-full", "flex", "items-center", "justify-center", "text-gray-200", "font-bold")}>
+            {host?.first_name?.[0]?.toUpperCase() || host?.venue_name?.[0]?.toUpperCase() || "H"}
           </div>
         </button>
       </SheetTrigger>
 
       {/* SIDE PANEL */}
-      <SheetContent
-        side="right"
-        className={cn(
-          "w-80 bg-black/80 backdrop-blur-xl border-l border-gray-700 text-gray-100 overflow-y-auto"
-        )}
-      >
-        {/* ⭐ NO HEADER HERE — CLEAN TOP ⭐ */}
-
-        <div className={cn('mt-5', 'flex', 'flex-col', 'gap-6')}>
+      <SheetContent side="right" className={cn("w-80 bg-black/80 backdrop-blur-xl border-l border-gray-700 text-gray-100 overflow-y-auto")}>
+        <div className={cn("mt-5", "flex", "flex-col", "gap-6")}>
           {/* ---------------------- ACCOUNT ----------------------- */}
           <section>
-            <div className={cn('flex', 'items-center', 'justify-center', 'gap-3', 'mb-3', 'text-blue-400', 'font-semibold')}>
-              <User className={cn('w-5', 'h-5')} /> Account
+            <div className={cn("flex", "items-center", "justify-center", "gap-3", "mb-3", "text-blue-400", "font-semibold")}>
+              <User className={cn("w-5", "h-5")} /> Account
             </div>
 
-            <div className={cn('flex', 'flex-col', 'items-center', 'gap-3', 'text-center')}>
+            <div className={cn("flex", "flex-col", "items-center", "gap-3", "text-center")}>
               {/* Avatar */}
-              <div className={cn('w-24', 'h-24', 'rounded-full', 'overflow-hidden', 'border', 'border-gray-600', 'shadow-md', 'flex', 'items-center', 'justify-center', 'bg-gray-800')}>
-                <span className={cn('text-3xl', 'font-semibold', 'text-gray-300')}>
+              <div className={cn("w-24", "h-24", "rounded-full", "overflow-hidden", "border", "border-gray-600", "shadow-md", "flex", "items-center", "justify-center", "bg-gray-800")}>
+                <span className={cn("text-3xl", "font-semibold", "text-gray-300")}>
                   {host?.first_name?.[0]?.toUpperCase() || "H"}
                 </span>
               </div>
@@ -294,59 +338,46 @@ async function toggleAgeRestriction(age: 18 | 21, enabled: boolean) {
                 <img
                   src={logoPreview}
                   alt="Host Logo"
-                  className={cn('w-28', 'h-28', 'object-contain', 'rounded-md', 'border', 'border-gray-700', 'bg-black/40', 'p-2', 'mt-3')}
+                  className={cn("w-28", "h-28", "object-contain", "rounded-md", "border", "border-gray-700", "bg-black/40", "p-2", "mt-3")}
                 />
               )}
 
               {/* Upload */}
-              <div className={cn('flex', 'gap-2', 'mt-2')}>
-                <Button
-                  onClick={() => fileInputRef.current?.click()}
-                  className={cn('px-3', 'py-2', 'flex', 'items-center', 'gap-1', 'bg-blue-600', 'hover:bg-blue-700')}
-                >
-                  <Upload className={cn('w-4', 'h-4')} />
-                  <span className="text-sm">
-                    {uploadingLogo ? "Uploading…" : "Upload"}
-                  </span>
+              <div className={cn("flex", "gap-2", "mt-2")}>
+                <Button onClick={() => fileInputRef.current?.click()} className={cn("px-3", "py-2", "flex", "items-center", "gap-1", "bg-blue-600", "hover:bg-blue-700")}>
+                  <Upload className={cn("w-4", "h-4")} />
+                  <span className="text-sm">{uploadingLogo ? "Uploading…" : "Upload"}</span>
                 </Button>
 
                 <Button
                   variant="destructive"
                   disabled={!logoPreview}
                   onClick={handleDeleteLogo}
-                  className={cn('px-3', 'py-2', 'flex', 'items-center', 'gap-1')}
+                  className={cn("px-3", "py-2", "flex", "items-center", "gap-1")}
                 >
-                  <Trash2 className={cn('w-4', 'h-4')} />
+                  <Trash2 className={cn("w-4", "h-4")} />
                   <span className="text-sm">Delete</span>
                 </Button>
               </div>
 
-              <input
-                type="file"
-                accept="image/*"
-                ref={fileInputRef}
-                className="hidden"
-                onChange={handleLogoUpload}
-              />
+              <input type="file" accept="image/*" ref={fileInputRef} className="hidden" onChange={handleLogoUpload} />
 
-              <p className={cn('text-xs', 'text-gray-400', 'mt-1', 'text-center')}>
+              <p className={cn("text-xs", "text-gray-400", "mt-1", "text-center")}>
                 Best results:
                 <br />
                 <strong>1600 × 1600 PNG</strong> (transparent background)
               </p>
 
               {/* Name + Email */}
-              <div className={cn('text-center', 'mt-4')}>
-                <p className={cn('font-semibold', 'text-lg', 'text-white')}>
-                  {host?.first_name && host?.last_name
-                    ? `${host.first_name} ${host.last_name}`
-                    : host?.venue_name || "Host User"}
+              <div className={cn("text-center", "mt-4")}>
+                <p className={cn("font-semibold", "text-lg", "text-white")}>
+                  {host?.first_name && host?.last_name ? `${host.first_name} ${host.last_name}` : host?.venue_name || "Host User"}
                 </p>
-                <p className={cn('text-sm', 'text-gray-400')}>{host?.email}</p>
+                <p className={cn("text-sm", "text-gray-400")}>{host?.email}</p>
               </div>
 
               {/* Change Email + Pass */}
-              <div className={cn('flex', 'flex-col', 'gap-2', 'w-full', 'mt-4')}>
+              <div className={cn("flex", "flex-col", "gap-2", "w-full", "mt-4")}>
                 <Button variant="outline" onClick={() => setShowEmailModal(true)}>
                   Change Email
                 </Button>
@@ -359,103 +390,70 @@ async function toggleAgeRestriction(age: 18 | 21, enabled: boolean) {
 
           {/* ---------------------- SETTINGS ----------------------- */}
           <section>
-            <div className={cn('flex', 'items-center', 'justify-center', 'gap-3', 'mb-3', 'text-blue-400', 'font-semibold')}>
-              <Settings className={cn('w-5', 'h-5')} /> Settings
+            <div className={cn("flex", "items-center", "justify-center", "gap-3", "mb-3", "text-blue-400", "font-semibold")}>
+              <Settings className={cn("w-5", "h-5")} /> Settings
             </div>
 
-            <p className={cn('text-sm', 'text-gray-400', 'text-center')}>
-              Venue: {host?.venue_name}
-            </p>
-            <p className={cn('text-sm', 'text-gray-400', 'text-center')}>
-              Username: {host?.username}
-            </p>
-            <p className={cn('text-sm', 'text-gray-400', 'text-center')}>
-              Created: {new Date(host?.created_at).toLocaleDateString()}
-            </p>
+            <p className={cn("text-sm", "text-gray-400", "text-center")}>Venue: {host?.venue_name}</p>
+            <p className={cn("text-sm", "text-gray-400", "text-center")}>Username: {host?.username}</p>
+            <p className={cn("text-sm", "text-gray-400", "text-center")}>Created: {new Date(host?.created_at).toLocaleDateString()}</p>
 
-            {/* ---------------------- GUEST LOYALTY ---------------------- */}
-<div
-  className={cn(
-    "mt-4",
-    "flex",
-    "items-center",
-    "justify-between",
-    "p-3",
-    "bg-black/40",
-    "rounded-lg",
-    "border",
-    "border-white/10"
-  )}
->
-  <div className={cn('flex', 'flex-col')}>
-    <span className={cn('font-medium', 'text-gray-200')}>
-      🏅 Guest Loyalty
-    </span>
-    <span className={cn('text-xs', 'text-gray-400')}>
-      Track return visits and show badges
-    </span>
-  </div>
+            {/* Guest Loyalty */}
+            <div className={cn("mt-4", "flex", "items-center", "justify-between", "p-3", "bg-black/40", "rounded-lg", "border", "border-white/10")}>
+              <div className={cn("flex", "flex-col")}>
+                <span className={cn("font-medium", "text-gray-200")}>🏅 Guest Loyalty</span>
+                <span className={cn("text-xs", "text-gray-400")}>Track return visits and show badges</span>
+              </div>
 
-  <Switch
-    checked={!!host.loyalty_enabled}
-    onCheckedChange={(v) =>
-      updateGuestOption("loyalty_enabled", v)
-    }
-  />
-</div>
+              <Switch checked={!!host.loyalty_enabled} onCheckedChange={(v) => updateGuestOption("loyalty_enabled", v)} />
+            </div>
 
-
-            <Button
-              variant="outline"
-              className={cn('w-full', 'mt-3', 'flex', 'items-center', 'justify-center', 'gap-2')}
-              onClick={() => setShowGuestModal(true)}
-            >
-              <SlidersHorizontal className={cn('w-4', 'h-4')} />
+            <Button variant="outline" className={cn("w-full", "mt-3", "flex", "items-center", "justify-center", "gap-2")} onClick={() => setShowGuestModal(true)}>
+              <SlidersHorizontal className={cn("w-4", "h-4")} />
               Guest Sign Up Options
             </Button>
 
-            <Button
-              variant="outline"
-              className={cn('w-full', 'mt-2')}
-              onClick={() => setShowTermsModal(true)}
-            >
+            <Button variant="outline" className={cn("w-full", "mt-2")} onClick={() => setShowTermsModal(true)}>
               Terms & Conditions For Guests
             </Button>
 
             <GuestOptionsModal />
           </section>
 
-<Button
-  variant="outline"
-  className={cn("w-full", "mt-3")}
-  onClick={exportGuestsCSV}
->
-  Export Guests (CSV)
-</Button>
+          <Button variant="outline" className={cn("w-full", "mt-3")} onClick={exportGuestsCSV}>
+            Export Guests (CSV)
+          </Button>
 
-<Button
-  variant="outline"
-  className={cn("w-full", "mt-2")}
-  onClick={printGuestsPDF}
->
-  Print Guests (PDF)
-</Button>
-
+          <Button variant="outline" className={cn("w-full", "mt-2")} onClick={printGuestsPDF}>
+            Print Guests (PDF)
+          </Button>
 
           {/* ---------------------- BILLING ----------------------- */}
           <section>
-            <div className={cn('flex', 'items-center', 'justify-center', 'gap-3', 'mb-3', 'text-blue-400', 'font-semibold')}>
-              <CreditCard className={cn('w-5', 'h-5')} /> Billing
+            <div className={cn("flex", "items-center", "justify-center", "gap-3", "mb-3", "text-blue-400", "font-semibold")}>
+              <CreditCard className={cn("w-5", "h-5")} /> Billing
             </div>
-            <Button variant="outline" className="w-full" disabled>
-              Manage Billing (coming soon)
+
+            <Button
+              variant="outline"
+              className="w-full"
+              onClick={handleManageBilling}
+              disabled={billingLoading || !host?.stripe_customer_id}
+            >
+              {billingLoading ? "Opening Billing…" : "Manage Billing"}
             </Button>
+
+            {!host?.stripe_customer_id ? (
+              <p className={cn("text-xs", "text-gray-400", "mt-2", "text-center")}>
+                No billing profile yet — subscribe first.
+              </p>
+            ) : null}
           </section>
 
           {/* ---------------------- SECURITY ----------------------- */}
           <section>
-            <div className={cn('flex', 'items-center', 'justify-center', 'gap-3', 'mb-3', 'text-blue-400', 'font-semibold')}>
-              <LogOut className={cn('w-5', 'h-5')} /> Security
+            <div className={cn("flex", "items-center", "justify-center", "gap-3", "mb-3", "text-blue-400", "font-semibold")}>
+              <LogOut className={cn("w-5", "h-5")} /> Security
             </div>
             <Button variant="destructive" className="w-full" onClick={handleLogout}>
               Logout
@@ -476,12 +474,7 @@ async function toggleAgeRestriction(age: 18 | 21, enabled: boolean) {
         </Modal>
 
         {/* TERMS MODAL */}
-        <HostTermsModal
-          isOpen={showTermsModal}
-          onClose={() => setShowTermsModal(false)}
-          host={host}
-          setHost={setHost}
-        />
+        <HostTermsModal isOpen={showTermsModal} onClose={() => setShowTermsModal(false)} host={host} setHost={setHost} />
       </SheetContent>
     </Sheet>
   );
