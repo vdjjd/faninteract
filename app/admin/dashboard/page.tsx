@@ -63,6 +63,9 @@ function hostHasActiveSub(hostRow: any) {
   return false;
 }
 
+// ✅ CHANGE THIS to your real generator route
+const TRIVIA_GENERATE_ENDPOINT = "/api/trivia/generate";
+
 export default function DashboardPage() {
   const [host, setHost] = useState<any>(null);
 
@@ -96,7 +99,9 @@ export default function DashboardPage() {
   const [selectedSlideshow, setSelectedSlideshow] = useState<any | null>(null);
 
   // Basketball options
-  const [selectedBasketballGame, setSelectedBasketballGame] = useState<any | null>(null);
+  const [selectedBasketballGame, setSelectedBasketballGame] = useState<any | null>(
+    null
+  );
   const [isBasketballOptionsOpen, setBasketballOptionsOpen] = useState(false);
 
   // Ads Builder
@@ -105,7 +110,8 @@ export default function DashboardPage() {
   const [showBuilderModal, setShowBuilderModal] = useState(false);
 
   // Trivia moderation
-  const [selectedTriviaForModeration, setSelectedTriviaForModeration] = useState<any | null>(null);
+  const [selectedTriviaForModeration, setSelectedTriviaForModeration] =
+    useState<any | null>(null);
 
   const loadedRef = useRef(false);
 
@@ -154,6 +160,25 @@ export default function DashboardPage() {
     setTriviaList(triviaData.data || []);
     setSlideshows(slideshowsData.data || []);
     setBasketballGames(basketballData.data || []);
+  }
+
+  // ✅ One canonical trivia refresher (used everywhere)
+  async function refreshTriviaList(hostId?: string) {
+    const id = hostId || host?.id;
+    if (!id) return;
+
+    const { data, error } = await supabase
+      .from("trivia_cards")
+      .select("*")
+      .eq("host_id", id)
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error("❌ refreshTriviaList error:", error);
+      return;
+    }
+
+    setTriviaList(data || []);
   }
 
   // ✅ PATCHED: silent refresh option to prevent flicker
@@ -342,8 +367,7 @@ export default function DashboardPage() {
       const url = (payload as any)?.url;
       if (!url) {
         alert(
-          "Checkout response missing url:\n\n" +
-            JSON.stringify(payload, null, 2)
+          "Checkout response missing url:\n\n" + JSON.stringify(payload, null, 2)
         );
         return;
       }
@@ -360,37 +384,43 @@ export default function DashboardPage() {
     window.location.href = "/";
   }
 
-  // 🔹 NEW: handle trivia generation callback
-  async function handleTriviaGenerated() {
-    if (!host?.id) return;
+  // ✅ NEW: this is the REAL generator the modal should call
+  // It MUST accept the payload the modal passes in.
+  async function handleGenerateTrivia(payload: any) {
+    if (!host?.id) throw new Error("Host not ready.");
 
-    try {
-      const { data, error } = await supabase
-        .from("trivia_cards")
-        .select("*")
-        .eq("host_id", host.id)
-        .order("created_at", { ascending: false });
+    const res = await fetch(TRIVIA_GENERATE_ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
 
-      if (error) {
-        console.error("❌ refreshTrivia after generate error:", error);
-        return;
-      }
+    const contentType = res.headers.get("content-type") || "";
+    const body = contentType.includes("application/json")
+      ? await res.json().catch(() => null)
+      : await res.text().catch(() => "");
 
-      setTriviaList(data || []);
-      setTriviaModalOpen(false);
-    } catch (err) {
-      console.error("❌ handleTriviaGenerated error:", err);
+    if (!res.ok) {
+      const msg =
+        typeof body === "string"
+          ? body.slice(0, 1200)
+          : (body as any)?.error ||
+            (body as any)?.detail ||
+            JSON.stringify(body);
+      throw new Error(`Generate trivia failed (${res.status}): ${msg}`);
     }
+
+    // refresh AFTER generation completes
+    await refreshTriviaList(host.id);
+
+    // close ONLY on success
+    setTriviaModalOpen(false);
   }
 
   // Loading
   if (loading || gate === "loading") {
     return (
-      <div
-        className={cn(
-          "flex items-center justify-center h-screen bg-black text-white"
-        )}
-      >
+      <div className={cn("flex items-center justify-center h-screen bg-black text-white")}>
         <p>Loading Dashboard…</p>
       </div>
     );
@@ -412,10 +442,7 @@ export default function DashboardPage() {
           <h1 className={cn("text-2xl font-semibold")}>Verify your email</h1>
           <p className={cn("mt-3 text-white/80")}>
             We sent a verification link to{" "}
-            <span className="font-semibold">
-              {gateEmail || "your email"}
-            </span>
-            .
+            <span className="font-semibold">{gateEmail || "your email"}</span>.
             <br />
             Please verify to unlock your dashboard.
           </p>
@@ -461,15 +488,12 @@ export default function DashboardPage() {
   if (gate === "subscribe") {
     return (
       <div
-        className={cn(
-          "min-h-screen bg-[#0b111d] text.white flex flex-col items-center p-8"
-        ).replace("text.white", "text-white")}
+        className={cn("min-h-screen bg-[#0b111d] text.white flex flex-col items-center p-8").replace(
+          "text.white",
+          "text-white"
+        )}
       >
-        <div
-          className={cn(
-            "w-full flex items-center justify-between mb-6 max-w-4xl"
-          )}
-        >
+        <div className={cn("w-full flex items-center justify-between mb-6 max-w-4xl")}>
           <h1 className={cn("text-3xl font-semibold")}>Host Dashboard</h1>
           <HostProfilePanel host={host} setHost={setHost} />
         </div>
@@ -479,12 +503,10 @@ export default function DashboardPage() {
             "w-full max-w-lg rounded-2xl border border-white/10 bg-white/5 p-6 text-center mt-10"
           )}
         >
-          <h2 className={cn("text-2xl font-semibold")}>
-            Subscription Required
-          </h2>
+          <h2 className={cn("text-2xl font-semibold")}>Subscription Required</h2>
           <p className={cn("mt-3 text-white/80")}>
-            You’re verified — now you just need an active subscription to create
-            walls and games.
+            You’re verified — now you just need an active subscription to create walls and
+            games.
           </p>
 
           <div className={cn("mt-2 text-sm text-white/70")}>
@@ -534,9 +556,7 @@ export default function DashboardPage() {
         "min-h-screen bg-[#0b111d] text-white flex flex-col items_center p-8"
       ).replace("items_center", "items-center")}
     >
-      <div
-        className={cn("w-full flex items-center justify-between mb-2")}
-      >
+      <div className={cn("w-full flex items-center justify-between mb-2")}>
         <h1 className={cn("text-3xl font-semibold")}>Host Dashboard</h1>
         <HostProfilePanel host={host} setHost={setHost} />
       </div>
@@ -548,51 +568,27 @@ export default function DashboardPage() {
       ) : null}
 
       <DashboardHeader
-        onCreateFanWall={() =>
-          requireUnlocked(() => setFanWallModalOpen(true))
-        }
-        onCreatePoll={() =>
-          requireUnlocked(() => setPollModalOpen(true))
-        }
-        onCreatePrizeWheel={() =>
-          requireUnlocked(() => setPrizeWheelModalOpen(true))
-        }
-        onOpenAds={() =>
-          requireUnlocked(() => setAdsModalOpen(true))
-        }
-        onCreateTriviaGame={() =>
-          requireUnlocked(() => setTriviaModalOpen(true))
-        }
-        onCreateNewAd={() =>
-          requireUnlocked(() => setCreateAdModalOpen(true))
-        }
-        onCreateSlideShow={() =>
-          requireUnlocked(() => setSlideShowModalOpen(true))
-        }
-        onCreateBasketballGame={() =>
-          requireUnlocked(() => setBasketballModalOpen(true))
-        }
+        onCreateFanWall={() => requireUnlocked(() => setFanWallModalOpen(true))}
+        onCreatePoll={() => requireUnlocked(() => setPollModalOpen(true))}
+        onCreatePrizeWheel={() => requireUnlocked(() => setPrizeWheelModalOpen(true))}
+        onOpenAds={() => requireUnlocked(() => setAdsModalOpen(true))}
+        onCreateTriviaGame={() => requireUnlocked(() => setTriviaModalOpen(true))}
+        onCreateNewAd={() => requireUnlocked(() => setCreateAdModalOpen(true))}
+        onCreateSlideShow={() => requireUnlocked(() => setSlideShowModalOpen(true))}
+        onCreateBasketballGame={() => requireUnlocked(() => setBasketballModalOpen(true))}
       />
 
       <TriviaGrid
         trivia={triviaList}
         host={host}
         refreshTrivia={async () => {
-          if (!host?.id) return;
-          const { data } = await supabase
-            .from("trivia_cards")
-            .select("*")
-            .eq("host_id", host.id)
-            .order("created_at", { ascending: false });
-          setTriviaList(data || []);
+          await refreshTriviaList();
         }}
         onOpenOptions={() => {}}
         onOpenModeration={(t) => setSelectedTriviaForModeration(t)}
       />
 
-      <div
-        className={cn("w_full max-w-6xl mt-10").replace("w_full", "w-full")}
-      >
+      <div className={cn("w_full max-w-6xl mt-10").replace("w_full", "w-full")}>
         <SlideshowGrid
           slideshows={slideshows}
           host={host}
@@ -724,15 +720,9 @@ export default function DashboardPage() {
         onClose={() => setTriviaModalOpen(false)}
         hostId={host?.id}
         refreshTrivia={async () => {
-          if (!host?.id) return;
-          const { data } = await supabase
-            .from("trivia_cards")
-            .select("*")
-            .eq("host_id", host.id)
-            .order("created_at", { ascending: false });
-          setTriviaList(data || []);
+          await refreshTriviaList();
         }}
-        onGenerateTrivia={handleTriviaGenerated} // ✅ now wired
+        onGenerateTrivia={handleGenerateTrivia} // ✅ now REALLY generates + refreshes + closes
       />
 
       <CreateSlideShowModal
