@@ -1094,7 +1094,7 @@ export default function TriviaCard({
   }
 
   /* ------------------------------------------------------------
-     MANUAL ADVANCE (button + space bar)
+     MANUAL ADVANCE (button only, no space bar)
      - Only when playMode === "manual" and cardStatus === "running"
      - Steps wall_phase: question -> overlay -> reveal -> leaderboard -> question(next)
        (all values respect DB constraint: question|overlay|reveal|leaderboard|podium)
@@ -1169,22 +1169,6 @@ export default function TriviaCard({
       console.error("❌ manual advance: update trivia_sessions error:", updateErr);
     }
   }
-
-  // Space bar → manual advance when in manual mode
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.code === "Space" || e.key === " ") {
-        e.preventDefault();
-        void handleManualAdvance();
-      }
-    };
-
-    window.addEventListener("keydown", onKeyDown);
-    return () => {
-      window.removeEventListener("keydown", onKeyDown);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isManualMode, cardStatus, trivia?.id]);
 
   /* ------------------------------------------------------------
      PAGINATION DERIVED VALUES
