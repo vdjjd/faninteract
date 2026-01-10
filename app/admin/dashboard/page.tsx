@@ -121,11 +121,31 @@ export default function DashboardPage() {
     const [walls, wheels, pollsData, triviaData, slideshowsData, basketballData] =
       await Promise.all([
         getFanWallsByHost(hostId),
-        supabase.from("prize_wheels").select("*").eq("host_id", hostId).order("created_at", { ascending: false }),
-        supabase.from("polls").select("*").eq("host_id", hostId).order("created_at", { ascending: false }),
-        supabase.from("trivia_cards").select("*").eq("host_id", hostId).order("created_at", { ascending: false }),
-        supabase.from("slide_shows").select("*").eq("host_id", hostId).order("created_at", { ascending: false }),
-        supabase.from("bb_games").select("*").eq("host_id", hostId).order("created_at", { ascending: false }),
+        supabase
+          .from("prize_wheels")
+          .select("*")
+          .eq("host_id", hostId)
+          .order("created_at", { ascending: false }),
+        supabase
+          .from("polls")
+          .select("*")
+          .eq("host_id", hostId)
+          .order("created_at", { ascending: false }),
+        supabase
+          .from("trivia_cards")
+          .select("*")
+          .eq("host_id", hostId)
+          .order("created_at", { ascending: false }),
+        supabase
+          .from("slide_shows")
+          .select("*")
+          .eq("host_id", hostId)
+          .order("created_at", { ascending: false }),
+        supabase
+          .from("bb_games")
+          .select("*")
+          .eq("host_id", hostId)
+          .order("created_at", { ascending: false }),
       ]);
 
     setFanWalls(walls);
@@ -255,7 +275,11 @@ export default function DashboardPage() {
   // Guard wrapper
   function requireUnlocked(fn: () => void) {
     if (gate !== "ok") {
-      alert(gate === "verify" ? "Please verify your email first." : "Please subscribe to unlock creation.");
+      alert(
+        gate === "verify"
+          ? "Please verify your email first."
+          : "Please subscribe to unlock creation."
+      );
       return;
     }
     fn();
@@ -317,7 +341,10 @@ export default function DashboardPage() {
 
       const url = (payload as any)?.url;
       if (!url) {
-        alert("Checkout response missing url:\n\n" + JSON.stringify(payload, null, 2));
+        alert(
+          "Checkout response missing url:\n\n" +
+            JSON.stringify(payload, null, 2)
+        );
         return;
       }
 
@@ -333,10 +360,37 @@ export default function DashboardPage() {
     window.location.href = "/";
   }
 
+  // 🔹 NEW: handle trivia generation callback
+  async function handleTriviaGenerated() {
+    if (!host?.id) return;
+
+    try {
+      const { data, error } = await supabase
+        .from("trivia_cards")
+        .select("*")
+        .eq("host_id", host.id)
+        .order("created_at", { ascending: false });
+
+      if (error) {
+        console.error("❌ refreshTrivia after generate error:", error);
+        return;
+      }
+
+      setTriviaList(data || []);
+      setTriviaModalOpen(false);
+    } catch (err) {
+      console.error("❌ handleTriviaGenerated error:", err);
+    }
+  }
+
   // Loading
   if (loading || gate === "loading") {
     return (
-      <div className={cn("flex items-center justify-center h-screen bg-black text-white")}>
+      <div
+        className={cn(
+          "flex items-center justify-center h-screen bg-black text-white"
+        )}
+      >
         <p>Loading Dashboard…</p>
       </div>
     );
@@ -345,36 +399,55 @@ export default function DashboardPage() {
   // Gate: Verify email
   if (gate === "verify") {
     return (
-      <div className={cn("min-h-screen bg-[#0b111d] text-white flex items-center justify-center p-8")}>
-        <div className={cn("w-full max-w-lg rounded-2xl border border-white/10 bg-white/5 p-6 text-center")}>
+      <div
+        className={cn(
+          "min-h-screen bg-[#0b111d] text-white flex items-center justify-center p-8"
+        )}
+      >
+        <div
+          className={cn(
+            "w-full max-w-lg rounded-2xl border border-white/10 bg-white/5 p-6 text-center"
+          )}
+        >
           <h1 className={cn("text-2xl font-semibold")}>Verify your email</h1>
           <p className={cn("mt-3 text-white/80")}>
             We sent a verification link to{" "}
-            <span className="font-semibold">{gateEmail || "your email"}</span>.
+            <span className="font-semibold">
+              {gateEmail || "your email"}
+            </span>
+            .
             <br />
             Please verify to unlock your dashboard.
           </p>
 
-          {gateMsg ? <div className={cn("mt-3 text-sm text-white/80")}>{gateMsg}</div> : null}
+          {gateMsg ? (
+            <div className={cn("mt-3 text-sm text-white/80")}>{gateMsg}</div>
+          ) : null}
 
           <div className={cn("mt-5 flex flex-col gap-3")}>
             <button
               onClick={resendVerificationEmail}
-              className={cn("w-full rounded-xl bg-blue-600 hover:bg-blue-700 font-semibold py-3")}
+              className={cn(
+                "w-full rounded-xl bg-blue-600 hover:bg-blue-700 font-semibold py-3"
+              )}
             >
               Resend Verification Email
             </button>
 
             <button
               onClick={() => loadHostAndGate({ silent: true })}
-              className={cn("w-full rounded-xl border border-white/15 bg-white/5 hover:bg-white/10 font-semibold py-3")}
+              className={cn(
+                "w-full rounded-xl border border-white/15 bg-white/5 hover:bg-white/10 font-semibold py-3"
+              )}
             >
               I Verified — Refresh
             </button>
 
             <button
               onClick={logout}
-              className={cn("w-full rounded-xl border border-white/15 bg-white/5 hover:bg-white/10 font-semibold py-3")}
+              className={cn(
+                "w-full rounded-xl border border-white/15 bg-white/5 hover:bg-white/10 font-semibold py-3"
+              )}
             >
               Logout
             </button>
@@ -387,16 +460,31 @@ export default function DashboardPage() {
   // Gate: Subscribe
   if (gate === "subscribe") {
     return (
-      <div className={cn("min-h-screen bg-[#0b111d] text-white flex flex-col items-center p-8")}>
-        <div className={cn("w-full flex items-center justify-between mb-6 max-w-4xl")}>
+      <div
+        className={cn(
+          "min-h-screen bg-[#0b111d] text.white flex flex-col items-center p-8"
+        ).replace("text.white", "text-white")}
+      >
+        <div
+          className={cn(
+            "w-full flex items-center justify-between mb-6 max-w-4xl"
+          )}
+        >
           <h1 className={cn("text-3xl font-semibold")}>Host Dashboard</h1>
           <HostProfilePanel host={host} setHost={setHost} />
         </div>
 
-        <div className={cn("w-full max-w-lg rounded-2xl border border-white/10 bg-white/5 p-6 text-center mt-10")}>
-          <h2 className={cn("text-2xl font-semibold")}>Subscription Required</h2>
+        <div
+          className={cn(
+            "w-full max-w-lg rounded-2xl border border-white/10 bg-white/5 p-6 text-center mt-10"
+          )}
+        >
+          <h2 className={cn("text-2xl font-semibold")}>
+            Subscription Required
+          </h2>
           <p className={cn("mt-3 text-white/80")}>
-            You’re verified — now you just need an active subscription to create walls and games.
+            You’re verified — now you just need an active subscription to create
+            walls and games.
           </p>
 
           <div className={cn("mt-2 text-sm text-white/70")}>
@@ -411,19 +499,25 @@ export default function DashboardPage() {
             </span>
           </div>
 
-          {gateMsg ? <div className={cn("mt-3 text-sm text-white/80")}>{gateMsg}</div> : null}
+          {gateMsg ? (
+            <div className={cn("mt-3 text-sm text-white/80")}>{gateMsg}</div>
+          ) : null}
 
           <div className={cn("mt-5 flex flex-col gap-3")}>
             <button
               onClick={startCheckout}
-              className={cn("w-full rounded-xl bg-green-600 hover:bg-green-700 font-semibold py-3")}
+              className={cn(
+                "w-full rounded-xl bg-green-600 hover:bg-green-700 font-semibold py-3"
+              )}
             >
               Subscribe Now
             </button>
 
             <button
               onClick={() => loadHostAndGate({ silent: true })}
-              className={cn("w-full rounded-xl border border-white/15 bg-white/5 hover:bg-white/10 font-semibold py-3")}
+              className={cn(
+                "w-full rounded-xl border border-white/15 bg-white/5 hover:bg-white/10 font-semibold py-3"
+              )}
             >
               Refresh Status
             </button>
@@ -436,29 +530,48 @@ export default function DashboardPage() {
   // ✅ Unlocked dashboard
   return (
     <div
-      className={cn("min-h-screen bg-[#0b111d] text-white flex flex-col items_center p-8").replace(
-        "items_center",
-        "items-center"
-      )}
+      className={cn(
+        "min-h-screen bg-[#0b111d] text-white flex flex-col items_center p-8"
+      ).replace("items_center", "items-center")}
     >
-      <div className={cn("w-full flex items-center justify-between mb-2")}>
+      <div
+        className={cn("w-full flex items-center justify-between mb-2")}
+      >
         <h1 className={cn("text-3xl font-semibold")}>Host Dashboard</h1>
         <HostProfilePanel host={host} setHost={setHost} />
       </div>
 
       {gateMsg ? (
-        <div className={cn("w-full max-w-6xl mb-4 text-sm text-white/80")}>{gateMsg}</div>
+        <div className={cn("w-full max-w-6xl mb-4 text-sm text-white/80")}>
+          {gateMsg}
+        </div>
       ) : null}
 
       <DashboardHeader
-        onCreateFanWall={() => requireUnlocked(() => setFanWallModalOpen(true))}
-        onCreatePoll={() => requireUnlocked(() => setPollModalOpen(true))}
-        onCreatePrizeWheel={() => requireUnlocked(() => setPrizeWheelModalOpen(true))}
-        onOpenAds={() => requireUnlocked(() => setAdsModalOpen(true))}
-        onCreateTriviaGame={() => requireUnlocked(() => setTriviaModalOpen(true))}
-        onCreateNewAd={() => requireUnlocked(() => setCreateAdModalOpen(true))}
-        onCreateSlideShow={() => requireUnlocked(() => setSlideShowModalOpen(true))}
-        onCreateBasketballGame={() => requireUnlocked(() => setBasketballModalOpen(true))}
+        onCreateFanWall={() =>
+          requireUnlocked(() => setFanWallModalOpen(true))
+        }
+        onCreatePoll={() =>
+          requireUnlocked(() => setPollModalOpen(true))
+        }
+        onCreatePrizeWheel={() =>
+          requireUnlocked(() => setPrizeWheelModalOpen(true))
+        }
+        onOpenAds={() =>
+          requireUnlocked(() => setAdsModalOpen(true))
+        }
+        onCreateTriviaGame={() =>
+          requireUnlocked(() => setTriviaModalOpen(true))
+        }
+        onCreateNewAd={() =>
+          requireUnlocked(() => setCreateAdModalOpen(true))
+        }
+        onCreateSlideShow={() =>
+          requireUnlocked(() => setSlideShowModalOpen(true))
+        }
+        onCreateBasketballGame={() =>
+          requireUnlocked(() => setBasketballModalOpen(true))
+        }
       />
 
       <TriviaGrid
@@ -477,7 +590,9 @@ export default function DashboardPage() {
         onOpenModeration={(t) => setSelectedTriviaForModeration(t)}
       />
 
-      <div className={cn("w_full max-w-6xl mt-10").replace("w_full", "w-full")}>
+      <div
+        className={cn("w_full max-w-6xl mt-10").replace("w_full", "w-full")}
+      >
         <SlideshowGrid
           slideshows={slideshows}
           host={host}
@@ -617,7 +732,7 @@ export default function DashboardPage() {
             .order("created_at", { ascending: false });
           setTriviaList(data || []);
         }}
-        onGenerateTrivia={async () => {}}
+        onGenerateTrivia={handleTriviaGenerated} // ✅ now wired
       />
 
       <CreateSlideShowModal
@@ -735,7 +850,9 @@ export default function DashboardPage() {
         />
       )}
 
-      {isAdsModalOpen && <AdsManagerModal host={host} onClose={() => setAdsModalOpen(false)} />}
+      {isAdsModalOpen && (
+        <AdsManagerModal host={host} onClose={() => setAdsModalOpen(false)} />
+      )}
 
       {isCreateAdModalOpen && (
         <CreateNewAdModal
