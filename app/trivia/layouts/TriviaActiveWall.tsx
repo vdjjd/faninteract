@@ -2292,3 +2292,5 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
     </>
   );
 }
+
+

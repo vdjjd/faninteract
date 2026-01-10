@@ -30,7 +30,8 @@ type ShotAnim = {
   lane: number; // 1–10
   made: boolean;
   points: 2 | 3;
-  at: number;
+  at: number; // ms timestamp
+  duration: number; // ms
 };
 
 function clamp(n: number, a: number, b: number) {
@@ -100,7 +101,6 @@ const HOOP_DEBUG_STYLE = true;
 const LANE_SCRIM = true;
 
 // Ball tuning + debug
-const BALL_DEBUG_VISIBLE_DEFAULT = true;
 const STORAGE_KEY_TUNING = "bb_shot_tuning_v1";
 
 type ShotTuning = {
@@ -109,7 +109,7 @@ type ShotTuning = {
   rimX: number; // %
   rimY: number; // %
   ballPx: number; // px
-  arcPx: number; // px
+  arcPx: number; // "strength" of arc
 };
 
 const DEFAULT_TUNING: ShotTuning = {
@@ -117,8 +117,8 @@ const DEFAULT_TUNING: ShotTuning = {
   spawnY: 84,
   rimX: 50,
   rimY: 28,
-  ballPx: 26,
-  arcPx: 150,
+  ballPx: 30,
+  arcPx: 200,
 };
 
 function loadTuning(): ShotTuning {
@@ -151,25 +151,49 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
   const [players, setPlayers] = useState<PlayerRow[]>([]);
   const [now, setNow] = useState<number>(() => Date.now());
   const [anims, setAnims] = useState<ShotAnim[]>([]);
+  const [animTick, setAnimTick] = useState<number>(() => Date.now());
 
   const modeRef = useRef<Record<string, ModeState>>({});
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
 
-  const [debugBall, setDebugBall] = useState<boolean>(BALL_DEBUG_VISIBLE_DEFAULT);
+  const [debugBall, setDebugBall] = useState<boolean>(false);
   const [tuning, setTuning] = useState<ShotTuning>(() => {
     if (typeof window === "undefined") return DEFAULT_TUNING;
     return loadTuning();
   });
 
+  // persist tuning
   useEffect(() => {
     saveTuning(tuning);
   }, [tuning]);
 
+  // slow timer for game clock
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 250);
     return () => clearInterval(id);
   }, []);
 
+  // high-frequency tick just for shot animation
+  useEffect(() => {
+    let frame: number;
+    const loop = () => {
+      setAnimTick(Date.now());
+      frame = requestAnimationFrame(loop);
+    };
+    frame = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(frame);
+  }, []);
+
+  // prune finished shots every ~second (so anims array doesn't explode)
+  useEffect(() => {
+    const id = setInterval(() => {
+      const cutoff = Date.now() - 2200;
+      setAnims((prev) => prev.filter((a) => a.at > cutoff));
+    }, 900);
+    return () => clearInterval(id);
+  }, []);
+
+  // load game
   useEffect(() => {
     let mounted = true;
 
@@ -202,6 +226,7 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
     };
   }, [gameId]);
 
+  // load players
   useEffect(() => {
     let mounted = true;
 
@@ -315,11 +340,12 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
 
   function pushAnim(lane: number, made: boolean, points: 2 | 3) {
     const id = `${lane}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
-    const item: ShotAnim = { id, lane, made, points, at: Date.now() };
-    setAnims((prev) => [item, ...prev].slice(0, 60));
-    setTimeout(() => setAnims((prev) => prev.filter((x) => x.id !== id)), 1450);
+    const duration = made ? 1200 : 1100; // ms
+    const item: ShotAnim = { id, lane, made, points, at: Date.now(), duration };
+    setAnims((prev) => [item, ...prev].slice(0, 80));
   }
 
+  // main realtime channel
   useEffect(() => {
     if (channelRef.current) {
       supabase.removeChannel(channelRef.current);
@@ -392,6 +418,7 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
             await sendPlayerMode(playerId, "normal", null);
           }
         } else {
+          // dunk handled separately
           return;
         }
 
@@ -602,7 +629,7 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
               Ball px
               <input
                 type="range"
-                min={12}
+                min={18}
                 max={80}
                 value={tuning.ballPx}
                 onChange={(e) => setTuning((t) => ({ ...t, ballPx: Number(e.target.value) }))}
@@ -610,11 +637,11 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
               />
             </label>
             <label style={{ fontSize: 12, opacity: 0.9 }}>
-              Arc px
+              Arc strength
               <input
                 type="range"
-                min={0}
-                max={320}
+                min={50}
+                max={300}
                 value={tuning.arcPx}
                 onChange={(e) => setTuning((t) => ({ ...t, arcPx: Number(e.target.value) }))}
                 style={{ width: "100%" }}
@@ -925,27 +952,55 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
                     </div>
                   </div>
 
-                  {/* Shot anims */}
+                  {/* Physics-based shot anims */}
                   {laneAnims.map((a) => {
-                    const peak = Math.max(0, tuning.arcPx); // px
-                    const drop = 50; // % below rim
+                    const elapsed = animTick - a.at;
+                    const t = clamp(elapsed / a.duration, 0, 1);
+                    if (t >= 1) return null;
 
-                    const styleVars: any = {
-                      ["--sx" as any]: tuning.spawnX,
-                      ["--sy" as any]: tuning.spawnY,
-                      ["--rx" as any]: tuning.rimX,
-                      ["--ry" as any]: tuning.rimY,
-                      ["--peak" as any]: peak,
-                      ["--drop" as any]: drop,
-                      ["--ball" as any]: `${tuning.ballPx}px`,
-                      ["--dur" as any]: a.made ? "1400ms" : "1300ms",
-                    };
+                    // Start (player) position
+                    const sx = tuning.spawnX;
+                    const sy = tuning.spawnY;
+
+                    // End (hoop) position – made vs miss
+                    const endOffsetX = a.made ? 0 : 10; // miss drifts to the side
+                    const endOffsetY = a.made ? 46 : 52; // how far below rim it drops
+                    const ex = tuning.rimX + endOffsetX;
+                    const ey = tuning.rimY + endOffsetY;
+
+                    // Linear interpolation
+                    const lx = sx + (ex - sx) * t;
+                    const ly = sy + (ey - sy) * t;
+
+                    // Arc: nice parabola that peaks around halfway
+                    const normArc = 4 * t * (1 - t); // 0→1→0
+                    const arcStrength = (tuning.arcPx / 300) * 18 + 10; // feels "basketball-y"
+                    const y = ly - normArc * arcStrength;
+                    const x = lx;
+
+                    // Scale: starts bigger, shrinks as it goes "upcourt"
+                    const scaleStart = 1.4;
+                    const scaleEnd = 0.55;
+                    const scale = scaleStart + (scaleEnd - scaleStart) * t;
+
+                    // Opacity fade
+                    const opacity = a.made ? 1 - 0.6 * t : 1 - 0.7 * t;
 
                     return (
                       <div
                         key={a.id}
                         className={`bbShot ${a.made ? "isMade" : "isMiss"}`}
-                        style={styleVars}
+                        style={{
+                          position: "absolute",
+                          left: `${x}%`,
+                          top: `${y}%`,
+                          width: tuning.ballPx,
+                          height: tuning.ballPx,
+                          transform: `translate(-50%, -50%) scale(${scale})`,
+                          opacity,
+                          zIndex: 12,
+                          pointerEvents: "none",
+                        }}
                       >
                         <div className="bbBall" />
                         <div className="bbLabel">{a.made ? `+${a.points}` : "MISS"}</div>
@@ -979,20 +1034,6 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
         )}
 
         <style>{`
-          .bbShot{
-            position:absolute;
-            left: calc(var(--sx) * 1%);
-            top:  calc(var(--sy) * 1%);
-            width: var(--ball);
-            height: var(--ball);
-            transform: translate(-50%,-50%);
-            z-index: 12;
-            pointer-events:none;
-            animation-duration: var(--dur);
-            animation-fill-mode: forwards;
-            will-change: transform, left, top;
-          }
-
           .bbBall{
             position: relative;
             width:100%;
@@ -1059,72 +1100,9 @@ export default function ActiveBasketball({ gameId }: { gameId: string }) {
           .bbShot.isMade .bbLabel{ color:#00ff99; }
           .bbShot.isMiss .bbLabel{ color:#ff5c5c; }
 
-          /* Higher arc + slower descent:
-             - apex at 35% of the animation
-             - stays "in the air" until ~75%
-             - only start (0%) and end (100%) change left/top positions,
-               so movement is smooth with no jitter. */
-
-          @keyframes bbMade {
-            0% {
-              left: calc(var(--sx) * 1%);
-              top:  calc(var(--sy) * 1%);
-              transform: translate(-50%, -50%) scale(1.8);
-              opacity: 1;
-            }
-            35% {
-              /* go high up: 1.6x arc slider */
-              transform: translate(-50%, calc(-50% - 1px * (var(--peak) * 1.6))) scale(1.35);
-              opacity: 1;
-            }
-            75% {
-              /* coming down toward rim but still above it a bit */
-              transform: translate(-50%, calc(-50% - 1px * (var(--peak) * 0.25))) scale(0.9);
-              opacity: 1;
-            }
-            100% {
-              left: calc(var(--rx) * 1%);
-              top:  calc((var(--ry) + var(--drop)) * 1%);
-              transform: translate(-50%, -50%) scale(0.4);
-              opacity: 0.2;
-            }
-          }
-
-          @keyframes bbMiss {
-            0% {
-              left: calc(var(--sx) * 1%);
-              top:  calc(var(--sy) * 1%);
-              transform: translate(-50%, -50%) scale(1.8);
-              opacity: 1;
-            }
-            35% {
-              transform: translate(-50%, calc(-50% - 1px * (var(--peak) * 1.4))) scale(1.35);
-              opacity: 1;
-            }
-            75% {
-              transform: translate(-50%, calc(-50% - 1px * (var(--peak) * 0.2))) scale(0.95);
-              opacity: 0.9;
-            }
-            100% {
-              left: calc((var(--rx) + 14) * 1%);
-              top:  calc((var(--ry) + var(--drop) + 4) * 1%);
-              transform: translate(-50%, -50%) scale(0.5);
-              opacity: 0.15;
-            }
-          }
-
           @keyframes bbSpin {
             from { transform: rotate(0deg); }
             to   { transform: rotate(360deg); }
-          }
-
-          .bbShot.isMade {
-            animation-name: bbMade;
-            animation-timing-function: cubic-bezier(0.18, 0.72, 0.25, 1);
-          }
-          .bbShot.isMiss {
-            animation-name: bbMiss;
-            animation-timing-function: cubic-bezier(0.18, 0.72, 0.25, 1);
           }
         `}</style>
       </div>
