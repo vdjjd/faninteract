@@ -173,18 +173,9 @@ function shuffleQuestionOptions(q: {
 
 /* ============================================================
    ENGINE IMPROVEMENTS
-   - Fairness validator (length, punctuation, grammar shape)
-   - Ambiguity checks (sampled / targeted)
-   - Diversity controls (duplicates, template spam)
-   - Correct-index balancing across full set
-   - Per-question regeneration for only failed questions
 ============================================================ */
 
-/**
- * Per-difficulty hard caps (helps stop long answers and giveaways)
- */
 function getLengthCaps(difficultyKey: ReturnType<typeof normalizeDifficultyKey>) {
-  // you can tune these
   switch (difficultyKey) {
     case "elementary":
       return { stemMax: 110, optMax: 32, optMin: 2 };
@@ -201,13 +192,9 @@ function getLengthCaps(difficultyKey: ReturnType<typeof normalizeDifficultyKey>)
   }
 }
 
-/**
- * Basic option “type” classification to prevent mixed-type giveaways
- */
 function classifyOptionType(opt: string): "number" | "date" | "person" | "phrase" {
   const s = norm(opt);
 
-  // date-ish
   if (
     /\b(18|19|20)\d{2}\b/.test(s) ||
     /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)\b/i.test(s)
@@ -215,11 +202,9 @@ function classifyOptionType(opt: string): "number" | "date" | "person" | "phrase
     return "date";
   }
 
-  // numeric-ish
   if (/^[\d,\.\-\+]+$/.test(s)) return "number";
   if (/\b\d+(\.\d+)?\b/.test(s) && s.length <= 10) return "number";
 
-  // person-ish (two capitalized words) — heuristic
   if (/^[A-Z][a-z]+ [A-Z][a-z]+/.test(s) && s.split(" ").length <= 4) {
     return "person";
   }
@@ -245,9 +230,6 @@ function optionLen(s: string) {
   return norm(s).length;
 }
 
-/**
- * Fairness validator — rejects “pattern giveaway” questions
- */
 function validateQuestionFairness(params: {
   stem: string;
   options: string[];
@@ -263,72 +245,60 @@ function validateQuestionFairness(params: {
   const cleanOpts = options.map((o) => norm(o));
   const ci = normalizeCorrectIndex(correctIndex);
 
-  // structural checks
   if (!cleanStem) reasons.push("Empty question stem");
   if (!Array.isArray(cleanOpts) || cleanOpts.length !== 4) reasons.push("Options must be exactly 4");
   if (cleanOpts.some((o) => !o)) reasons.push("One or more empty options");
 
-  // length caps
   if (cleanStem.length > caps.stemMax) reasons.push(`Stem too long (${cleanStem.length} > ${caps.stemMax})`);
   cleanOpts.forEach((o, i) => {
     if (o.length > caps.optMax) reasons.push(`Option ${i} too long (${o.length} > ${caps.optMax})`);
     if (o.length < caps.optMin) reasons.push(`Option ${i} too short (${o.length} < ${caps.optMin})`);
   });
 
-  // type consistency
   const types = cleanOpts.map(classifyOptionType);
   const uniqueTypes = new Set(types);
   if (uniqueTypes.size > 1) {
     reasons.push(`Mixed option types (${Array.from(uniqueTypes).join(", ")})`);
   }
 
-  // grammar shape consistency
   const periodFlags = cleanOpts.map(endsWithPeriod);
   if (new Set(periodFlags).size > 1) reasons.push("Mixed punctuation: some options end with '.' and others do not");
 
   const punctFlags = cleanOpts.map(hasAnyPunct);
   if (punctFlags.filter(Boolean).length === 1) reasons.push("Only one option has notable punctuation (giveaway)");
 
-  // “longest answer is correct” giveaway
   const lengths = cleanOpts.map(optionLen);
-  const maxLen = Math.max(...lengths);
-  const minLen = Math.min(...lengths);
-  const correctLen = lengths[ci];
-
-  // If correct is the unique longest by a noticeable margin -> reject
   const sorted = [...lengths].sort((a, b) => b - a);
   const longest = sorted[0];
   const second = sorted[1];
+  const correctLen = lengths[ci];
 
   const correctIsLongest = correctLen === longest;
   const uniqueLongest = longest > second;
 
   if (correctIsLongest && uniqueLongest) {
     const diff = longest - second;
-    // threshold: absolute and relative
     if (diff >= 10 || longest >= Math.floor(second * 1.25)) {
       reasons.push("Correct option is uniquely longest (classic giveaway)");
     }
   }
 
-  // too much variance overall (even if correct not longest)
+  const maxLen = Math.max(...lengths);
+  const minLen = Math.min(...lengths);
   if (maxLen >= Math.floor(minLen * 2) && maxLen - minLen >= 18) {
     reasons.push("Options vary too much in length (pattern giveaway)");
   }
 
-  // word-count mismatch (one is sentence-y)
   const wcounts = cleanOpts.map(countWords);
   const wMax = Math.max(...wcounts);
   const wMin = Math.min(...wcounts);
   if (wMax - wMin >= 6) reasons.push("Options vary too much in word count (shape giveaway)");
 
-  // avoid cheap “always/never” etc. (often used as trap)
   const correctOpt = cleanOpts[ci] || "";
   if (/\b(always|never|guaranteed|only|all of the above|none of the above)\b/i.test(correctOpt)) {
     reasons.push("Correct option contains a giveaway absolute/format phrase");
   }
 
-  // negation in stem can create ambiguity (optional strictness)
   if (/\b(NOT|EXCEPT|least likely)\b/i.test(cleanStem) && difficultyKey !== "college" && difficultyKey !== "phd") {
     reasons.push("Negation-style stem (NOT/EXCEPT) increases ambiguity for this difficulty");
   }
@@ -340,9 +310,6 @@ function validateQuestionFairness(params: {
   };
 }
 
-/**
- * Ambiguity grader (sampled/targeted): asks model if only one option is defensibly correct.
- */
 async function ambiguityCheck(params: {
   stem: string;
   options: string[];
@@ -390,18 +357,13 @@ Rules:
     const unamb = !!parsed?.unambiguous;
     const conf = Number(parsed?.confidence ?? 0);
     if (!unamb) return { ok: false, note: String(parsed?.notes || "Ambiguous") };
-    // If confidence is super low, treat as fail
     if (conf < 55) return { ok: false, note: "Low confidence on unambiguity" };
     return { ok: true };
   } catch {
-    // If grader output is junk, don't block (fail open)
     return { ok: true };
   }
 }
 
-/**
- * SECOND PASS: Reject fake "PhD" questions (your existing concept)
- */
 async function isTruePhDQuestion(question: string): Promise<boolean> {
   const graderPrompt = `
 You are a doctoral qualifying-exam committee member.
@@ -428,13 +390,10 @@ YES or NO
   return verdict === "YES";
 }
 
-/**
- * Template diversity: detect repetitive “openers”
- */
 function getStemOpener(stem: string) {
   const s = lowerNorm(stem);
   const parts = s.split(" ").filter(Boolean);
-  return parts.slice(0, 3).join(" "); // first 3 words
+  return parts.slice(0, 3).join(" ");
 }
 
 function jaccardSimilarity(a: string, b: string) {
@@ -443,8 +402,6 @@ function jaccardSimilarity(a: string, b: string) {
   if (A.size === 0 || B.size === 0) return 0;
 
   let inter = 0;
-
-  // ✅ Fix TS2802: don't iterate Set with for...of (requires ES2015/downlevelIteration)
   A.forEach((w) => {
     if (B.has(w)) inter++;
   });
@@ -454,8 +411,7 @@ function jaccardSimilarity(a: string, b: string) {
 }
 
 /**
- * Generate a single question (used for regeneration of failures)
- * Uses answer-first thinking to create plausible distractors.
+ * NEW: pass forbidden correct answers so regen can avoid them
  */
 async function generateSingleQuestion(params: {
   topic: string;
@@ -463,12 +419,29 @@ async function generateSingleQuestion(params: {
   difficultySpec: string;
   caps: { stemMax: number; optMax: number; optMin: number };
   avoidNotes?: string[];
+  forbiddenCorrectAnswers?: string[];
   roundNumber: number;
   qNumber: number;
 }) {
-  const { topic, difficultyKey, difficultySpec, caps, avoidNotes, roundNumber, qNumber } = params;
+  const {
+    topic,
+    difficultySpec,
+    caps,
+    avoidNotes,
+    forbiddenCorrectAnswers,
+    roundNumber,
+    qNumber,
+  } = params;
 
-  const avoid = (avoidNotes || []).slice(0, 6).map((x) => `- ${x}`).join("\n");
+  const avoid = (avoidNotes || [])
+    .slice(0, 6)
+    .map((x) => `- ${x}`)
+    .join("\n");
+
+  const forbidden = (forbiddenCorrectAnswers || [])
+    .slice(0, 30)
+    .map((x) => `- ${x}`)
+    .join("\n");
 
   const prompt = `
 You are generating ONE high-quality trivia question.
@@ -494,6 +467,12 @@ HARD LENGTH LIMITS:
 - Each option length <= ${caps.optMax} characters
 - Each option length >= ${caps.optMin} characters
 
+${
+  forbidden
+    ? `FORBIDDEN CORRECT ANSWERS (the intended correct option MUST NOT be any of these exact strings):\n${forbidden}\n`
+    : ""
+}
+
 ${avoid ? `AVOID THESE FAILURES:\n${avoid}` : ""}
 
 Return ONLY JSON (no markdown):
@@ -516,9 +495,6 @@ Return ONLY JSON (no markdown):
   return parsed as { question: string; options: string[]; correct_index: number };
 }
 
-/**
- * Balance correct_index distribution by reshuffling (doesn't change correctness).
- */
 function balanceCorrectIndexAcrossSet(items: Array<{ options: string[]; correct_index: number; question: string }>) {
   const maxIters = 60;
 
@@ -532,7 +508,7 @@ function balanceCorrectIndexAcrossSet(items: Array<{ options: string[]; correct_
   };
 
   const total = items.length;
-  if (total < 8) return items; // not worth balancing tiny sets
+  if (total < 8) return items;
 
   const target = total / 4;
   const tooHigh = (x: number) => x > Math.ceil(target * 1.35);
@@ -543,7 +519,6 @@ function balanceCorrectIndexAcrossSet(items: Array<{ options: string[]; correct_
     const worstIdx = c.findIndex(tooHigh);
     if (worstIdx === -1) break;
 
-    // find a question currently at worstIdx and reshuffle it
     const candidates = items
       .map((it, i) => ({ it, i }))
       .filter(({ it }) => normalizeCorrectIndex(it.correct_index) === worstIdx);
@@ -574,10 +549,9 @@ export async function POST(req: Request) {
       sameTopicForAllRounds,
       roundTopics,
       hostId,
-      triviaId, // optional regen
+      triviaId,
     } = body ?? {};
 
-    // ✅ Normalize difficulty (accept UI labels like "High School", "PhD")
     const difficultyKey = normalizeDifficultyKey(difficulty);
     if (!difficultyKey) {
       return NextResponse.json(
@@ -586,7 +560,6 @@ export async function POST(req: Request) {
       );
     }
 
-    // Basic payload validation
     const nRounds = Number(numRounds);
     const nQuestions = Number(numQuestions);
 
@@ -626,9 +599,6 @@ export async function POST(req: Request) {
     const difficultySpec = getDifficultySpec(difficultyKey);
     const caps = getLengthCaps(difficultyKey);
 
-    // ============================================================
-    // 1) Bulk generation
-    // ============================================================
     const generationPrompt = `
 You generate structured trivia games.
 
@@ -646,6 +616,7 @@ FAIRNESS RULES (MANDATORY):
 - Avoid unique punctuation in only one option.
 - Avoid "All of the above" / "None of the above".
 - Avoid "always/never/only" in correct answer.
+- Prefer not to repeat the exact SAME correct answer across questions.
 
 HARD LENGTH LIMITS:
 - Stem length <= ${caps.stemMax} chars
@@ -683,10 +654,8 @@ Return ONLY JSON (no markdown fences, no commentary):
     let parsed: any;
     try {
       parsed = JSON.parse(cleaned);
-    } catch (e: any) {
-      throw new Error(
-        `AI output was not valid JSON after cleaning. First 200 chars: ${cleaned.slice(0, 200)}`
-      );
+    } catch {
+      throw new Error(`AI output was not valid JSON after cleaning. First 200 chars: ${cleaned.slice(0, 200)}`);
     }
 
     if (!parsed?.rounds || !Array.isArray(parsed.rounds)) {
@@ -697,7 +666,7 @@ Return ONLY JSON (no markdown fences, no commentary):
     }
 
     // ============================================================
-    // 2) Validate + Repair (regen only bad questions)
+    // Validate + Repair (regen only bad questions)
     // ============================================================
     const seenAnswers = new Set<string>();
     const seenStems: string[] = [];
@@ -718,14 +687,12 @@ Return ONLY JSON (no markdown fences, no commentary):
       for (let qi = 0; qi < qs.length; qi++) {
         let q = qs[qi];
 
-        // normalize structure
         q = {
           question: norm(q?.question),
           options: Array.isArray(q?.options) ? q.options.map((x: any) => norm(x)) : [],
           correct_index: normalizeCorrectIndex(q?.correct_index),
         };
 
-        // repair loop
         for (let attempt = 0; attempt < MAX_REGEN_TRIES; attempt++) {
           const fairness = validateQuestionFairness({
             stem: q.question,
@@ -734,27 +701,25 @@ Return ONLY JSON (no markdown fences, no commentary):
             difficultyKey,
           });
 
-          // diversity checks
           const stemOpener = getStemOpener(q.question);
           const openerCount = (openerCounts.get(stemOpener) || 0) + 1;
 
-          const tooManySameOpeners = openerCount >= Math.max(3, Math.ceil((nRounds * nQuestions) / 8));
+          const tooManySameOpeners =
+            openerCount >= Math.max(3, Math.ceil((nRounds * nQuestions) / 8));
           const tooSimilarToPrevious = seenStems.some((s) => jaccardSimilarity(s, q.question) >= 0.82);
 
           const correctAnswerText = q.options[q.correct_index] || "";
           const answerKey = lowerNorm(correctAnswerText);
-
           const duplicateAnswer = answerKey && seenAnswers.has(answerKey);
 
           let ambiguityFail = false;
           let ambiguityNote: string | undefined;
 
-          // targeted ambiguity checks: if fairness already borderline or for higher diffs
           const shouldAmbiguityCheck =
             difficultyKey === "college" ||
             difficultyKey === "phd" ||
             (!fairness.ok && attempt === 0) ||
-            Math.random() < 0.22; // sampled
+            Math.random() < 0.22;
 
           if (fairness.ok && shouldAmbiguityCheck) {
             const amb = await ambiguityCheck({
@@ -768,16 +733,22 @@ Return ONLY JSON (no markdown fences, no commentary):
             }
           }
 
+          // ✅ Make duplicate answer a SOFT constraint:
+          // - We'll try to avoid it
+          // - but we will NOT crash the whole generation if it's the only remaining issue
+          const duplicateReason = duplicateAnswer
+            ? [`Duplicate correct answer in this game: "${correctAnswerText}"`]
+            : [];
+
           const failReasons = [
             ...(fairness.ok ? [] : fairness.reasons),
-            ...(duplicateAnswer ? ["Duplicate correct answer in this game"] : []),
+            ...duplicateReason,
             ...(tooManySameOpeners ? ["Too many questions start the same way (template spam)"] : []),
             ...(tooSimilarToPrevious ? ["Question stem too similar to another question"] : []),
             ...(ambiguityFail ? [`Ambiguity check failed: ${ambiguityNote || "ambiguous"}`] : []),
           ];
 
           if (failReasons.length === 0) {
-            // accept & record diversity stats
             openerCounts.set(stemOpener, openerCount);
             if (answerKey) seenAnswers.add(answerKey);
             seenStems.push(q.question);
@@ -785,8 +756,20 @@ Return ONLY JSON (no markdown fences, no commentary):
             break;
           }
 
-          // regen single question
+          // ✅ On final attempt: if the ONLY fail is duplicate-answer, accept it anyway
           if (attempt === MAX_REGEN_TRIES - 1) {
+            const hardFails = failReasons.filter(
+              (x) => !x.toLowerCase().startsWith("duplicate correct answer")
+            );
+
+            if (hardFails.length === 0) {
+              openerCounts.set(stemOpener, openerCount);
+              if (answerKey) seenAnswers.add(answerKey);
+              seenStems.push(q.question);
+              qs[qi] = q;
+              break;
+            }
+
             throw new Error(
               `Failed to generate a fair question after ${MAX_REGEN_TRIES} tries (Round ${roundNum}, Q${qi + 1}). Reasons: ${failReasons.join(
                 " | "
@@ -794,12 +777,16 @@ Return ONLY JSON (no markdown fences, no commentary):
             );
           }
 
+          // ✅ Regen: tell model the forbidden answers explicitly
+          const forbidden = Array.from(seenAnswers).slice(-30);
+
           const regen = await generateSingleQuestion({
             topic,
             difficultyKey,
             difficultySpec,
             caps,
             avoidNotes: failReasons,
+            forbiddenCorrectAnswers: forbidden,
             roundNumber: roundNum,
             qNumber: qi + 1,
           });
@@ -811,17 +798,16 @@ Return ONLY JSON (no markdown fences, no commentary):
           };
         }
 
-        // OPTIONAL: PhD gatekeeper (can be slow; you already warned)
         if (difficultyKey === "phd") {
           const ok = await isTruePhDQuestion(q.question);
           if (!ok) {
-            // one extra regen attempt for PhD mismatch
             const regen = await generateSingleQuestion({
               topic,
               difficultyKey,
               difficultySpec,
               caps,
               avoidNotes: ["Not true PhD difficulty (needs unresolved research / methodological edge cases)"],
+              forbiddenCorrectAnswers: Array.from(seenAnswers).slice(-30),
               roundNumber: roundNum,
               qNumber: qi + 1,
             });
@@ -842,16 +828,14 @@ Return ONLY JSON (no markdown fences, no commentary):
         }
       }
 
-      // write normalized back
       parsed.rounds[r].questions = qs;
       parsed.rounds[r].topic = topic;
       parsed.rounds[r].round_number = roundNum;
     }
 
     // ============================================================
-    // 3) Shuffle each question + balance correct_index distribution
+    // Shuffle + balance correct_index distribution
     // ============================================================
-    // We shuffle *after* validation so we aren’t validating against pre-shuffle indices.
     const allQsFlat: Array<{
       question: string;
       options: string[];
@@ -877,7 +861,6 @@ Return ONLY JSON (no markdown fences, no commentary):
 
     balanceCorrectIndexAcrossSet(allQsFlat);
 
-    // Now push balanced, shuffled questions back into rounds
     const byRound = new Map<number, any[]>();
     for (const q of allQsFlat) {
       if (!byRound.has(q.round_number)) byRound.set(q.round_number, []);
@@ -887,7 +870,6 @@ Return ONLY JSON (no markdown fences, no commentary):
     for (const round of parsed.rounds) {
       const roundNum = Number(round?.round_number) || 1;
       const list = byRound.get(roundNum) || [];
-      // Keep original ordering stable
       round.questions = list.map((x) => ({
         question: x.question,
         options: x.options,
@@ -896,7 +878,7 @@ Return ONLY JSON (no markdown fences, no commentary):
     }
 
     // ============================================================
-    // 4) Supabase write: create/update card + bulk insert questions
+    // Supabase write
     // ============================================================
     const supabase = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -912,7 +894,7 @@ Return ONLY JSON (no markdown fences, no commentary):
           public_name: publicName,
           private_name: privateName,
           topic_prompt: topicPrompt,
-          difficulty, // keep original for display
+          difficulty,
           question_count: nQuestions,
           rounds: nRounds,
           per_round_topics: sameTopicForAllRounds ? null : roundTopics,
@@ -939,7 +921,7 @@ Return ONLY JSON (no markdown fences, no commentary):
           public_name: publicName,
           private_name: privateName,
           topic_prompt: topicPrompt,
-          difficulty, // keep original for display
+          difficulty,
           question_count: nQuestions,
           rounds: nRounds,
           per_round_topics: sameTopicForAllRounds ? null : roundTopics,
@@ -953,7 +935,6 @@ Return ONLY JSON (no markdown fences, no commentary):
       triviaCardId = triviaCard.id;
     }
 
-    // Build rows for bulk insert
     const rows: any[] = [];
 
     for (const round of parsed.rounds) {
@@ -970,13 +951,13 @@ Return ONLY JSON (no markdown fences, no commentary):
         const opts = Array.isArray(rawQ?.options) ? rawQ.options.map((x: any) => norm(x)) : [];
         const ci = normalizeCorrectIndex(rawQ?.correct_index);
 
-        // Final safety validation before insert
         const fairness = validateQuestionFairness({
           stem,
           options: opts,
           correctIndex: ci,
           difficultyKey,
         });
+
         if (!fairness.ok) {
           throw new Error(`Final validation failed (Round ${roundNum}): ${fairness.reasons.join(" | ")}`);
         }
@@ -987,9 +968,8 @@ Return ONLY JSON (no markdown fences, no commentary):
           question_text: stem,
           options: opts,
           correct_index: ci,
-          difficulty, // display value
+          difficulty,
           category: topic,
-          // is_active: false, // keep default if you have it; uncomment if needed
         });
       }
     }
