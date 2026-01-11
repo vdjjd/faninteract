@@ -1,7 +1,4 @@
 // app/trivia/ai-generate/route.ts
-// If you want /api/trivia/generate, move this file to:
-// app/api/trivia/generate/route.ts
-
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
 import { createClient } from "@supabase/supabase-js";
@@ -12,40 +9,20 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY!,
 });
 
-/**
- * Normalize difficulty coming from UI (e.g. "High School", "PhD")
- * into API keys used by getDifficultySpec(): elementary|jr_high|high_school|college|phd
- */
 function normalizeDifficultyKey(
   raw: any
 ): "" | "elementary" | "jr_high" | "high_school" | "college" | "phd" {
   const v = String(raw || "").trim().toLowerCase();
 
   if (v === "elementary") return "elementary";
-
-  if (
-    v === "jr_high" ||
-    v === "junior high" ||
-    v === "junior_high" ||
-    v === "jr high"
-  ) {
-    return "jr_high";
-  }
-
-  if (v === "high_school" || v === "high school" || v === "highschool") {
-    return "high_school";
-  }
-
+  if (v === "jr_high" || v === "junior high" || v === "junior_high" || v === "jr high") return "jr_high";
+  if (v === "high_school" || v === "high school" || v === "highschool") return "high_school";
   if (v === "college") return "college";
-
   if (v === "phd" || v === "ph.d" || v === "ph.d." || v === "ph d") return "phd";
 
   return "";
 }
 
-/**
- * Difficulty spec for generation prompt
- */
 function getDifficultySpec(difficulty: string): string {
   switch (difficulty) {
     case "elementary":
@@ -96,26 +73,17 @@ MANDATORY CHARACTERISTICS:
   }
 }
 
-/**
- * Safety: AI never controls correctness bounds
- */
 function normalizeCorrectIndex(index: any): number {
   if (typeof index !== "number") return Math.floor(Math.random() * 4);
   if (index < 0 || index > 3) return Math.floor(Math.random() * 4);
   return index;
 }
 
-/**
- * Remove ```json fences and extract first JSON object block if needed.
- */
 function extractJson(raw: string): string {
   const text = (raw || "").trim();
-
-  // ```json ... ``` or ``` ... ```
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
   if (fenced?.[1]) return fenced[1].trim();
 
-  // Fallback: grab first {...} span
   const firstBrace = text.indexOf("{");
   const lastBrace = text.lastIndexOf("}");
   if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
@@ -126,29 +94,15 @@ function extractJson(raw: string): string {
 }
 
 function norm(s: any): string {
-  return String(s || "")
-    .replace(/\s+/g, " ")
-    .trim();
+  return String(s || "").replace(/\s+/g, " ").trim();
 }
-
 function lowerNorm(s: any): string {
   return norm(s).toLowerCase();
 }
 
-/**
- * Shuffle options but KEEP the same correct answer,
- * just move it to a random position.
- */
-function shuffleQuestionOptions(q: {
-  question: string;
-  options: string[];
-  correct_index: number;
-}) {
+function shuffleQuestionOptions(q: { question: string; options: string[]; correct_index: number }) {
   if (!Array.isArray(q.options) || q.options.length !== 4) {
-    return {
-      ...q,
-      correct_index: normalizeCorrectIndex(q.correct_index),
-    };
+    return { ...q, correct_index: normalizeCorrectIndex(q.correct_index) };
   }
 
   const originalOptions = q.options.map((x) => String(x));
@@ -163,17 +117,8 @@ function shuffleQuestionOptions(q: {
   const newOptions = indices.map((idx) => originalOptions[idx]);
   const newCorrectIndex = indices.indexOf(originalCorrectIndex);
 
-  return {
-    ...q,
-    question: String(q.question || ""),
-    options: newOptions,
-    correct_index: newCorrectIndex,
-  };
+  return { ...q, question: String(q.question || ""), options: newOptions, correct_index: newCorrectIndex };
 }
-
-/* ============================================================
-   ENGINE IMPROVEMENTS
-============================================================ */
 
 function getLengthCaps(difficultyKey: ReturnType<typeof normalizeDifficultyKey>) {
   switch (difficultyKey) {
@@ -195,19 +140,14 @@ function getLengthCaps(difficultyKey: ReturnType<typeof normalizeDifficultyKey>)
 function classifyOptionType(opt: string): "number" | "date" | "person" | "phrase" {
   const s = norm(opt);
 
-  if (
-    /\b(18|19|20)\d{2}\b/.test(s) ||
-    /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)\b/i.test(s)
-  ) {
+  if (/\b(18|19|20)\d{2}\b/.test(s) || /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)\b/i.test(s)) {
     return "date";
   }
 
   if (/^[\d,\.\-\+]+$/.test(s)) return "number";
   if (/\b\d+(\.\d+)?\b/.test(s) && s.length <= 10) return "number";
 
-  if (/^[A-Z][a-z]+ [A-Z][a-z]+/.test(s) && s.split(" ").length <= 4) {
-    return "person";
-  }
+  if (/^[A-Z][a-z]+ [A-Z][a-z]+/.test(s) && s.split(" ").length <= 4) return "person";
 
   return "phrase";
 }
@@ -215,17 +155,14 @@ function classifyOptionType(opt: string): "number" | "date" | "person" | "phrase
 function hasAnyPunct(s: string) {
   return /[;:()"“”'’—–]/.test(s);
 }
-
 function endsWithPeriod(s: string) {
   return /\.\s*$/.test(s);
 }
-
 function countWords(s: string) {
   const t = norm(s);
   if (!t) return 0;
   return t.split(" ").filter(Boolean).length;
 }
-
 function optionLen(s: string) {
   return norm(s).length;
 }
@@ -257,9 +194,7 @@ function validateQuestionFairness(params: {
 
   const types = cleanOpts.map(classifyOptionType);
   const uniqueTypes = new Set(types);
-  if (uniqueTypes.size > 1) {
-    reasons.push(`Mixed option types (${Array.from(uniqueTypes).join(", ")})`);
-  }
+  if (uniqueTypes.size > 1) reasons.push(`Mixed option types (${Array.from(uniqueTypes).join(", ")})`);
 
   const periodFlags = cleanOpts.map(endsWithPeriod);
   if (new Set(periodFlags).size > 1) reasons.push("Mixed punctuation: some options end with '.' and others do not");
@@ -285,9 +220,7 @@ function validateQuestionFairness(params: {
 
   const maxLen = Math.max(...lengths);
   const minLen = Math.min(...lengths);
-  if (maxLen >= Math.floor(minLen * 2) && maxLen - minLen >= 18) {
-    reasons.push("Options vary too much in length (pattern giveaway)");
-  }
+  if (maxLen >= Math.floor(minLen * 2) && maxLen - minLen >= 18) reasons.push("Options vary too much in length (pattern giveaway)");
 
   const wcounts = cleanOpts.map(countWords);
   const wMax = Math.max(...wcounts);
@@ -303,18 +236,10 @@ function validateQuestionFairness(params: {
     reasons.push("Negation-style stem (NOT/EXCEPT) increases ambiguity for this difficulty");
   }
 
-  return {
-    ok: reasons.length === 0,
-    reasons,
-    cleaned: { stem: cleanStem, options: cleanOpts, correctIndex: ci },
-  };
+  return { ok: reasons.length === 0, reasons, cleaned: { stem: cleanStem, options: cleanOpts, correctIndex: ci } };
 }
 
-async function ambiguityCheck(params: {
-  stem: string;
-  options: string[];
-  correctIndex: number;
-}): Promise<{ ok: boolean; note?: string }> {
+async function ambiguityCheck(params: { stem: string; options: string[]; correctIndex: number }) {
   const { stem, options, correctIndex } = params;
 
   const prompt = `
@@ -337,18 +262,9 @@ Return ONLY JSON:
   "confidence": 0-100,
   "notes": "short"
 }
-
-Rules:
-- If more than one option could be reasonably defended, unambiguous=false.
-- If the stem is vague or subjective, unambiguous=false.
-- Be strict.
 `;
 
-  const res = await openai.responses.create({
-    model: "gpt-4.1",
-    input: prompt,
-  });
-
+  const res = await openai.responses.create({ model: "gpt-4.1", input: prompt });
   const txt = res.output_text?.trim() || "";
   const cleaned = extractJson(txt);
 
@@ -372,22 +288,11 @@ Evaluate the following question:
 
 "${question}"
 
-Rules:
-- If this question could be answered by a well-read undergraduate or casual expert, return NO.
-- If this question would challenge or divide actual researchers in the field, return YES.
-- Be extremely strict.
-
 Respond with ONLY:
 YES or NO
 `;
-
-  const result = await openai.responses.create({
-    model: "gpt-4.1",
-    input: graderPrompt,
-  });
-
-  const verdict = result.output_text?.trim();
-  return verdict === "YES";
+  const result = await openai.responses.create({ model: "gpt-4.1", input: graderPrompt });
+  return (result.output_text?.trim() || "") === "YES";
 }
 
 function getStemOpener(stem: string) {
@@ -411,7 +316,8 @@ function jaccardSimilarity(a: string, b: string) {
 }
 
 /**
- * NEW: pass forbidden correct answers so regen can avoid them
+ * Generate a single question (regen)
+ * NEW: supports forbiddenCorrectAnswers + forbiddenOpeners
  */
 async function generateSingleQuestion(params: {
   topic: string;
@@ -420,28 +326,16 @@ async function generateSingleQuestion(params: {
   caps: { stemMax: number; optMax: number; optMin: number };
   avoidNotes?: string[];
   forbiddenCorrectAnswers?: string[];
+  forbiddenOpeners?: string[];
   roundNumber: number;
   qNumber: number;
 }) {
-  const {
-    topic,
-    difficultySpec,
-    caps,
-    avoidNotes,
-    forbiddenCorrectAnswers,
-    roundNumber,
-    qNumber,
-  } = params;
+  const { topic, difficultySpec, caps, avoidNotes, forbiddenCorrectAnswers, forbiddenOpeners, roundNumber, qNumber } =
+    params;
 
-  const avoid = (avoidNotes || [])
-    .slice(0, 6)
-    .map((x) => `- ${x}`)
-    .join("\n");
-
-  const forbidden = (forbiddenCorrectAnswers || [])
-    .slice(0, 30)
-    .map((x) => `- ${x}`)
-    .join("\n");
+  const avoid = (avoidNotes || []).slice(0, 8).map((x) => `- ${x}`).join("\n");
+  const forbiddenAns = (forbiddenCorrectAnswers || []).slice(0, 30).map((x) => `- ${x}`).join("\n");
+  const forbiddenOps = (forbiddenOpeners || []).slice(0, 25).map((x) => `- ${x}`).join("\n");
 
   const prompt = `
 You are generating ONE high-quality trivia question.
@@ -461,6 +355,7 @@ FORMAT + FAIRNESS RULES (MANDATORY):
 - Avoid unique punctuation in only one option.
 - Avoid absolutes like "always/never/only".
 - No "All of the above" or "None of the above".
+- VARY the stem opening; do not reuse a template opener.
 
 HARD LENGTH LIMITS:
 - Stem length <= ${caps.stemMax} characters
@@ -468,8 +363,14 @@ HARD LENGTH LIMITS:
 - Each option length >= ${caps.optMin} characters
 
 ${
-  forbidden
-    ? `FORBIDDEN CORRECT ANSWERS (the intended correct option MUST NOT be any of these exact strings):\n${forbidden}\n`
+  forbiddenOps
+    ? `FORBIDDEN STEM OPENERS (the first 3 words of the question MUST NOT match any line below):\n${forbiddenOps}\n`
+    : ""
+}
+
+${
+  forbiddenAns
+    ? `FORBIDDEN CORRECT ANSWERS (the intended correct option MUST NOT be any of these exact strings):\n${forbiddenAns}\n`
     : ""
 }
 
@@ -483,16 +384,10 @@ Return ONLY JSON (no markdown):
 }
 `;
 
-  const res = await openai.responses.create({
-    model: "gpt-4.1",
-    input: prompt,
-  });
-
+  const res = await openai.responses.create({ model: "gpt-4.1", input: prompt });
   const txt = res.output_text?.trim() || "";
   const cleaned = extractJson(txt);
-  const parsed = JSON.parse(cleaned);
-
-  return parsed as { question: string; options: string[]; correct_index: number };
+  return JSON.parse(cleaned) as { question: string; options: string[]; correct_index: number };
 }
 
 function balanceCorrectIndexAcrossSet(items: Array<{ options: string[]; correct_index: number; question: string }>) {
@@ -500,10 +395,7 @@ function balanceCorrectIndexAcrossSet(items: Array<{ options: string[]; correct_
 
   const count = () => {
     const c = [0, 0, 0, 0];
-    for (const it of items) {
-      const ci = normalizeCorrectIndex(it.correct_index);
-      c[ci]++;
-    }
+    for (const it of items) c[normalizeCorrectIndex(it.correct_index)]++;
     return c;
   };
 
@@ -526,8 +418,7 @@ function balanceCorrectIndexAcrossSet(items: Array<{ options: string[]; correct_
     if (!candidates.length) break;
 
     const pick = candidates[Math.floor(Math.random() * candidates.length)];
-    const reshuffled = shuffleQuestionOptions(pick.it as any);
-    items[pick.i] = reshuffled as any;
+    items[pick.i] = shuffleQuestionOptions(pick.it as any) as any;
   }
 
   return items;
@@ -554,27 +445,17 @@ export async function POST(req: Request) {
 
     const difficultyKey = normalizeDifficultyKey(difficulty);
     if (!difficultyKey) {
-      return NextResponse.json(
-        { success: false, error: `Unknown difficulty value: "${difficulty}"` },
-        { status: 400 }
-      );
+      return NextResponse.json({ success: false, error: `Unknown difficulty value: "${difficulty}"` }, { status: 400 });
     }
 
     const nRounds = Number(numRounds);
     const nQuestions = Number(numQuestions);
 
     if (!Number.isInteger(nRounds) || nRounds < 1) {
-      return NextResponse.json(
-        { success: false, error: "numRounds must be an integer >= 1" },
-        { status: 400 }
-      );
+      return NextResponse.json({ success: false, error: "numRounds must be an integer >= 1" }, { status: 400 });
     }
-
     if (!Number.isInteger(nQuestions) || nQuestions < 1) {
-      return NextResponse.json(
-        { success: false, error: "numQuestions must be an integer >= 1" },
-        { status: 400 }
-      );
+      return NextResponse.json({ success: false, error: "numQuestions must be an integer >= 1" }, { status: 400 });
     }
 
     if (!sameTopicForAllRounds) {
@@ -585,10 +466,7 @@ export async function POST(req: Request) {
         );
       }
       if (roundTopics.some((t: any) => !norm(t))) {
-        return NextResponse.json(
-          { success: false, error: "Each round topic must be a non-empty string" },
-          { status: 400 }
-        );
+        return NextResponse.json({ success: false, error: "Each round topic must be a non-empty string" }, { status: 400 });
       }
     }
 
@@ -616,13 +494,13 @@ FAIRNESS RULES (MANDATORY):
 - Avoid unique punctuation in only one option.
 - Avoid "All of the above" / "None of the above".
 - Avoid "always/never/only" in correct answer.
-- Prefer not to repeat the exact SAME correct answer across questions.
+- Vary the stem openings (do not repeat the same 3-word opener too often).
 
 HARD LENGTH LIMITS:
 - Stem length <= ${caps.stemMax} chars
 - Each option length <= ${caps.optMax} chars
 
-Return ONLY JSON (no markdown fences, no commentary):
+Return ONLY JSON:
 
 {
   "rounds": [
@@ -641,36 +519,24 @@ Return ONLY JSON (no markdown fences, no commentary):
 }
 `;
 
-    const response = await openai.responses.create({
-      model: "gpt-4.1",
-      input: generationPrompt,
-    });
+    const response = await openai.responses.create({ model: "gpt-4.1", input: generationPrompt });
 
     rawText = response.output_text;
     if (!rawText) throw new Error("AI returned no output");
 
     const cleaned = extractJson(rawText);
+    const parsed = JSON.parse(cleaned);
 
-    let parsed: any;
-    try {
-      parsed = JSON.parse(cleaned);
-    } catch {
-      throw new Error(`AI output was not valid JSON after cleaning. First 200 chars: ${cleaned.slice(0, 200)}`);
-    }
+    if (!parsed?.rounds || !Array.isArray(parsed.rounds)) throw new Error("AI output missing rounds[] array");
+    if (parsed.rounds.length !== nRounds) throw new Error(`AI returned ${parsed.rounds.length} rounds; expected ${nRounds}`);
 
-    if (!parsed?.rounds || !Array.isArray(parsed.rounds)) {
-      throw new Error("AI output missing rounds[] array");
-    }
-    if (parsed.rounds.length !== nRounds) {
-      throw new Error(`AI returned ${parsed.rounds.length} rounds; expected ${nRounds}`);
-    }
-
-    // ============================================================
-    // Validate + Repair (regen only bad questions)
-    // ============================================================
     const seenAnswers = new Set<string>();
     const seenStems: string[] = [];
     const openerCounts = new Map<string, number>();
+
+    // NEW: threshold helper (less aggressive)
+    const totalQ = nRounds * nQuestions;
+    const openerThreshold = Math.max(5, Math.ceil(totalQ / 6)); // 20Q => max(5,4)=5
 
     const MAX_REGEN_TRIES = 3;
 
@@ -680,9 +546,7 @@ Return ONLY JSON (no markdown fences, no commentary):
       const topic = norm(round?.topic || finalTopicList[r] || topicPrompt || "General");
 
       const qs = Array.isArray(round?.questions) ? round.questions : [];
-      if (qs.length !== nQuestions) {
-        throw new Error(`Round ${roundNum} returned ${qs.length} questions; expected ${nQuestions}`);
-      }
+      if (qs.length !== nQuestions) throw new Error(`Round ${roundNum} returned ${qs.length} questions; expected ${nQuestions}`);
 
       for (let qi = 0; qi < qs.length; qi++) {
         let q = qs[qi];
@@ -704,8 +568,9 @@ Return ONLY JSON (no markdown fences, no commentary):
           const stemOpener = getStemOpener(q.question);
           const openerCount = (openerCounts.get(stemOpener) || 0) + 1;
 
-          const tooManySameOpeners =
-            openerCount >= Math.max(3, Math.ceil((nRounds * nQuestions) / 8));
+          // ✅ Less aggressive + use ">" not ">="
+          const tooManySameOpeners = openerCount > openerThreshold;
+
           const tooSimilarToPrevious = seenStems.some((s) => jaccardSimilarity(s, q.question) >= 0.82);
 
           const correctAnswerText = q.options[q.correct_index] || "";
@@ -722,28 +587,17 @@ Return ONLY JSON (no markdown fences, no commentary):
             Math.random() < 0.22;
 
           if (fairness.ok && shouldAmbiguityCheck) {
-            const amb = await ambiguityCheck({
-              stem: q.question,
-              options: q.options,
-              correctIndex: q.correct_index,
-            });
+            const amb = await ambiguityCheck({ stem: q.question, options: q.options, correctIndex: q.correct_index });
             if (!amb.ok) {
               ambiguityFail = true;
               ambiguityNote = amb.note;
             }
           }
 
-          // ✅ Make duplicate answer a SOFT constraint:
-          // - We'll try to avoid it
-          // - but we will NOT crash the whole generation if it's the only remaining issue
-          const duplicateReason = duplicateAnswer
-            ? [`Duplicate correct answer in this game: "${correctAnswerText}"`]
-            : [];
-
           const failReasons = [
             ...(fairness.ok ? [] : fairness.reasons),
-            ...duplicateReason,
-            ...(tooManySameOpeners ? ["Too many questions start the same way (template spam)"] : []),
+            ...(duplicateAnswer ? [`Duplicate correct answer in this game: "${correctAnswerText}"`] : []),
+            ...(tooManySameOpeners ? [`Too many questions start the same way (template spam): "${stemOpener}"`] : []),
             ...(tooSimilarToPrevious ? ["Question stem too similar to another question"] : []),
             ...(ambiguityFail ? [`Ambiguity check failed: ${ambiguityNote || "ambiguous"}`] : []),
           ];
@@ -756,11 +610,14 @@ Return ONLY JSON (no markdown fences, no commentary):
             break;
           }
 
-          // ✅ On final attempt: if the ONLY fail is duplicate-answer, accept it anyway
+          // ✅ Final attempt: if ONLY failures are "duplicate answer" and/or "template spam", accept anyway
           if (attempt === MAX_REGEN_TRIES - 1) {
-            const hardFails = failReasons.filter(
-              (x) => !x.toLowerCase().startsWith("duplicate correct answer")
-            );
+            const hardFails = failReasons.filter((x) => {
+              const t = x.toLowerCase();
+              if (t.startsWith("duplicate correct answer")) return false;
+              if (t.startsWith("too many questions start the same way")) return false;
+              return true;
+            });
 
             if (hardFails.length === 0) {
               openerCounts.set(stemOpener, openerCount);
@@ -771,14 +628,18 @@ Return ONLY JSON (no markdown fences, no commentary):
             }
 
             throw new Error(
-              `Failed to generate a fair question after ${MAX_REGEN_TRIES} tries (Round ${roundNum}, Q${qi + 1}). Reasons: ${failReasons.join(
-                " | "
-              )}`
+              `Failed to generate a fair question after ${MAX_REGEN_TRIES} tries (Round ${roundNum}, Q${qi + 1}). Reasons: ${failReasons.join(" | ")}`
             );
           }
 
-          // ✅ Regen: tell model the forbidden answers explicitly
-          const forbidden = Array.from(seenAnswers).slice(-30);
+          // regen with explicit forbidden lists
+          const forbiddenCorrect = Array.from(seenAnswers).slice(-30);
+
+          // forbid the worst offenders (openers already used a lot)
+          const forbiddenOpeners = Array.from(openerCounts.entries())
+            .filter(([, c]) => c >= Math.max(3, Math.floor(openerThreshold * 0.7)))
+            .map(([op]) => op)
+            .slice(0, 25);
 
           const regen = await generateSingleQuestion({
             topic,
@@ -786,7 +647,8 @@ Return ONLY JSON (no markdown fences, no commentary):
             difficultySpec,
             caps,
             avoidNotes: failReasons,
-            forbiddenCorrectAnswers: forbidden,
+            forbiddenCorrectAnswers: forbiddenCorrect,
+            forbiddenOpeners,
             roundNumber: roundNum,
             qNumber: qi + 1,
           });
@@ -808,6 +670,7 @@ Return ONLY JSON (no markdown fences, no commentary):
               caps,
               avoidNotes: ["Not true PhD difficulty (needs unresolved research / methodological edge cases)"],
               forbiddenCorrectAnswers: Array.from(seenAnswers).slice(-30),
+              forbiddenOpeners: Array.from(openerCounts.keys()).slice(0, 25),
               roundNumber: roundNum,
               qNumber: qi + 1,
             });
@@ -819,9 +682,7 @@ Return ONLY JSON (no markdown fences, no commentary):
             };
 
             const recheck = await isTruePhDQuestion(q.question);
-            if (!recheck) {
-              throw new Error("Generated question rejected: not true PhD difficulty (even after regen)");
-            }
+            if (!recheck) throw new Error("Generated question rejected: not true PhD difficulty (even after regen)");
 
             qs[qi] = q;
           }
@@ -833,16 +694,8 @@ Return ONLY JSON (no markdown fences, no commentary):
       parsed.rounds[r].round_number = roundNum;
     }
 
-    // ============================================================
-    // Shuffle + balance correct_index distribution
-    // ============================================================
-    const allQsFlat: Array<{
-      question: string;
-      options: string[];
-      correct_index: number;
-      round_number: number;
-      topic: string;
-    }> = [];
+    // shuffle + balance correct index
+    const allQsFlat: Array<{ question: string; options: string[]; correct_index: number; round_number: number; topic: string }> = [];
 
     for (const round of parsed.rounds) {
       const roundNum = Number(round?.round_number) || 1;
@@ -866,24 +719,14 @@ Return ONLY JSON (no markdown fences, no commentary):
       if (!byRound.has(q.round_number)) byRound.set(q.round_number, []);
       byRound.get(q.round_number)!.push(q);
     }
-
     for (const round of parsed.rounds) {
       const roundNum = Number(round?.round_number) || 1;
       const list = byRound.get(roundNum) || [];
-      round.questions = list.map((x) => ({
-        question: x.question,
-        options: x.options,
-        correct_index: x.correct_index,
-      }));
+      round.questions = list.map((x) => ({ question: x.question, options: x.options, correct_index: x.correct_index }));
     }
 
-    // ============================================================
-    // Supabase write
-    // ============================================================
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
+    // supabase write
+    const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 
     let triviaCardId: string;
 
@@ -907,11 +750,7 @@ Return ONLY JSON (no markdown fences, no commentary):
 
       triviaCardId = triviaCard.id;
 
-      const { error: delErr } = await supabase
-        .from("trivia_questions")
-        .delete()
-        .eq("trivia_card_id", triviaCardId);
-
+      const { error: delErr } = await supabase.from("trivia_questions").delete().eq("trivia_card_id", triviaCardId);
       if (delErr) throw delErr;
     } else {
       const { data: triviaCard, error: triviaErr } = await supabase
@@ -931,7 +770,6 @@ Return ONLY JSON (no markdown fences, no commentary):
         .single();
 
       if (triviaErr || !triviaCard) throw triviaErr || new Error("Failed to create card");
-
       triviaCardId = triviaCard.id;
     }
 
@@ -942,25 +780,15 @@ Return ONLY JSON (no markdown fences, no commentary):
       const topic = String(round?.topic || topicPrompt || "General");
 
       const qs = Array.isArray(round?.questions) ? round.questions : [];
-      if (qs.length !== nQuestions) {
-        throw new Error(`Round ${roundNum} returned ${qs.length} questions; expected ${nQuestions}`);
-      }
+      if (qs.length !== nQuestions) throw new Error(`Round ${roundNum} returned ${qs.length} questions; expected ${nQuestions}`);
 
       for (const rawQ of qs) {
         const stem = norm(rawQ?.question);
         const opts = Array.isArray(rawQ?.options) ? rawQ.options.map((x: any) => norm(x)) : [];
         const ci = normalizeCorrectIndex(rawQ?.correct_index);
 
-        const fairness = validateQuestionFairness({
-          stem,
-          options: opts,
-          correctIndex: ci,
-          difficultyKey,
-        });
-
-        if (!fairness.ok) {
-          throw new Error(`Final validation failed (Round ${roundNum}): ${fairness.reasons.join(" | ")}`);
-        }
+        const fairness = validateQuestionFairness({ stem, options: opts, correctIndex: ci, difficultyKey });
+        if (!fairness.ok) throw new Error(`Final validation failed (Round ${roundNum}): ${fairness.reasons.join(" | ")}`);
 
         rows.push({
           trivia_card_id: triviaCardId,
@@ -983,9 +811,6 @@ Return ONLY JSON (no markdown fences, no commentary):
       rawPreview: typeof rawText === "string" ? rawText.slice(0, 400) : null,
     });
 
-    return NextResponse.json(
-      { success: false, error: err?.message ?? "Server error" },
-      { status: 500 }
-    );
+    return NextResponse.json({ success: false, error: err?.message ?? "Server error" }, { status: 500 });
   }
 }
