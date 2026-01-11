@@ -26,25 +26,40 @@ function normalizeEntries(list: any[] = []) {
     .map((e) => ({
       id: e.id,
       photo_url: e.photo_url?.trim() || null,
-      first_name:
-        e.first_name || e?.guest_profiles?.first_name || "",
-      last_name:
-        e.last_name || e?.guest_profiles?.last_name || "",
+      first_name: e.first_name || e?.guest_profiles?.first_name || "",
+      last_name: e.last_name || e?.guest_profiles?.last_name || "",
     }));
+}
+
+function shuffle<T>(arr: T[]) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+function pickRandom<T>(arr: T[]) {
+  return arr[Math.floor(Math.random() * arr.length)];
 }
 
 /* ===========================================================
    MAIN
 =========================================================== */
 
-export default function ActivePrizeWheel3D({ wheel, entries }) {
+export default function ActivePrizeWheel3D({ wheel, entries }: any) {
   const mountRef = useRef<HTMLDivElement | null>(null);
 
-  const wheelGroupRef = useRef<any>(null);
+  const wheelGroupRef = useRef<THREE.Group | null>(null);
   const wrapperRefs = useRef<HTMLElement[]>([]);
   const tileRefs = useRef<any[]>([]);
 
-  const lockedEntriesRef = useRef<any[] | null>(null);
+  // ✅ pool of approved entries (updates when props.entries changes)
+  const approvedPoolRef = useRef<any[]>([]);
+
+  // ✅ current entry assignment per tile index (kept stable without React state)
+  const tileDataRef = useRef<any[]>(Array(16).fill(null));
 
   const winnerRef = useRef({
     index: null as null | number,
@@ -55,13 +70,10 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
   const bgRef = useRef<string>(
     wheel?.background_type === "image"
       ? `url(${wheel.background_value}) center/cover no-repeat`
-      : wheel?.background_value ||
-          "linear-gradient(135deg,#1b2735,#090a0f)"
+      : wheel?.background_value || "linear-gradient(135deg,#1b2735,#090a0f)"
   );
 
-  const brightnessRef = useRef<number>(
-    wheel?.background_brightness || 100
-  );
+  const brightnessRef = useRef<number>(wheel?.background_brightness || 100);
 
   const TILE_COUNT = 16;
   const TILE_SIZE = 820;
@@ -97,34 +109,113 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
       : "/faninteractlogo.png";
 
   /* ===========================================================
-     RESET LOCKED ENTRIES AFTER PAGE RELOAD
+     ✅ keep pool updated from props
 =========================================================== */
   useEffect(() => {
-    lockedEntriesRef.current = null;
-  }, []);
+    approvedPoolRef.current = normalizeEntries(entries);
+  }, [entries]);
 
   /* ===========================================================
-     LOCK ONE TIME ONLY — PATCHED!!
+     ✅ DOM tile writer (no React state = fullscreen safe)
 =========================================================== */
+  function renderTile(i: number, entry: any | null) {
+    const wrap = wrapperRefs.current[i];
+    if (!wrap) return;
 
-  function lockEntries(normalized: any[]) {
-    if (lockedEntriesRef.current) return;
+    const img = wrap.querySelector(".imgHolder") as HTMLElement | null;
+    const name = wrap.querySelector(".nameHolder") as HTMLElement | null;
+    if (!img || !name) return;
 
-    const shuffled = [...normalized];
-
-    // Shuffle entries
-    for (let i = shuffled.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    if (!entry) {
+      img.style.background = "rgba(0,0,0,0.25)";
+      img.innerText = "IMG";
+      name.innerText = "";
+      return;
     }
 
-    // PATCH — if fewer than 16, fill with random repeats
-    while (shuffled.length < 16 && normalized.length > 0) {
-      const random = normalized[Math.floor(Math.random() * normalized.length)];
-      shuffled.push(random);
+    if (entry.photo_url) {
+      img.style.background = `url(${entry.photo_url}) center/cover no-repeat`;
+      img.innerText = "";
+    } else {
+      img.style.background = "rgba(0,0,0,0.25)";
+      img.innerText = "IMG";
     }
 
-    lockedEntriesRef.current = shuffled.slice(0, 16);
+    const ln = entry.last_name?.charAt(0)?.toUpperCase() || "";
+    name.innerText = entry.first_name ? `${entry.first_name} ${ln}.` : "";
+  }
+
+  function setTileEntry(i: number, entry: any | null) {
+    tileDataRef.current[i] = entry;
+    renderTile(i, entry);
+  }
+
+  /* ===========================================================
+     ✅ INITIAL FILL (random approved entries, repeat to 16)
+=========================================================== */
+  function initTileAssignments() {
+    const pool = approvedPoolRef.current || [];
+    if (!pool.length) {
+      for (let i = 0; i < TILE_COUNT; i++) setTileEntry(i, null);
+      return;
+    }
+
+    let list = shuffle(pool);
+
+    while (list.length < TILE_COUNT) {
+      list.push(pickRandom(pool));
+    }
+
+    list = list.slice(0, TILE_COUNT);
+
+    for (let i = 0; i < TILE_COUNT; i++) {
+      setTileEntry(i, list[i]);
+    }
+  }
+
+  /* ===========================================================
+     ✅ BACKSIDE AUTO-INJECT (IDLE ONLY, NO FULLSCREEN BREAK)
+     - swaps only tiles that are behind the wheel (cos < 0)
+     - avoids duplicates on the front hemisphere
+=========================================================== */
+  function injectBacksideRandoms() {
+    const pool = approvedPoolRef.current || [];
+    if (!pool.length) return;
+
+    const wheelGroup = wheelGroupRef.current;
+    if (!wheelGroup) return;
+
+    // never swap while spinning/drifting/frozen (keeps winner stable)
+    if (spinRef.current.spinning) return;
+    if (driftRef.current.drifting) return;
+    if (winnerRef.current.isFrozen) return;
+
+    // Determine which indices are currently "front" vs "back"
+    const frontSet = new Set<string>(); // entry ids currently on the visible/front half
+    const backIndices: number[] = [];
+
+    for (let i = 0; i < TILE_COUNT; i++) {
+      const effectiveAngle = i * TILE_STEP + wheelGroup.rotation.y;
+
+      // Front hemisphere: cos > 0 (z positive / facing camera side)
+      if (Math.cos(effectiveAngle) > 0) {
+        const e = tileDataRef.current[i];
+        if (e?.id) frontSet.add(e.id);
+      } else {
+        backIndices.push(i);
+      }
+    }
+
+    if (!backIndices.length) return;
+
+    // For each back tile, inject a random approved entry that isn't currently on the front
+    for (const idx of backIndices) {
+      // if pool small, allow duplicates (but still avoid front duplicates if possible)
+      const candidates = pool.filter((p: any) => !frontSet.has(p.id));
+      const chosen = (candidates.length ? pickRandom(candidates) : pickRandom(pool)) || null;
+
+      setTileEntry(idx, chosen);
+    }
   }
 
   /* ===========================================================
@@ -136,10 +227,7 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
     const update = () => {
       const cont = mountRef.current?.parentElement?.parentElement;
       if (!cont) return;
-      Object.assign(
-        cont.style,
-        applyBrightness(bgRef.current, brightnessRef.current)
-      );
+      Object.assign(cont.style, applyBrightness(bgRef.current, brightnessRef.current));
     };
 
     update();
@@ -183,7 +271,7 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
     const ch = supabase
       .channel(`prizewheel-${wheel.id}`)
       .on("broadcast", { event: "spin_trigger" }, () => {
-        (window as any)._pw._spin.start();
+        (window as any)._pw?._spin?.start?.();
       })
       .subscribe();
 
@@ -193,7 +281,8 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
   }, [wheel?.id]);
 
   /* ===========================================================
-     RELOAD CHANNEL
+     RELOAD CHANNEL (⚠️ This WILL exit fullscreen because it reloads the page)
+     - Keep it if you need it, but understand it can't preserve fullscreen.
 =========================================================== */
   useEffect(() => {
     if (!wheel?.id) return;
@@ -221,12 +310,7 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
     const height = container.clientHeight;
 
     const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(
-      38,
-      width / height,
-      1,
-      8000
-    );
+    const camera = new THREE.PerspectiveCamera(38, width / height, 1, 8000);
     camera.position.set(0, 0, 3800);
 
     const renderer = new THREE.WebGLRenderer({
@@ -299,7 +383,6 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
     wrapperRefs.current = [];
 
     for (let i = 0; i < TILE_COUNT; i++) {
-
       const wrap = document.createElement("div");
       wrap.style.width = `${TILE_SIZE}px`;
       wrap.style.height = `${TILE_SIZE}px`;
@@ -309,6 +392,10 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
       wrap.style.display = "flex";
       wrap.style.alignItems = "center";
       wrap.style.justifyContent = "center";
+
+      // ✅ keep backfaces clean
+      (wrap.style as any).backfaceVisibility = "hidden";
+      (wrap.style as any).transformStyle = "preserve-3d";
 
       const isA = i % 2 === 0;
       wrap.style.background = isA ? tileA : tileB;
@@ -341,12 +428,8 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
       name.style.fontSize = "54px";
       name.style.fontWeight = "900";
       name.style.color = "#fff";
-      name.style.textShadow = `
-        2px 2px 2px #000,
-        -2px 2px 2px #000,
-        2px -2px 2px #000,
-        -2px -2px 2px #000
-      `;
+      name.style.textShadow =
+        "2px 2px 2px #000,-2px 2px 2px #000,2px -2px 2px #000,-2px -2px 2px #000";
       wrap.appendChild(name);
 
       const tile = new CSS3DObject(wrap);
@@ -362,7 +445,13 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
       wheelGroup.add(tile);
     }
 
-    lockEntries(normalizeEntries(entries));
+    // ✅ initial tile fill (random approved)
+    initTileAssignments();
+
+    // ✅ backside inject timer (idle only)
+    const injectTimer = window.setInterval(() => {
+      injectBacksideRandoms();
+    }, 2500);
 
     function animate(t: number) {
       const spin = spinRef.current;
@@ -381,8 +470,7 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
         const p = Math.min((t - spin.start) / spin.duration, 1);
         const eased = p * p * (3 - 2 * p);
 
-        wheelGroup.rotation.y =
-          spin.startRot + (spin.endRot - spin.startRot) * eased;
+        wheelGroup.rotation.y = spin.startRot + (spin.endRot - spin.startRot) * eased;
 
         if (p >= 1) {
           spin.spinning = false;
@@ -391,13 +479,10 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
           drift.start = performance.now();
           drift.from = wheelGroup.rotation.y;
 
-          drift.to =
-            Math.round(drift.from / TILE_STEP) * TILE_STEP;
+          drift.to = Math.round(drift.from / TILE_STEP) * TILE_STEP;
 
           const idx =
-            ((0 - Math.round(drift.to / TILE_STEP)) %
-              TILE_COUNT +
-              TILE_COUNT) %
+            (((0 - Math.round(drift.to / TILE_STEP)) % TILE_COUNT) + TILE_COUNT) %
             TILE_COUNT;
 
           win.index = idx;
@@ -415,21 +500,16 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
             wwrap.style.border = "12px solid gold";
             wwrap.style.boxShadow =
               "0 0 80px rgba(255,215,0,0.6), inset 0 0 20px rgba(255,215,0,0.4)";
-            wwrap.style.animation =
-              "winnerHalo 1.4s ease-in-out infinite";
+            wwrap.style.animation = "winnerHalo 1.4s ease-in-out infinite";
           }
         }
       }
 
       if (drift.drifting) {
-        const p = Math.min(
-          (t - drift.start) / drift.duration,
-          1
-        );
+        const p = Math.min((t - drift.start) / drift.duration, 1);
         const easeOut = 1 - Math.pow(1 - p, 3);
 
-        wheelGroup.rotation.y =
-          drift.from + (drift.to - drift.from) * easeOut;
+        wheelGroup.rotation.y = drift.from + (drift.to - drift.from) * easeOut;
 
         if (p >= 1) drift.drifting = false;
       }
@@ -442,59 +522,15 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
     animate(0);
 
     return () => {
+      window.clearInterval(injectTimer);
       window.removeEventListener("resize", resize);
       document.removeEventListener("fullscreenchange", resize);
       container.removeChild(renderer.domElement);
       container.removeChild(cssRenderer.domElement);
       renderer.dispose();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  /* ===========================================================
-     POPULATE TILES AFTER DOM BUILT
-=========================================================== */
-  useEffect(() => {
-    if (!wrapperRefs.current.length) return;
-
-    if (!lockedEntriesRef.current) {
-      // fallback — still includes the repeat-to-16 patch
-      const norm = normalizeEntries(entries);
-      const list = [...norm];
-
-      while (list.length < 16 && norm.length > 0) {
-        const r = norm[Math.floor(Math.random() * norm.length)];
-        list.push(r);
-      }
-
-      lockedEntriesRef.current = list.slice(0, 16);
-    }
-
-    wrapperRefs.current.forEach((wrap, i) => {
-      const entry = lockedEntriesRef.current![i];
-      const img = wrap.querySelector(".imgHolder") as HTMLElement;
-      const name = wrap.querySelector(".nameHolder") as HTMLElement;
-
-      if (!entry) {
-        img.style.background = "rgba(0,0,0,0.25)";
-        img.innerText = "IMG";
-        name.innerText = "";
-        return;
-      }
-
-      if (entry.photo_url) {
-        img.style.background = `url(${entry.photo_url}) center/cover no-repeat`;
-        img.innerText = "";
-      } else {
-        img.style.background = "rgba(0,0,0,0.25)";
-        img.innerText = "IMG";
-      }
-
-      const ln = entry.last_name?.charAt(0)?.toUpperCase() || "";
-      name.innerText = entry.first_name
-        ? `${entry.first_name} ${ln}.`
-        : "";
-    });
-  }, [entries]);
 
   /* ===========================================================
      BULBS
@@ -565,13 +601,7 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
 =========================================================== */
 
   return (
-    <div
-      style={{
-        width: "100%",
-        height: "100vh",
-        position: "relative",
-      }}
-    >
+    <div style={{ width: "100%", height: "100vh", position: "relative" }}>
       <style>
         {`
           @keyframes twinkle {
@@ -637,10 +667,7 @@ export default function ActivePrizeWheel3D({ wheel, entries }) {
           overflow: "hidden",
         }}
       >
-        <div
-          ref={mountRef}
-          style={{ width: "100%", height: "100%" }}
-        />
+        <div ref={mountRef} style={{ width: "100%", height: "100%" }} />
       </div>
 
       <div

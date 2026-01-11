@@ -102,6 +102,23 @@ async function fetchHostAndBgFromStandardTable(
   }
 }
 
+/* -------------------------------------------------
+   ✅ Accurate age calculation
+------------------------------------------------- */
+function calculateAgeFromDob(dobStr: string): number | null {
+  if (!dobStr) return null;
+  const dob = new Date(dobStr);
+  if (Number.isNaN(dob.getTime())) return null;
+
+  const today = new Date();
+  let age = today.getFullYear() - dob.getFullYear();
+
+  const m = today.getMonth() - dob.getMonth();
+  if (m < 0 || (m === 0 && today.getDate() < dob.getDate())) age--;
+
+  return age;
+}
+
 export default function GuestSignupPage() {
   const router = useRouter();
   const params = useSearchParams();
@@ -156,7 +173,7 @@ export default function GuestSignupPage() {
     city: "",
     state: "",
     zip: "",
-    date_of_birth: "",
+    date_of_birth: "", // ✅ birthday stored here
   });
 
   const [agree, setAgree] = useState(false);
@@ -416,14 +433,13 @@ export default function GuestSignupPage() {
         triviaId ? "trivia" :
         "";
 
+      // ✅ Ensure birthday is stored in `date_of_birth` and age is computed accurately
+      const dob = form.date_of_birth ? form.date_of_birth : null;
+
       const payload = {
         ...form,
-        age: form.date_of_birth
-          ? Math.floor(
-              (Date.now() - new Date(form.date_of_birth).getTime()) /
-                (1000 * 60 * 60 * 24 * 365.25)
-            )
-          : null,
+        date_of_birth: dob, // ✅ this is the birthday column in your schema
+        age: dob ? calculateAgeFromDob(dob) : null,
       };
 
       const hostIdForSync = hostIdFromContext || hostSettings?.id || null;
