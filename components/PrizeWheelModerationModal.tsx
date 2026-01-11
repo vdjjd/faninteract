@@ -40,6 +40,7 @@ export default function PrizeWheelModerationModal({
     null
   );
   const [selectedPhoto, setSelectedPhoto] = useState<string | null>(null);
+  const [bulkApproving, setBulkApproving] = useState(false);
 
   /* Updated realtime hook */
   const rt = useRealtimeChannel();
@@ -54,13 +55,15 @@ export default function PrizeWheelModerationModal({
   /* Load Entries */
   /* --------------------------------------------------------- */
   async function loadAll() {
+    setLoading(true);
+
     const { data, error } = await supabase
       .from('wheel_entries')
       .select('*, guest_profiles(*)')
       .eq('wheel_id', wheelId)
       .order('created_at', { ascending: false });
 
-    if (!error && data) setEntries(data);
+    if (!error && data) setEntries(data as any);
     setLoading(false);
   }
 
@@ -68,10 +71,15 @@ export default function PrizeWheelModerationModal({
   /* Approve / Reject / Delete Actions WITH FIXED BROADCASTING */
   /* --------------------------------------------------------- */
   async function handleApprove(id: string) {
-    await supabase
+    const { error } = await supabase
       .from('wheel_entries')
       .update({ status: 'approved' })
       .eq('id', id);
+
+    if (error) {
+      showToast('❌ Approve failed', '#ff4444');
+      return;
+    }
 
     setEntries((e) =>
       e.map((x) => (x.id === id ? { ...x, status: 'approved' } : x))
@@ -87,10 +95,15 @@ export default function PrizeWheelModerationModal({
   }
 
   async function handleReject(id: string) {
-    await supabase
+    const { error } = await supabase
       .from('wheel_entries')
       .update({ status: 'rejected' })
       .eq('id', id);
+
+    if (error) {
+      showToast('❌ Reject failed', '#ff4444');
+      return;
+    }
 
     setEntries((e) =>
       e.map((x) => (x.id === id ? { ...x, status: 'rejected' } : x))
@@ -106,7 +119,12 @@ export default function PrizeWheelModerationModal({
   }
 
   async function handleDelete(id: string) {
-    await supabase.from('wheel_entries').delete().eq('id', id);
+    const { error } = await supabase.from('wheel_entries').delete().eq('id', id);
+
+    if (error) {
+      showToast('❌ Delete failed', '#ff4444');
+      return;
+    }
 
     setEntries((e) => e.filter((x) => x.id !== id));
 
@@ -116,6 +134,49 @@ export default function PrizeWheelModerationModal({
     });
 
     showToast('🗑 Deleted', '#bbb');
+  }
+
+  /* --------------------------------------------------------- */
+  /* ✅ APPROVE ALL (PENDING) */
+  /* --------------------------------------------------------- */
+  async function handleApproveAll() {
+    if (bulkApproving) return;
+
+    const pendingNow = entries.filter((x) => x.status === 'pending');
+    if (pendingNow.length === 0) return;
+
+    setBulkApproving(true);
+
+    const ids = pendingNow.map((p) => p.id);
+
+    // bulk update only these ids, scoped to this wheel
+    const { error } = await supabase
+      .from('wheel_entries')
+      .update({ status: 'approved' })
+      .eq('wheel_id', wheelId)
+      .in('id', ids);
+
+    if (error) {
+      showToast('❌ Approve All failed', '#ff4444');
+      setBulkApproving(false);
+      return;
+    }
+
+    // update local state instantly
+    const idSet = new Set(ids);
+    setEntries((e) =>
+      e.map((x) => (idSet.has(x.id) ? { ...x, status: 'approved' } : x))
+    );
+
+    // optional: single broadcast for other listeners (postgres_changes may already cover it)
+    rt?.broadcast('wheel_entries_bulk_updated', {
+      wheelId,
+      ids,
+      status: 'approved',
+    });
+
+    showToast(`✅ Approved ${ids.length}`, '#00ff88');
+    setBulkApproving(false);
   }
 
   /* --------------------------------------------------------- */
@@ -141,16 +202,12 @@ export default function PrizeWheelModerationModal({
 
           if (payload.eventType === 'UPDATE') {
             setEntries((e) =>
-              e.map((x) =>
-                x.id === payload.new.id ? (payload.new as any) : x
-              )
+              e.map((x) => (x.id === (payload.new as any).id ? (payload.new as any) : x))
             );
           }
 
           if (payload.eventType === 'DELETE') {
-            setEntries((e) =>
-              e.filter((x) => x.id !== payload.old.id)
-            );
+            setEntries((e) => e.filter((x) => x.id !== (payload.old as any).id));
           }
         }
       )
@@ -189,7 +246,14 @@ export default function PrizeWheelModerationModal({
         {/* Close */}
         <button
           onClick={onClose}
-          className={cn('absolute', 'top-3', 'right-3', 'text-white/70', 'hover:text-white', 'text-xl')}
+          className={cn(
+            'absolute',
+            'top-3',
+            'right-3',
+            'text-white/70',
+            'hover:text-white',
+            'text-xl'
+          )}
         >
           ✕
         </button>
@@ -199,11 +263,23 @@ export default function PrizeWheelModerationModal({
           Prize Wheel Moderation
         </h1>
 
-        <Stats
-          pending={pending.length}
-          approved={approved.length}
-          rejected={rejected.length}
-        />
+        <Stats pending={pending.length} approved={approved.length} rejected={rejected.length} />
+
+        {/* ✅ Approve All */}
+        <div className={cn('flex', 'justify-center', 'mb-4')}>
+          <button
+            onClick={handleApproveAll}
+            disabled={bulkApproving || pending.length === 0}
+            className={cn(
+              'px-4 py-2 rounded-lg font-semibold text-sm transition',
+              pending.length === 0 || bulkApproving
+                ? 'bg-white/10 text-white/40 cursor-not-allowed'
+                : 'bg-green-600 text-white hover:bg-green-500'
+            )}
+          >
+            {bulkApproving ? 'Approving…' : `Approve All (${pending.length})`}
+          </button>
+        </div>
 
         {loading ? (
           <p className="text-center">Loading…</p>
@@ -275,7 +351,15 @@ export default function PrizeWheelModerationModal({
 /* --------------------------------------------------------- */
 /* Stats Strip */
 /* --------------------------------------------------------- */
-function Stats({ pending, approved, rejected }) {
+function Stats({
+  pending,
+  approved,
+  rejected,
+}: {
+  pending: number;
+  approved: number;
+  rejected: number;
+}) {
   return (
     <div className={cn('flex', 'justify-center', 'gap-8', 'text-sm', 'mb-4', 'opacity-90')}>
       <span>🕓 {pending} Pending</span>
@@ -322,11 +406,26 @@ function Section({
       {entries.length === 0 ? (
         <p className={cn('text-gray-400', 'mb-4')}>None</p>
       ) : (
-        <div className={cn('grid', 'gap-2', 'grid-cols-[repeat(auto-fill,minmax(240px,1fr))]', 'mb-6')}>
+        <div
+          className={cn(
+            'grid',
+            'gap-2',
+            'grid-cols-[repeat(auto-fill,minmax(240px,1fr))]',
+            'mb-6'
+          )}
+        >
           {entries.map((e) => (
             <div
               key={e.id}
-              className={cn('flex', 'bg-[#0b0f19]', 'rounded-lg', 'overflow-hidden', 'border', 'border-[#333]', 'h-[120px]')}
+              className={cn(
+                'flex',
+                'bg-[#0b0f19]',
+                'rounded-lg',
+                'overflow-hidden',
+                'border',
+                'border-[#333]',
+                'h-[120px]'
+              )}
             >
               {/* Photo */}
               <div
@@ -334,12 +433,19 @@ function Section({
                 onClick={() => e.photo_url && onImageClick(e.photo_url)}
               >
                 {e.photo_url ? (
-                  <img
-                    src={e.photo_url}
-                    className={cn('w-full', 'h-full', 'object-cover')}
-                  />
+                  <img src={e.photo_url} className={cn('w-full', 'h-full', 'object-cover')} />
                 ) : (
-                  <div className={cn('w-full', 'h-full', 'flex', 'items-center', 'justify-center', 'bg-[#222]', 'text-gray-500')}>
+                  <div
+                    className={cn(
+                      'w-full',
+                      'h-full',
+                      'flex',
+                      'items-center',
+                      'justify-center',
+                      'bg-[#222]',
+                      'text-gray-500'
+                    )}
+                  >
                     No Img
                   </div>
                 )}
@@ -365,7 +471,14 @@ function Section({
                     {onApprove && (
                       <button
                         onClick={() => onApprove(e.id)}
-                        className={cn('flex-1', 'bg-green-600', 'text-white', 'rounded', 'px-1', 'py-[2px]')}
+                        className={cn(
+                          'flex-1',
+                          'bg-green-600',
+                          'text-white',
+                          'rounded',
+                          'px-1',
+                          'py-[2px]'
+                        )}
                       >
                         ✅
                       </button>
@@ -374,7 +487,14 @@ function Section({
                     {onReject && (
                       <button
                         onClick={() => onReject(e.id)}
-                        className={cn('flex-1', 'bg-red-600', 'text-white', 'rounded', 'px-1', 'py-[2px]')}
+                        className={cn(
+                          'flex-1',
+                          'bg-red-600',
+                          'text-white',
+                          'rounded',
+                          'px-1',
+                          'py-[2px]'
+                        )}
                       >
                         🚫
                       </button>
@@ -384,7 +504,15 @@ function Section({
                   /* DELETE */
                   <button
                     onClick={() => onDelete?.(e.id)}
-                    className={cn('w-full', 'bg-[#444]', 'text-white', 'rounded', 'px-1', 'py-[2px]', 'text-xs')}
+                    className={cn(
+                      'w-full',
+                      'bg-[#444]',
+                      'text-white',
+                      'rounded',
+                      'px-1',
+                      'py-[2px]',
+                      'text-xs'
+                    )}
                   >
                     🗑
                   </button>
