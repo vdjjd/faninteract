@@ -24,29 +24,16 @@ export default function TriviaCreationModal({
   const [numQuestions, setNumQuestions] = useState(10);
   const [difficulty, setDifficulty] = useState("High School");
 
-  // ✅ moved up in UI
   const [numRounds, setNumRounds] = useState(1);
-
-  // ✅ per-round topics replace old topicPrompt
   const [roundTopics, setRoundTopics] = useState<string[]>([""]);
-
-  // ✅ generating state so we can block re-clicks and show overlay
   const [isGenerating, setIsGenerating] = useState(false);
 
-  // Keep roundTopics length in sync with numRounds
   const ensureRoundTopicsLength = (roundCount: number) => {
     setRoundTopics((prev) => {
       const next = [...prev];
-
-      // grow
       while (next.length < roundCount) next.push("");
-
-      // shrink
       if (next.length > roundCount) next.length = roundCount;
-
-      // ensure at least 1
       if (next.length === 0) next.push("");
-
       return next;
     });
   };
@@ -64,7 +51,6 @@ export default function TriviaCreationModal({
     });
   };
 
-  // ✅ REQUIRED FIELD VALIDATION
   const allRoundTopicsFilled =
     roundTopics.length === numRounds &&
     roundTopics.every((t) => t.trim().length > 0);
@@ -86,39 +72,29 @@ export default function TriviaCreationModal({
       await onGenerateTrivia({
         publicName: publicName.trim(),
         privateName: privateName.trim(),
-
-        // ✅ backend still expects topicPrompt; use Round 1 topic
         topicPrompt: trimmedRoundTopics[0] || "",
-
         numQuestions,
         difficulty,
         numRounds,
-
-        // ✅ per-round topics
         sameTopicForAllRounds: false,
         roundTopics: trimmedRoundTopics,
-
         hostId,
       });
 
-      // Optional safety if parent ever stops closing automatically:
+      // If you want it to close on success, uncomment:
       // await refreshTrivia();
       // onClose();
     } catch (err) {
       console.error("❌ Error generating trivia:", err);
     } finally {
-      // ✅ IMPORTANT: never get stuck in "AI is thinking…" overlay
       setIsGenerating(false);
     }
   };
 
-  // ✅ reset state whenever modal is opened fresh
   useEffect(() => {
     if (!isOpen) return;
 
     setIsGenerating(false);
-
-    // Optional: reset form on open (comment out if you prefer persisting draft)
     setPublicName("");
     setPrivateName("");
     setNumQuestions(10);
@@ -127,7 +103,6 @@ export default function TriviaCreationModal({
     setRoundTopics([""]);
   }, [isOpen]);
 
-  // Keep topics length consistent if numRounds changes externally for any reason
   useEffect(() => {
     ensureRoundTopicsLength(numRounds);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -135,102 +110,85 @@ export default function TriviaCreationModal({
 
   if (!isOpen) return null;
 
+  const inputClass = cn(
+    "w-full p-2 mt-1 rounded-md border",
+    "bg-neutral-800 text-white",
+    "border-white/15",
+    "placeholder:text-white/30",
+    "focus:outline-none focus:ring-2 focus:ring-blue-500/60 focus:border-blue-500/60",
+    isGenerating && "opacity-60 cursor-not-allowed"
+  );
+
+  const selectClass = cn(
+    "w-full p-2 mt-1 rounded-md border",
+    "bg-neutral-800 text-white",
+    "border-white/15",
+    "focus:outline-none focus:ring-2 focus:ring-blue-500/60 focus:border-blue-500/60",
+    isGenerating && "opacity-60 cursor-not-allowed"
+  );
+
   return (
     <div
       className={cn(
         "fixed inset-0 z-[9999]",
         "flex items-center justify-center",
-        "bg-black/60"
+        "bg-black/75"
       )}
     >
       <div
         className={cn(
-          "bg-white dark:bg-neutral-900",
           "w-full max-w-xl",
           "rounded-xl shadow-2xl",
           "flex flex-col",
           "max-h-[90vh]",
-          "relative"
+          "relative",
+          // ✅ ALWAYS DARK so it never goes white
+          "bg-neutral-900 text-white",
+          "border border-white/10"
         )}
       >
         {/* HEADER */}
-        <div
-          className={cn(
-            "flex justify-between items-center",
-            "p-6 border-b border-black/10 dark:border-white/10"
-          )}
-        >
-          <h2 className={cn("text-2xl", "font-bold")}>🧠 Create Trivia Game</h2>
+        <div className={cn("flex justify-between items-center", "p-6 border-b border-white/10")}>
+          <h2 className={cn("text-2xl font-bold")}>🧠 Create Trivia Game</h2>
           <button
             onClick={onClose}
-            className={cn(
-              "text-gray-500",
-              "hover:text-gray-800",
-              "dark:hover:text-white"
-            )}
+            className={cn("text-white/60 hover:text-white")}
             disabled={isGenerating}
+            aria-label="Close"
           >
             ✖
           </button>
         </div>
 
         {/* BODY */}
-        <div className={cn("p-6", "space-y-6", "overflow-y-auto")}>
+        <div className={cn("p-6 space-y-6 overflow-y-auto")}>
           <div>
-            <label className="font-semibold">Public Trivia Name *</label>
+            <label className="font-semibold text-white/90">Public Trivia Name *</label>
             <input
               value={publicName}
               onChange={(e) => setPublicName(e.target.value)}
               disabled={isGenerating}
-              className={cn(
-                "w-full",
-                "p-2",
-                "mt-1",
-                "border",
-                "rounded-md",
-                "bg-white",
-                "dark:bg-neutral-800",
-                isGenerating && "opacity-60 cursor-not-allowed"
-              )}
+              className={inputClass}
             />
           </div>
 
           <div>
-            <label className="font-semibold">Private Trivia Name *</label>
+            <label className="font-semibold text-white/90">Private Trivia Name *</label>
             <input
               value={privateName}
               onChange={(e) => setPrivateName(e.target.value)}
               disabled={isGenerating}
-              className={cn(
-                "w-full",
-                "p-2",
-                "mt-1",
-                "border",
-                "rounded-md",
-                "bg-white",
-                "dark:bg-neutral-800",
-                isGenerating && "opacity-60 cursor-not-allowed"
-              )}
+              className={inputClass}
             />
           </div>
 
-          {/* ✅ MOVED HERE: Number of Rounds (directly under Private Name) */}
           <div>
-            <label className="font-semibold">Number of Rounds</label>
+            <label className="font-semibold text-white/90">Number of Rounds</label>
             <select
               value={numRounds}
               onChange={(e) => handleRoundCountChange(Number(e.target.value))}
               disabled={isGenerating}
-              className={cn(
-                "w-full",
-                "p-2",
-                "mt-1",
-                "border",
-                "rounded-md",
-                "bg-white",
-                "dark:bg-neutral-800",
-                isGenerating && "opacity-60 cursor-not-allowed"
-              )}
+              className={selectClass}
             >
               {Array.from({ length: 10 }, (_, i) => i + 1).map((r) => (
                 <option key={r} value={r}>
@@ -238,33 +196,23 @@ export default function TriviaCreationModal({
                 </option>
               ))}
             </select>
-            <p className={cn("text-xs", "opacity-70", "mt-1")}>
+            <p className={cn("text-xs text-white/70 mt-1")}>
               You’ll set a main topic for each round below.
             </p>
           </div>
 
-          {/* ✅ Per-round topic fields */}
           <div className={cn("space-y-3")}>
             {Array.from({ length: numRounds }, (_, i) => {
               const label = `Main topic trivia round ${i + 1}`;
               return (
                 <div key={i}>
-                  <label className="font-semibold">{label} *</label>
+                  <label className="font-semibold text-white/90">{label} *</label>
                   <input
                     value={roundTopics[i] ?? ""}
                     onChange={(e) => handleRoundTopicChange(i, e.target.value)}
                     disabled={isGenerating}
                     placeholder="e.g., 90's Country Music, NFL History, Space Facts..."
-                    className={cn(
-                      "w-full",
-                      "p-2",
-                      "mt-1",
-                      "border",
-                      "rounded-md",
-                      "bg-white",
-                      "dark:bg-neutral-800",
-                      isGenerating && "opacity-60 cursor-not-allowed"
-                    )}
+                    className={inputClass}
                   />
                 </div>
               );
@@ -272,27 +220,18 @@ export default function TriviaCreationModal({
           </div>
 
           {!allRoundTopicsFilled && (
-            <p className={cn("text-xs", "text-red-600")}>
+            <p className={cn("text-xs text-red-400")}>
               Please fill in a topic for every round.
             </p>
           )}
 
           <div>
-            <label className="font-semibold">Number of Questions</label>
+            <label className="font-semibold text-white/90">Number of Questions</label>
             <select
               value={numQuestions}
               onChange={(e) => setNumQuestions(Number(e.target.value))}
               disabled={isGenerating}
-              className={cn(
-                "w-full",
-                "p-2",
-                "mt-1",
-                "border",
-                "rounded-md",
-                "bg-white",
-                "dark:bg-neutral-800",
-                isGenerating && "opacity-60 cursor-not-allowed"
-              )}
+              className={selectClass}
             >
               {[5, 10, 15, 20, 25].map((n) => (
                 <option key={n} value={n}>
@@ -303,29 +242,18 @@ export default function TriviaCreationModal({
           </div>
 
           <div>
-            <label className="font-semibold">Difficulty Level</label>
+            <label className="font-semibold text-white/90">Difficulty Level</label>
             <select
               value={difficulty}
               onChange={(e) => setDifficulty(e.target.value)}
               disabled={isGenerating}
-              className={cn(
-                "w-full",
-                "p-2",
-                "mt-1",
-                "border",
-                "rounded-md",
-                "bg-white",
-                "dark:bg-neutral-800",
-                isGenerating && "opacity-60 cursor-not-allowed"
-              )}
+              className={selectClass}
             >
-              {["Elementary", "Junior High", "High School", "College", "PhD"].map(
-                (d) => (
-                  <option key={d} value={d}>
-                    {d}
-                  </option>
-                )
-              )}
+              {["Elementary", "Junior High", "High School", "College", "PhD"].map((d) => (
+                <option key={d} value={d}>
+                  {d}
+                </option>
+              ))}
             </select>
           </div>
 
@@ -336,47 +264,34 @@ export default function TriviaCreationModal({
               "w-full py-3 font-semibold rounded-lg transition-all",
               isValid && !isGenerating
                 ? "bg-blue-600 hover:bg-blue-700 text-white"
-                : "bg-gray-400 text-white opacity-60 cursor-not-allowed"
+                : "bg-white/10 text-white/60 cursor-not-allowed"
             )}
           >
             {isGenerating ? "🤖 AI is thinking…" : "🚀 Generate Trivia"}
           </button>
         </div>
 
-        {/* ✅ Blocking overlay while AI is generating */}
+        {/* Blocking overlay while AI is generating */}
         {isGenerating && (
           <div
             className={cn(
               "absolute inset-0 rounded-xl",
-              "bg-black/40",
+              "bg-black/55",
               "flex flex-col items-center justify-center",
               "backdrop-blur-sm"
             )}
           >
             <div
               className={cn(
-                "h-10",
-                "w-10",
-                "rounded-full",
-                "border-4",
-                "border-blue-500",
-                "border-t-transparent",
-                "animate-spin",
-                "mb-3"
+                "h-10 w-10 rounded-full border-4",
+                "border-blue-500 border-t-transparent",
+                "animate-spin mb-3"
               )}
             />
-            <p className={cn("text-white", "font-semibold")}>
+            <p className={cn("text-white font-semibold")}>
               AI is generating your trivia…
             </p>
-            <p
-              className={cn(
-                "text-white/80",
-                "text-xs",
-                "mt-1",
-                "px-4",
-                "text-center"
-              )}
-            >
+            <p className={cn("text-white/80 text-xs mt-1 px-4 text-center")}>
               This may take a few seconds. Please don&apos;t click Generate again
               or close this window.
             </p>
