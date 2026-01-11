@@ -85,6 +85,15 @@ export default function PrizeWheelGrid({
   }
 
   /* ------------------------------------------------------------
+     ✅ SPIN (required by PrizeWheelCardProps)
+     NOTE: This currently broadcasts on "prizewheel-realtime".
+     If your wall listens on `prizewheel-${wheelId}`, we will change this next.
+  ------------------------------------------------------------ */
+  async function handleSpin(wheelId: string) {
+    await broadcast("spin_trigger", { id: wheelId });
+  }
+
+  /* ------------------------------------------------------------
      ✅ PLAY
   ------------------------------------------------------------ */
   async function handlePlay(wheelId: string) {
@@ -194,9 +203,15 @@ export default function PrizeWheelGrid({
     <div className={cn("mt-10 w-full max-w-6xl")}>
       <h2 className={cn("text-xl font-semibold mb-3")}>🎡 Prize Wheels</h2>
 
-      <div className={cn("grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5")}>
+      <div
+        className={cn(
+          "grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5"
+        )}
+      >
         {localWheels.length === 0 && (
-          <p className={cn("text-gray-400 italic")}>No Prize Wheels created yet.</p>
+          <p className={cn("text-gray-400 italic")}>
+            No Prize Wheels created yet.
+          </p>
         )}
 
         {localWheels.map((wheel) => (
@@ -205,6 +220,7 @@ export default function PrizeWheelGrid({
             wheel={wheel}
             onOpenOptions={onOpenOptions}
             onDelete={handleDelete}
+            onSpin={handleSpin} // ✅ FIX: REQUIRED PROP
             onOpenModeration={handleOpenModeration}
             onPlay={handlePlay}
             onStop={handleStop}

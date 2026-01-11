@@ -6,33 +6,28 @@ import { cn } from "@/lib/utils";
 import * as Tabs from "@radix-ui/react-tabs";
 import PrizeWheelSettingsModal from "@/components/PrizeWheelSettingsModal";
 
-/* ------------------------------------------------------------
-   GLOBAL WINDOW TYPES
------------------------------------------------------------- */
 declare global {
   interface Window {
     _activePrizeWheel?: any;
+    _pw?: {
+      spinAuto?: (winnerIndex: number, winner: any) => void;
+      spinGo?: () => void;
+      spinStop?: (winnerIndex: number, winner: any) => void;
+    };
   }
 }
-
-/* ------------------------------------------------------------
-   TYPES
------------------------------------------------------------- */
 
 interface PrizeWheelCardProps {
   wheel: any;
   onOpenOptions: (wheel: any) => void;
   onDelete: (id: string) => void;
+  onSpin: (id: string) => Promise<void>; // legacy, not used here
   onOpenModeration: (wheel: any) => void;
   onPlay: (id: string) => Promise<void>;
   onStop: (id: string) => Promise<void>;
 }
 
-/* ------------------------------------------------------------
-   BROADCAST HELPERS (wheel-specific channel)
------------------------------------------------------------- */
-
-async function broadcastWheelEvent(wheelId: string, event: string, payload: any) {
+async function broadcastToWheel(wheelId: string, event: string, payload: any) {
   await supabase.channel(`prizewheel-${wheelId}`).send({
     type: "broadcast",
     event,
@@ -41,42 +36,16 @@ async function broadcastWheelEvent(wheelId: string, event: string, payload: any)
 }
 
 async function broadcastRemoteSelection(wheelId: string, guestId: string) {
-  await supabase.channel(`prizewheel-${wheelId}`).send({
-    type: "broadcast",
-    event: "remote_spinner_selected",
-    payload: { selected_guest_id: guestId },
+  await broadcastToWheel(wheelId, "remote_spinner_selected", {
+    selected_guest_id: guestId,
   });
 }
 
 async function broadcastReload(wheelId: string) {
-  await supabase.channel(`prizewheel-${wheelId}`).send({
-    type: "broadcast",
-    event: "reload_trigger",
-    payload: { id: wheelId },
-  });
+  await broadcastToWheel(wheelId, "reload_trigger", { id: wheelId });
 }
 
-/* ------------------------------------------------------------
-   API CALL
------------------------------------------------------------- */
-async function spinApi(body: any) {
-  const res = await fetch("/api/prizewheel/spin", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-
-  if (!res.ok) {
-    const txt = await res.text().catch(() => "");
-    throw new Error(txt || `Spin API failed (${res.status})`);
-  }
-
-  return res.json();
-}
-
-/* ------------------------------------------------------------
-   COMPONENT
------------------------------------------------------------- */
+type Action = "go" | "stop" | "auto";
 
 export default function PrizeWheelCard({
   wheel,
@@ -110,44 +79,31 @@ export default function PrizeWheelCard({
     wheel.selected_remote_spinner ?? null
   );
 
-  // NEW: authoritative session state
-  const [spinSessionId, setSpinSessionId] = useState<string | null>(null);
-  const [isGoSpinning, setIsGoSpinning] = useState(false);
-
-  // Tabs
   const [activeTab, setActiveTab] = useState<"menu" | "settings">("menu");
 
-  // Thank You Popup state (db-backed)
   const [thankYouPopupEnabled, setThankYouPopupEnabled] = useState<boolean>(
     !!wheel.thank_you_popup_enabled
   );
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);
 
-  // Desktop vs mobile: disable Launch on phones
   const [isMobile, setIsMobile] = useState(false);
+
+  // ✅ local session holder (per card)
+  const [spinSessionId, setSpinSessionId] = useState<string | null>(null);
 
   useEffect(() => {
     const check = () => {
-      if (typeof window !== "undefined") {
-        setIsMobile(window.innerWidth < 768);
-      }
+      if (typeof window !== "undefined") setIsMobile(window.innerWidth < 768);
     };
-
     check();
     window.addEventListener("resize", check);
     return () => window.removeEventListener("resize", check);
   }, []);
 
-  /* ------------------------------------------------------------
-     Sync thank-you popup state when wheel prop changes
-  ------------------------------------------------------------ */
   useEffect(() => {
     setThankYouPopupEnabled(!!wheel.thank_you_popup_enabled);
   }, [wheel.id, wheel.thank_you_popup_enabled]);
 
-  /* ------------------------------------------------------------
-     Load Entry Counts
-  ------------------------------------------------------------ */
   async function loadCounts() {
     const { data } = await supabase
       .from("wheel_entries")
@@ -164,9 +120,6 @@ export default function PrizeWheelCard({
     setPendingCount(data.filter((e) => e.status === "pending").length);
   }
 
-  /* ------------------------------------------------------------
-     Realtime: wheel_entries watcher
-  ------------------------------------------------------------ */
   useEffect(() => {
     if (!wheel.id) return;
 
@@ -191,15 +144,13 @@ export default function PrizeWheelCard({
     };
   }, [wheel.id]);
 
-  /* ------------------------------------------------------------
-     Realtime: HOST SPIN listening (just for UI pulse)
------------------------------------------------------------- */
+  // pulse when spin auto comes in
   useEffect(() => {
     if (!wheel.id) return;
 
     const ch = supabase
       .channel(`prizewheel-${wheel.id}`)
-      .on("broadcast", { event: "spin_auto_start" }, () => {
+      .on("broadcast", { event: "spin_auto" }, () => {
         setPendingRemote(true);
         setTimeout(() => setPendingRemote(false), 3000);
       })
@@ -210,27 +161,6 @@ export default function PrizeWheelCard({
     };
   }, [wheel.id]);
 
-  /* ------------------------------------------------------------
-     Realtime: PHONE remote spin (treat as AUTO)
------------------------------------------------------------- */
-  useEffect(() => {
-    if (!wheel.id) return;
-
-    const ch = supabase
-      .channel(`prizewheel-${wheel.id}`)
-      .on("broadcast", { event: "remote_spin_pressed" }, async () => {
-        await handleSpinAuto();
-      })
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(ch);
-    };
-  }, [wheel.id]);
-
-  /* ------------------------------------------------------------
-     Remote Toggle
------------------------------------------------------------- */
   async function handleRemoteToggle() {
     const newEnabled = !toggleRemote;
     setToggleRemote(newEnabled);
@@ -246,9 +176,6 @@ export default function PrizeWheelCard({
     setSelectedSpinner(null);
   }
 
-  /* ------------------------------------------------------------
-     Thank You Popup Toggle
-  ------------------------------------------------------------ */
   async function handleThankYouPopupToggle() {
     const newEnabled = !thankYouPopupEnabled;
     setThankYouPopupEnabled(newEnabled);
@@ -260,14 +187,9 @@ export default function PrizeWheelCard({
       })
       .eq("id", wheel.id);
 
-    if (newEnabled) {
-      setSettingsModalOpen(true);
-    }
+    if (newEnabled) setSettingsModalOpen(true);
   }
 
-  /* ------------------------------------------------------------
-     Pick Random Spinner
-  ------------------------------------------------------------ */
   async function pickRandomSpinner() {
     const { data } = await supabase
       .from("wheel_entries")
@@ -293,25 +215,17 @@ export default function PrizeWheelCard({
     await broadcastRemoteSelection(wheel.id, guestId);
   }
 
-  /* ------------------------------------------------------------
-     Launch Wheel Popup
-  ------------------------------------------------------------ */
   function handleLaunch() {
     const url = `${window.location.origin}/prizewheel/${wheel.id}`;
-
     const popup = window.open(
       url,
       "_blank",
       "width=1280,height=800,resizable=yes,scrollbars=yes"
     );
-
     popup?.focus();
     window._activePrizeWheel = popup;
   }
 
-  /* ------------------------------------------------------------
-     PLAY
-  ------------------------------------------------------------ */
   async function handlePlay() {
     await onPlay(wheel.id);
 
@@ -329,9 +243,6 @@ export default function PrizeWheelCard({
       .eq("id", wheel.id);
   }
 
-  /* ------------------------------------------------------------
-     STOP (wall inactive)
-  ------------------------------------------------------------ */
   async function handleStopWall() {
     await onStop(wheel.id);
 
@@ -348,98 +259,93 @@ export default function PrizeWheelCard({
 
     setToggleRemote(false);
     setSelectedSpinner(null);
-
-    // reset spin session UI
-    setSpinSessionId(null);
-    setIsGoSpinning(false);
   }
 
-  /* ------------------------------------------------------------
-     SPIN AUTO (authoritative: API picks winner now)
-  ------------------------------------------------------------ */
+  async function callSpinApi(action: Action, extra?: any) {
+    const res = await fetch("/api/prizewheel/spin", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ wheelId: wheel.id, action, ...extra }),
+    });
+
+    if (!res.ok) {
+      const txt = await res.text().catch(() => "");
+      throw new Error(txt || "Spin API failed");
+    }
+
+    return res.json();
+  }
+
   async function handleSpinAuto() {
+    const data = await callSpinApi("auto");
+    const winnerIndex = Number(data?.winner_index ?? 0);
+    const winner = data?.winner ?? null;
+
+    setSpinSessionId(data?.spinSessionId ?? null);
+
     try {
-      const result = await spinApi({
-        wheelId: wheel.id,
-        action: "auto",
-      });
+      const popup = window._activePrizeWheel;
+      popup?._pw?.spinAuto?.(winnerIndex, winner);
+    } catch {}
 
-      setSpinSessionId(result.spinSessionId);
-      setIsGoSpinning(false);
-
-      // broadcast winner to wall
-      await broadcastWheelEvent(wheel.id, "spin_auto_start", {
-        wheelId: wheel.id,
-        spinSessionId: result.spinSessionId,
-        winner_index: result.winner_index,
-        winner_entry_id: result.winner_entry_id,
-        winner_guest_profile_id: result.winner_guest_profile_id,
-        winner: result.winner,
-      });
-
-      setPendingRemote(true);
-      setTimeout(() => setPendingRemote(false), 2500);
-    } catch (e: any) {
-      alert(e?.message || "Spin AUTO failed");
-    }
+    await broadcastToWheel(wheel.id, "spin_auto", {
+      wheelId: wheel.id,
+      spinSessionId: data?.spinSessionId ?? null,
+      winner_index: winnerIndex,
+      winner,
+    });
   }
 
-  /* ------------------------------------------------------------
-     SPIN GO (authoritative: creates session, spins forever)
-  ------------------------------------------------------------ */
   async function handleSpinGo() {
+    const data = await callSpinApi("go");
+    setSpinSessionId(data?.spinSessionId ?? null);
+
     try {
-      const result = await spinApi({
-        wheelId: wheel.id,
-        action: "go",
-      });
+      const popup = window._activePrizeWheel;
+      popup?._pw?.spinGo?.();
+    } catch {}
 
-      setSpinSessionId(result.spinSessionId);
-      setIsGoSpinning(true);
-
-      await broadcastWheelEvent(wheel.id, "spin_go_start", {
-        wheelId: wheel.id,
-        spinSessionId: result.spinSessionId,
-      });
-    } catch (e: any) {
-      alert(e?.message || "Spin GO failed");
-    }
+    await broadcastToWheel(wheel.id, "spin_go", {
+      wheelId: wheel.id,
+      spinSessionId: data?.spinSessionId ?? null,
+    });
   }
 
-  /* ------------------------------------------------------------
-     SPIN STOP (authoritative: API picks winner ONCE for session)
-  ------------------------------------------------------------ */
   async function handleSpinStop() {
-    if (!spinSessionId) {
-      alert("No active GO session.");
+    let session = spinSessionId;
+
+    // fallback: if state lost, pull from DB
+    if (!session) {
+      const { data: w } = await supabase
+        .from("prize_wheels")
+        .select("spin_session_id")
+        .eq("id", wheel.id)
+        .maybeSingle();
+      session = (w as any)?.spin_session_id ?? null;
+    }
+
+    if (!session) {
+      alert("No active Spin GO session yet. Press Spin GO first.");
       return;
     }
 
+    const data = await callSpinApi("stop", { spinSessionId: session });
+    const winnerIndex = Number(data?.winner_index ?? 0);
+    const winner = data?.winner ?? null;
+
     try {
-      const result = await spinApi({
-        wheelId: wheel.id,
-        action: "stop",
-        spinSessionId,
-      });
+      const popup = window._activePrizeWheel;
+      popup?._pw?.spinStop?.(winnerIndex, winner);
+    } catch {}
 
-      setIsGoSpinning(false);
-
-      await broadcastWheelEvent(wheel.id, "spin_stop", {
-        wheelId: wheel.id,
-        spinSessionId,
-        winner_index: result.winner_index,
-        winner_entry_id: result.winner_entry_id,
-        winner_guest_profile_id: result.winner_guest_profile_id,
-        winner: result.winner,
-      });
-    } catch (e: any) {
-      alert(e?.message || "Spin STOP failed");
-    }
+    await broadcastToWheel(wheel.id, "spin_stop", {
+      wheelId: wheel.id,
+      spinSessionId: session,
+      winner_index: winnerIndex,
+      winner,
+    });
   }
 
-  /* ------------------------------------------------------------
-     Status Badge
-  ------------------------------------------------------------ */
   function StatusBadge() {
     let text = "INACTIVE";
     let color = "text-orange-400";
@@ -454,10 +360,6 @@ export default function PrizeWheelCard({
 
     return <span className={cn("font-bold tracking-wide", color)}>{text}</span>;
   }
-
-  /* ------------------------------------------------------------
-     RENDER
-  ------------------------------------------------------------ */
 
   const cardBg =
     wheel.background_type === "image"
@@ -485,9 +387,7 @@ export default function PrizeWheelCard({
           value={activeTab}
           onValueChange={(v) => setActiveTab(v as "menu" | "settings")}
         >
-          <Tabs.List
-            className={cn("flex gap-4 mb-3 border-b border-white/10 pb-1 text-sm")}
-          >
+          <Tabs.List className={cn("flex gap-4 mb-3 border-b border-white/10 pb-1 text-sm")}>
             <Tabs.Trigger
               value="menu"
               className={cn("px-2 py-1 font-semibold data-[state=active]:text-blue-400")}
@@ -502,9 +402,7 @@ export default function PrizeWheelCard({
             </Tabs.Trigger>
           </Tabs.List>
 
-          {/* --------------- HOME --------------- */}
           <Tabs.Content value="menu">
-            {/* TITLE + STATUS */}
             <div>
               <h3 className={cn("font-bold text-lg mb-1")}>
                 {wheel.host_title || wheel.title || "Untitled Wheel"}
@@ -514,7 +412,6 @@ export default function PrizeWheelCard({
                 <strong>Status:</strong> <StatusBadge />
               </p>
 
-              {/* Pending Button */}
               <div className={cn("flex justify-center mb-3")}>
                 <button
                   onClick={() => onOpenModeration(wheel)}
@@ -529,7 +426,9 @@ export default function PrizeWheelCard({
                   <span
                     className={cn(
                       "px-1.5 py-0.5 rounded-md text-xs font-bold",
-                      pendingCount > 0 ? "bg-black/70 text-white" : "bg-white/20 text-gray-300"
+                      pendingCount > 0
+                        ? "bg-black/70 text-white"
+                        : "bg-white/20 text-gray-300"
                     )}
                   >
                     {pendingCount}
@@ -540,23 +439,9 @@ export default function PrizeWheelCard({
               <p className={cn("text-sm mb-3")}>
                 🎟 <strong>{entryCount}</strong> Approved Entrants
               </p>
-
-              {/* GO session badge */}
-              {spinSessionId && (
-                <p className={cn("text-[11px] opacity-80")}>
-                  Spin Session: <span className="font-mono">{spinSessionId.slice(0, 8)}…</span>{" "}
-                  {isGoSpinning ? <span className="text-sky-300">[GO]</span> : null}
-                </p>
-              )}
             </div>
 
-            {/* CONTROLS */}
-            <div
-              className={cn(
-                "flex flex-wrap justify-center gap-2 mt-auto pt-2 border-t border-white/10"
-              )}
-            >
-              {/* REMOTE TOGGLE */}
+            <div className={cn("flex flex-wrap justify-center gap-2 mt-auto pt-2 border-t border-white/10")}>
               <div
                 onClick={handleRemoteToggle}
                 className={cn(
@@ -574,7 +459,6 @@ export default function PrizeWheelCard({
                 />
               </div>
 
-              {/* RANDOM PICK */}
               <button
                 disabled={!toggleRemote}
                 onClick={pickRandomSpinner}
@@ -588,7 +472,6 @@ export default function PrizeWheelCard({
                 🎯 Pick Random Spinner
               </button>
 
-              {/* PLAY */}
               <button
                 onClick={handlePlay}
                 className={cn("px-3 py-1 rounded text-sm font-semibold bg-yellow-600 hover:bg-yellow-700 text-black")}
@@ -596,7 +479,6 @@ export default function PrizeWheelCard({
                 ▶ Play
               </button>
 
-              {/* STOP */}
               <button
                 onClick={handleStopWall}
                 className={cn("px-3 py-1 rounded text-sm font-semibold bg-red-600 hover:bg-red-700")}
@@ -604,7 +486,6 @@ export default function PrizeWheelCard({
                 ⏹ Stop
               </button>
 
-              {/* LAUNCH */}
               <button
                 type="button"
                 onClick={isMobile ? undefined : handleLaunch}
@@ -618,7 +499,7 @@ export default function PrizeWheelCard({
                 🚀 Launch
               </button>
 
-              {/* SPIN AUTO */}
+              {/* ✅ Spin Auto */}
               <button
                 onClick={handleSpinAuto}
                 className={cn(
@@ -628,38 +509,25 @@ export default function PrizeWheelCard({
                     : "bg-green-600 hover:bg-green-700 text-white"
                 )}
               >
-                🎰 Spin AUTO
+                🎰 Spin Auto
               </button>
 
-              {/* SPIN GO */}
+              {/* ✅ Spin GO */}
               <button
                 onClick={handleSpinGo}
-                disabled={isGoSpinning}
-                className={cn(
-                  "px-3 py-1 rounded text-sm font-semibold transition",
-                  isGoSpinning
-                    ? "bg-sky-700 text-white/70 cursor-not-allowed"
-                    : "bg-sky-600 hover:bg-sky-700 text-white"
-                )}
+                className={cn("px-3 py-1 rounded text-sm font-semibold bg-sky-600 hover:bg-sky-700 text-white")}
               >
-                🔄 Spin GO
+                🌀 Spin GO
               </button>
 
-              {/* SPIN STOP */}
+              {/* ✅ Spin Stop */}
               <button
                 onClick={handleSpinStop}
-                disabled={!isGoSpinning || !spinSessionId}
-                className={cn(
-                  "px-3 py-1 rounded text-sm font-semibold transition",
-                  !isGoSpinning || !spinSessionId
-                    ? "bg-gray-600 text-white/60 cursor-not-allowed"
-                    : "bg-orange-500 hover:bg-orange-600 text-black"
-                )}
+                className={cn("px-3 py-1 rounded text-sm font-semibold bg-amber-500 hover:bg-amber-600 text-black")}
               >
-                🛑 Spin STOP
+                🛑 Spin Stop
               </button>
 
-              {/* RELOAD WHEEL */}
               <button
                 onClick={async () => {
                   await broadcastReload(wheel.id);
@@ -680,14 +548,11 @@ export default function PrizeWheelCard({
                     window._activePrizeWheel = popup;
                   }
                 }}
-                className={cn(
-                  "px-3 py-1 rounded text-sm font-semibold bg-purple-600 hover:bg-purple-700 text-white"
-                )}
+                className={cn("px-3 py-1 rounded text-sm font-semibold bg-purple-600 hover:bg-purple-700 text-white")}
               >
                 🔄 Reload Wheel
               </button>
 
-              {/* OPTIONS */}
               <button
                 onClick={() => onOpenOptions(wheel)}
                 className={cn("px-3 py-1 rounded text-sm font-semibold bg-indigo-500 hover:bg-indigo-600")}
@@ -695,7 +560,6 @@ export default function PrizeWheelCard({
                 ⚙ Options
               </button>
 
-              {/* DELETE */}
               <button
                 onClick={() => onDelete(wheel.id)}
                 className={cn("px-3 py-1 rounded text-sm font-semibold bg-red-700 hover:bg-red-800")}
@@ -705,7 +569,6 @@ export default function PrizeWheelCard({
             </div>
           </Tabs.Content>
 
-          {/* --------------- SETTINGS --------------- */}
           <Tabs.Content value="settings" className={cn("mt-2", "text-left", "text-sm")}>
             <div className={cn("flex", "items-center", "justify-between", "gap-2")}>
               <span className={cn("text-sm", "font-semibold", "whitespace-nowrap")}>
