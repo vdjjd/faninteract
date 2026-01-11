@@ -91,13 +91,11 @@ const LEADER_UI = {
 };
 
 /* ---------------------------------------------------- */
-/* QUESTION FONT AUTOFIT                                */
+/* ✅ QUESTION FONT AUTOFIT (HARD 3 LINE CAP)           */
 /* ---------------------------------------------------- */
-const QUESTION_FONT_SIZES = [
-  "clamp(2.4rem,3.5vw,4.5rem)",
-  "clamp(2.0rem,2.9vw,3.7rem)",
-  "clamp(1.7rem,2.4vw,3.1rem)",
-];
+const QUESTION_MAX_LINES = 3;
+const QUESTION_BASE_FONT_SIZE = "clamp(2.4rem,3.5vw,4.5rem)";
+const QUESTION_MIN_SCALE = 0.55;
 
 /* ---------------------------------------------------- */
 /* TEMP HOST LOGO STUB                                  */
@@ -456,7 +454,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
   const [revealAnswer, setRevealAnswer] = useState(false);
 
   const questionRef = useRef<HTMLDivElement | null>(null);
-  const [questionFontMode, setQuestionFontMode] = useState<number>(0);
+  const [questionScale, setQuestionScale] = useState<number>(1);
 
   const [topRanks, setTopRanks] = useState<TopRankRow[]>([]);
   const topRanksRef = useRef<TopRankRow[]>([]);
@@ -747,43 +745,56 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
       ? currentQuestionNumber >= totalQuestions
       : false;
 
+  // ✅ reset scale each new question
   useEffect(() => {
-    setQuestionFontMode(0);
+    setQuestionScale(1);
   }, [currentQuestionNumber, trivia?.id]);
 
   /* -------------------------------------------------- */
-  /* Auto-fit question text                             */
+  /* ✅ Auto-fit question text (HARD 3 LINES)            */
   /* -------------------------------------------------- */
   useEffect(() => {
     const el = questionRef.current;
-    if (!el || !question?.question_text || view !== "question") return;
+    if (!el || view !== "question") return;
 
-    const handle = window.setTimeout(() => {
+    let raf = 0;
+
+    const measure = () => {
+      if (!questionRef.current) return;
+
+      // scrollHeight is NOT affected by transform: scale()
       const style = window.getComputedStyle(el);
       const fontSizePx = parseFloat(style.fontSize || "0");
       const lineHeightRaw = parseFloat(style.lineHeight || "0");
+
       const lineHeightPx =
         !Number.isNaN(lineHeightRaw) && lineHeightRaw > 0
           ? lineHeightRaw
-          : fontSizePx * 1.2;
+          : fontSizePx * 1.12; // matches your lineHeight
 
-      const maxHeight = lineHeightPx * 4;
+      const maxHeight = lineHeightPx * QUESTION_MAX_LINES;
       const actual = el.scrollHeight;
 
-      const maxMode = QUESTION_FONT_SIZES.length - 1;
-
-      if (actual > maxHeight + 1 && questionFontMode < maxMode) {
-        setQuestionFontMode(questionFontMode + 1);
-        return;
+      let nextScale = 1;
+      if (actual > maxHeight + 1) {
+        nextScale = Math.max(QUESTION_MIN_SCALE, maxHeight / actual);
       }
 
-      if (actual < maxHeight * 0.85 && questionFontMode > 0) {
-        setQuestionFontMode(questionFontMode - 1);
-      }
-    }, 0);
+      setQuestionScale((prev) =>
+        Math.abs(prev - nextScale) > 0.01 ? nextScale : prev
+      );
+    };
 
-    return () => window.clearTimeout(handle);
-  }, [question?.question_text, view, questionFontMode]);
+    raf = window.requestAnimationFrame(measure);
+
+    const onResize = () => window.requestAnimationFrame(measure);
+    window.addEventListener("resize", onResize);
+
+    return () => {
+      window.cancelAnimationFrame(raf);
+      window.removeEventListener("resize", onResize);
+    };
+  }, [question?.question_text, view]);
 
   /* -------------------------------------------------- */
   /* UI follows wall_phase                              */
@@ -1540,8 +1551,14 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                             wordBreak: "break-word",
                             overflowWrap: "anywhere",
                             textShadow: "0 10px 40px rgba(0,0,0,0.65)",
-                            fontSize: QUESTION_FONT_SIZES[questionFontMode],
+                            fontSize: QUESTION_BASE_FONT_SIZE,
                             lineHeight: 1.12,
+
+                            // ✅ HARD 3 LINE CAP: scales until it fits
+                            display: "inline-block",
+                            transform: `scale(${questionScale})`,
+                            transformOrigin: "center top",
+                            willChange: "transform",
                           }}
                         >
                           {question?.question_text
@@ -1942,7 +1959,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                                   alignItems: "center",
                                   gap: 10,
                                   textAlign: "right",
-                                  minWidth: 0, // allow pill to shrink
+                                  minWidth: 0,
                                 }}
                               >
                                 {showStreakPill && (
@@ -2292,5 +2309,3 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
     </>
   );
 }
-
-

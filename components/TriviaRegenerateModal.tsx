@@ -76,19 +76,21 @@ export default function TriviaRegenerateModal({
     >
       <div
         className={cn(
-          "bg-white dark:bg-neutral-900",
+          // ✅ ALWAYS DARK (no theme toggles)
+          "bg-neutral-900 text-white",
           "w-full max-w-xl",
           "rounded-xl shadow-2xl",
           "flex flex-col",
           "max-h-[90vh]",
-          "relative"
+          "relative",
+          "border border-white/10"
         )}
       >
         {/* HEADER */}
         <div
           className={cn(
             "flex justify-between items-center",
-            "p-6 border-b border-black/10 dark:border-white/10"
+            "p-6 border-b border-white/10"
           )}
         >
           <h2 className={cn("text-2xl", "font-bold")}>
@@ -96,11 +98,7 @@ export default function TriviaRegenerateModal({
           </h2>
           <button
             onClick={onClose}
-            className={cn(
-              "text-gray-500",
-              "hover:text-gray-800",
-              "dark:hover:text-white"
-            )}
+            className={cn("text-white/60 hover:text-white")}
             disabled={isGenerating}
           >
             ✖
@@ -119,10 +117,12 @@ export default function TriviaRegenerateModal({
                 "w-full",
                 "p-2",
                 "mt-1",
-                "border",
+                "border border-white/15",
                 "rounded-md",
-                "bg-white",
-                "dark:bg-neutral-800",
+                "bg-neutral-800",
+                "text-white",
+                "placeholder:text-white/40",
+                "focus:outline-none focus:ring-2 focus:ring-orange-500/70",
                 isGenerating && "opacity-60 cursor-not-allowed"
               )}
             />
@@ -141,10 +141,12 @@ export default function TriviaRegenerateModal({
                 "w-full",
                 "p-2",
                 "mt-1",
-                "border",
+                "border border-white/15",
                 "rounded-md",
-                "bg-white",
-                "dark:bg-neutral-800",
+                "bg-neutral-800",
+                "text-white",
+                "placeholder:text-white/40",
+                "focus:outline-none focus:ring-2 focus:ring-orange-500/70",
                 isGenerating && "opacity-60 cursor-not-allowed"
               )}
             />
@@ -160,10 +162,11 @@ export default function TriviaRegenerateModal({
                 "w-full",
                 "p-2",
                 "mt-1",
-                "border",
+                "border border-white/15",
                 "rounded-md",
-                "bg-white",
-                "dark:bg-neutral-800",
+                "bg-neutral-800",
+                "text-white",
+                "focus:outline-none focus:ring-2 focus:ring-orange-500/70",
                 isGenerating && "opacity-60 cursor-not-allowed"
               )}
             >
@@ -185,10 +188,11 @@ export default function TriviaRegenerateModal({
                 "w-full",
                 "p-2",
                 "mt-1",
-                "border",
+                "border border-white/15",
                 "rounded-md",
-                "bg-white",
-                "dark:bg-neutral-800",
+                "bg-neutral-800",
+                "text-white",
+                "focus:outline-none focus:ring-2 focus:ring-orange-500/70",
                 isGenerating && "opacity-60 cursor-not-allowed"
               )}
             >
@@ -209,7 +213,7 @@ export default function TriviaRegenerateModal({
               "w-full py-3 font-semibold rounded-lg transition-all",
               isValid && !isGenerating
                 ? "bg-orange-500 hover:bg-orange-600 text-black"
-                : "bg-gray-400 text-white opacity-60 cursor-not-allowed"
+                : "bg-white/15 text-white/70 opacity-60 cursor-not-allowed"
             )}
           >
             {isGenerating ? "🤖 AI is thinking…" : "🧠 Generate New Questions"}
@@ -221,7 +225,7 @@ export default function TriviaRegenerateModal({
           <div
             className={cn(
               "absolute inset-0 rounded-xl",
-              "bg-black/40",
+              "bg-black/50",
               "flex flex-col items-center justify-center",
               "backdrop-blur-sm"
             )}
@@ -250,8 +254,8 @@ export default function TriviaRegenerateModal({
                 "text-center"
               )}
             >
-              This may take a few seconds. Please don&apos;t click again or
-              close this window.
+              This may take a few seconds. Please don&apos;t click again or close
+              this window.
             </p>
           </div>
         )}
