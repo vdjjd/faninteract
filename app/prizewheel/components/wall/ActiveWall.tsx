@@ -3,10 +3,7 @@
 import { useEffect, useRef } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import * as THREE from "three";
-import {
-  CSS3DRenderer,
-  CSS3DObject,
-} from "three/examples/jsm/renderers/CSS3DRenderer.js";
+import { CSS3DRenderer, CSS3DObject } from "three/examples/jsm/renderers/CSS3DRenderer.js";
 
 /* ===========================================================
    HELPERS
@@ -44,6 +41,29 @@ function pickRandom<T>(arr: T[]) {
   return arr[Math.floor(Math.random() * arr.length)];
 }
 
+function easeOutQuart(p: number) {
+  return 1 - Math.pow(1 - p, 4);
+}
+
+/**
+ * Compute a target rotation that lands `winnerIndex` on the front tile.
+ * Uses current rotation, adds extra full spins, and snaps to the correct tile step.
+ */
+function computeTargetRotation(currentRot: number, winnerIndex: number, tileStep: number, extraSpins: number) {
+  const twoPi = Math.PI * 2;
+
+  // When rotation is exactly k*tileStep, the "front index" is: (-k mod N)
+  // To make winnerIndex be front: k == -winnerIndex mod N
+  const N = Math.round(twoPi / tileStep);
+  const k = (N - (winnerIndex % N)) % N;
+  const targetMod = k * tileStep;
+
+  const currentMod = ((currentRot % twoPi) + twoPi) % twoPi;
+  const deltaMod = (targetMod - currentMod + twoPi) % twoPi;
+
+  return currentRot + deltaMod + extraSpins * twoPi;
+}
+
 /* ===========================================================
    MAIN
 =========================================================== */
@@ -67,6 +87,12 @@ export default function ActivePrizeWheel3D({ wheel, entries }: any) {
     freezeStart: 0,
   });
 
+  const pendingWinnerRef = useRef<{
+    index: number | null;
+    entry: any | null;
+    spinSessionId: string | null;
+  }>({ index: null, entry: null, spinSessionId: null });
+
   const bgRef = useRef<string>(
     wheel?.background_type === "image"
       ? `url(${wheel.background_value}) center/cover no-repeat`
@@ -80,14 +106,34 @@ export default function ActivePrizeWheel3D({ wheel, entries }: any) {
   const RADIUS = 2550;
   const TILE_STEP = (2 * Math.PI) / TILE_COUNT;
 
-  const spinRef = useRef({
+  // GO mode (infinite spin)
+  const goRef = useRef({
+    active: false,
+    speed: 0.0,
+    targetSpeed: 0.035, // tune
+    accel: 0.0009,      // tune
+  });
+
+  // Stop animation (used by STOP and AUTO)
+  const stopAnimRef = useRef({
+    active: false,
+    start: 0,
+    duration: 4200,
+    from: 0,
+    to: 0,
+    winnerIndex: null as null | number,
+  });
+
+  // Legacy auto spin (random) fallback
+  const legacySpinRef = useRef({
     spinning: false,
     start: 0,
-    duration: 8000,
+    duration: 9000,
     startRot: 0,
     endRot: 0,
   });
 
+  // Backside inject controls
   const driftRef = useRef({
     drifting: false,
     start: 0,
@@ -150,6 +196,25 @@ export default function ActivePrizeWheel3D({ wheel, entries }: any) {
     renderTile(i, entry);
   }
 
+  function clearWinnerHighlight() {
+    wrapperRefs.current.forEach((w) => {
+      w.style.border = "none";
+      w.style.animation = "none";
+      w.style.boxShadow = "";
+    });
+  }
+
+  function highlightWinner(idx: number) {
+    clearWinnerHighlight();
+    const wwrap = wrapperRefs.current[idx];
+    if (!wwrap) return;
+
+    wwrap.style.border = "12px solid gold";
+    wwrap.style.boxShadow =
+      "0 0 80px rgba(255,215,0,0.6), inset 0 0 20px rgba(255,215,0,0.4)";
+    wwrap.style.animation = "winnerHalo 1.4s ease-in-out infinite";
+  }
+
   /* ===========================================================
      ✅ INITIAL FILL (random approved entries, repeat to 16)
 =========================================================== */
@@ -174,9 +239,7 @@ export default function ActivePrizeWheel3D({ wheel, entries }: any) {
   }
 
   /* ===========================================================
-     ✅ BACKSIDE AUTO-INJECT (IDLE ONLY, NO FULLSCREEN BREAK)
-     - swaps only tiles that are behind the wheel (cos < 0)
-     - avoids duplicates on the front hemisphere
+     ✅ BACKSIDE AUTO-INJECT (IDLE ONLY)
 =========================================================== */
   function injectBacksideRandoms() {
     const pool = approvedPoolRef.current || [];
@@ -185,19 +248,19 @@ export default function ActivePrizeWheel3D({ wheel, entries }: any) {
     const wheelGroup = wheelGroupRef.current;
     if (!wheelGroup) return;
 
-    // never swap while spinning/drifting/frozen (keeps winner stable)
-    if (spinRef.current.spinning) return;
+    // never swap while GO or stopping or legacy spin/drift/frozen
+    if (goRef.current.active) return;
+    if (stopAnimRef.current.active) return;
+    if (legacySpinRef.current.spinning) return;
     if (driftRef.current.drifting) return;
     if (winnerRef.current.isFrozen) return;
 
-    // Determine which indices are currently "front" vs "back"
-    const frontSet = new Set<string>(); // entry ids currently on the visible/front half
+    const frontSet = new Set<string>();
     const backIndices: number[] = [];
 
     for (let i = 0; i < TILE_COUNT; i++) {
       const effectiveAngle = i * TILE_STEP + wheelGroup.rotation.y;
 
-      // Front hemisphere: cos > 0 (z positive / facing camera side)
       if (Math.cos(effectiveAngle) > 0) {
         const e = tileDataRef.current[i];
         if (e?.id) frontSet.add(e.id);
@@ -208,12 +271,9 @@ export default function ActivePrizeWheel3D({ wheel, entries }: any) {
 
     if (!backIndices.length) return;
 
-    // For each back tile, inject a random approved entry that isn't currently on the front
     for (const idx of backIndices) {
-      // if pool small, allow duplicates (but still avoid front duplicates if possible)
       const candidates = pool.filter((p: any) => !frontSet.has(p.id));
       const chosen = (candidates.length ? pickRandom(candidates) : pickRandom(pool)) || null;
-
       setTileEntry(idx, chosen);
     }
   }
@@ -263,26 +323,130 @@ export default function ActivePrizeWheel3D({ wheel, entries }: any) {
       : document.exitFullscreen();
 
   /* ===========================================================
-     SPIN CHANNEL
+     ✅ AUTHORITATIVE CHANNEL EVENTS
+     - spin_go_start: start infinite spin (no winner)
+     - spin_stop: stop with persisted winner_index + winner entry
+     - spin_auto_start: auto spin and land on winner_index
 =========================================================== */
   useEffect(() => {
     if (!wheel?.id) return;
 
     const ch = supabase
       .channel(`prizewheel-${wheel.id}`)
+      .on("broadcast", { event: "spin_go_start" }, ({ payload }: any) => {
+        // reset winner visuals
+        winnerRef.current.isFrozen = false;
+        winnerRef.current.index = null;
+        pendingWinnerRef.current = {
+          index: null,
+          entry: null,
+          spinSessionId: payload?.spinSessionId ?? null,
+        };
+
+        clearWinnerHighlight();
+
+        // start GO
+        goRef.current.active = true;
+        goRef.current.speed = Math.max(goRef.current.speed, 0.01);
+      })
+      .on("broadcast", { event: "spin_stop" }, ({ payload }: any) => {
+        const idx = typeof payload?.winner_index === "number" ? payload.winner_index : null;
+        const entry = payload?.winner ?? null;
+
+        if (idx == null) return;
+
+        // cache pending winner
+        pendingWinnerRef.current = {
+          index: idx,
+          entry,
+          spinSessionId: payload?.spinSessionId ?? null,
+        };
+
+        // Force winner tile data so when it arrives front, it's correct
+        if (entry) setTileEntry(idx, entry);
+
+        // stop GO
+        goRef.current.active = false;
+
+        // start STOP animation (ease out)
+        const wg = wheelGroupRef.current;
+        if (!wg) return;
+
+        stopAnimRef.current.active = true;
+        stopAnimRef.current.start = performance.now();
+        stopAnimRef.current.duration = 5200; // STOP curve
+        stopAnimRef.current.from = wg.rotation.y;
+        stopAnimRef.current.to = computeTargetRotation(wg.rotation.y, idx, TILE_STEP, 2);
+        stopAnimRef.current.winnerIndex = idx;
+
+        // clear winner visuals now (we re-apply at end)
+        winnerRef.current.isFrozen = false;
+        winnerRef.current.index = null;
+        clearWinnerHighlight();
+      })
+      .on("broadcast", { event: "spin_auto_start" }, ({ payload }: any) => {
+        const idx = typeof payload?.winner_index === "number" ? payload.winner_index : null;
+        const entry = payload?.winner ?? null;
+
+        if (idx == null) return;
+
+        pendingWinnerRef.current = {
+          index: idx,
+          entry,
+          spinSessionId: payload?.spinSessionId ?? null,
+        };
+
+        if (entry) setTileEntry(idx, entry);
+
+        // ensure GO is off
+        goRef.current.active = false;
+
+        // start AUTO stop animation (longer spin)
+        const wg = wheelGroupRef.current;
+        if (!wg) return;
+
+        stopAnimRef.current.active = true;
+        stopAnimRef.current.start = performance.now();
+        stopAnimRef.current.duration = Math.max(6000, (wheel?.spin_duration ?? 10) * 1000);
+        stopAnimRef.current.from = wg.rotation.y;
+        stopAnimRef.current.to = computeTargetRotation(wg.rotation.y, idx, TILE_STEP, 6);
+        stopAnimRef.current.winnerIndex = idx;
+
+        winnerRef.current.isFrozen = false;
+        winnerRef.current.index = null;
+        clearWinnerHighlight();
+      })
+      // Legacy support (if anything still sends "spin_trigger")
       .on("broadcast", { event: "spin_trigger" }, () => {
-        (window as any)._pw?._spin?.start?.();
+        const wg = wheelGroupRef.current;
+        if (!wg) return;
+
+        // stop GO
+        goRef.current.active = false;
+
+        // random legacy spin (no authoritative winner)
+        legacySpinRef.current.spinning = true;
+        legacySpinRef.current.start = performance.now();
+        legacySpinRef.current.duration = 8000 + Math.random() * 7000;
+        legacySpinRef.current.startRot = wg.rotation.y;
+
+        const fullSpins = 6 + Math.random() * 4;
+        const raw = legacySpinRef.current.startRot + fullSpins * Math.PI * 2;
+        legacySpinRef.current.endRot = Math.round(raw / TILE_STEP) * TILE_STEP;
+
+        winnerRef.current.isFrozen = false;
+        winnerRef.current.index = null;
+        clearWinnerHighlight();
       })
       .subscribe();
 
     return () => {
       supabase.removeChannel(ch);
     };
-  }, [wheel?.id]);
+  }, [wheel?.id, wheel?.spin_duration]);
 
   /* ===========================================================
-     RELOAD CHANNEL (⚠️ This WILL exit fullscreen because it reloads the page)
-     - Keep it if you need it, but understand it can't preserve fullscreen.
+     RELOAD CHANNEL (⚠️ reload exits fullscreen)
 =========================================================== */
   useEffect(() => {
     if (!wheel?.id) return;
@@ -313,10 +477,7 @@ export default function ActivePrizeWheel3D({ wheel, entries }: any) {
     const camera = new THREE.PerspectiveCamera(38, width / height, 1, 8000);
     camera.position.set(0, 0, 3800);
 
-    const renderer = new THREE.WebGLRenderer({
-      antialias: true,
-      alpha: true,
-    });
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     renderer.setSize(width, height);
     renderer.setPixelRatio(window.devicePixelRatio);
     container.appendChild(renderer.domElement);
@@ -330,10 +491,8 @@ export default function ActivePrizeWheel3D({ wheel, entries }: any) {
 
     function resize() {
       if (!mountRef.current) return;
-
       const w = mountRef.current.clientWidth;
       const h = mountRef.current.clientHeight;
-
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
       renderer.setSize(w, h);
@@ -347,38 +506,7 @@ export default function ActivePrizeWheel3D({ wheel, entries }: any) {
     wheelGroupRef.current = wheelGroup;
     scene.add(wheelGroup);
 
-    (window as any)._pw = {
-      _spin: {
-        start: () => {
-          const spin = spinRef.current;
-          const drift = driftRef.current;
-          const win = winnerRef.current;
-
-          spin.spinning = false;
-          drift.drifting = false;
-          win.isFrozen = false;
-          win.index = null;
-
-          wrapperRefs.current.forEach((w) => {
-            w.style.border = "none";
-            w.style.animation = "none";
-            w.style.boxShadow = "";
-          });
-
-          spin.spinning = true;
-          spin.start = performance.now();
-          spin.duration = 8000 + Math.random() * 7000;
-          spin.startRot = wheelGroup.rotation.y;
-
-          const fullSpins = 6 + Math.random() * 4;
-          const raw = spin.startRot + fullSpins * Math.PI * 2;
-
-          spin.endRot = Math.round(raw / TILE_STEP) * TILE_STEP;
-        },
-      },
-    };
-
-    /* CREATE TILES */
+    // CREATE TILES
     tileRefs.current = [];
     wrapperRefs.current = [];
 
@@ -393,7 +521,6 @@ export default function ActivePrizeWheel3D({ wheel, entries }: any) {
       wrap.style.alignItems = "center";
       wrap.style.justifyContent = "center";
 
-      // ✅ keep backfaces clean
       (wrap.style as any).backfaceVisibility = "hidden";
       (wrap.style as any).transformStyle = "preserve-3d";
 
@@ -441,32 +568,59 @@ export default function ActivePrizeWheel3D({ wheel, entries }: any) {
 
       tileRefs.current.push(tile);
       wrapperRefs.current.push(wrap);
-
       wheelGroup.add(tile);
     }
 
-    // ✅ initial tile fill (random approved)
+    // initial tile fill (random approved)
     initTileAssignments();
 
-    // ✅ backside inject timer (idle only)
+    // backside inject timer (idle only)
     const injectTimer = window.setInterval(() => {
       injectBacksideRandoms();
     }, 2500);
 
     function animate(t: number) {
-      const spin = spinRef.current;
-      const drift = driftRef.current;
       const win = winnerRef.current;
 
+      // Unfreeze after a while (visual only)
       if (win.isFrozen && t - win.freezeStart > 15000) {
         win.isFrozen = false;
       }
 
-      if (!spin.spinning && !drift.drifting && !win.isFrozen) {
-        wheelGroup.rotation.y += ambientRef.current.speed;
-      }
+      // 1) STOP animation takes priority
+      if (stopAnimRef.current.active) {
+        const p = Math.min((t - stopAnimRef.current.start) / stopAnimRef.current.duration, 1);
+        const eased = easeOutQuart(p);
 
-      if (spin.spinning) {
+        wheelGroup.rotation.y =
+          stopAnimRef.current.from + (stopAnimRef.current.to - stopAnimRef.current.from) * eased;
+
+        if (p >= 1) {
+          stopAnimRef.current.active = false;
+
+          const idx = stopAnimRef.current.winnerIndex;
+          if (typeof idx === "number") {
+            win.index = idx;
+            win.isFrozen = true;
+            win.freezeStart = t;
+            highlightWinner(idx);
+          }
+        }
+      }
+      // 2) GO infinite spin
+      else if (goRef.current.active) {
+        // accelerate to target speed
+        if (goRef.current.speed < goRef.current.targetSpeed) {
+          goRef.current.speed = Math.min(
+            goRef.current.targetSpeed,
+            goRef.current.speed + goRef.current.accel
+          );
+        }
+        wheelGroup.rotation.y += goRef.current.speed;
+      }
+      // 3) Legacy random spin (fallback only)
+      else if (legacySpinRef.current.spinning) {
+        const spin = legacySpinRef.current;
         const p = Math.min((t - spin.start) / spin.duration, 1);
         const eased = p * p * (3 - 2 * p);
 
@@ -475,43 +629,34 @@ export default function ActivePrizeWheel3D({ wheel, entries }: any) {
         if (p >= 1) {
           spin.spinning = false;
 
-          drift.drifting = true;
-          drift.start = performance.now();
-          drift.from = wheelGroup.rotation.y;
-
-          drift.to = Math.round(drift.from / TILE_STEP) * TILE_STEP;
+          // drift snap (legacy)
+          driftRef.current.drifting = true;
+          driftRef.current.start = performance.now();
+          driftRef.current.from = wheelGroup.rotation.y;
+          driftRef.current.to = Math.round(driftRef.current.from / TILE_STEP) * TILE_STEP;
 
           const idx =
-            (((0 - Math.round(drift.to / TILE_STEP)) % TILE_COUNT) + TILE_COUNT) %
+            (((0 - Math.round(driftRef.current.to / TILE_STEP)) % TILE_COUNT) + TILE_COUNT) %
             TILE_COUNT;
 
           win.index = idx;
           win.isFrozen = true;
           win.freezeStart = t;
-
-          wrapperRefs.current.forEach((w) => {
-            w.style.border = "none";
-            w.style.animation = "none";
-            w.style.boxShadow = "";
-          });
-
-          const wwrap = wrapperRefs.current[idx];
-          if (wwrap) {
-            wwrap.style.border = "12px solid gold";
-            wwrap.style.boxShadow =
-              "0 0 80px rgba(255,215,0,0.6), inset 0 0 20px rgba(255,215,0,0.4)";
-            wwrap.style.animation = "winnerHalo 1.4s ease-in-out infinite";
-          }
+          highlightWinner(idx);
         }
       }
-
-      if (drift.drifting) {
+      // 4) Drift snap (legacy)
+      else if (driftRef.current.drifting) {
+        const drift = driftRef.current;
         const p = Math.min((t - drift.start) / drift.duration, 1);
         const easeOut = 1 - Math.pow(1 - p, 3);
 
         wheelGroup.rotation.y = drift.from + (drift.to - drift.from) * easeOut;
-
         if (p >= 1) drift.drifting = false;
+      }
+      // 5) Ambient idle
+      else if (!win.isFrozen) {
+        wheelGroup.rotation.y += ambientRef.current.speed;
       }
 
       renderer.render(scene, camera);

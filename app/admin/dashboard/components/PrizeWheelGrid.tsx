@@ -1,11 +1,11 @@
-'use client';
+"use client";
 
-import { useEffect, useRef, useState } from 'react';
-import { supabase } from '@/lib/supabaseClient';
-import { cn } from '@/lib/utils';
+import { useEffect, useRef, useState } from "react";
+import { supabase } from "@/lib/supabaseClient";
+import { cn } from "@/lib/utils";
 
-import PrizeWheelCard from './PrizeWheelCard';
-import PrizeWheelModerationModal from '@/components/PrizeWheelModerationModal';
+import PrizeWheelCard from "./PrizeWheelCard";
+import PrizeWheelModerationModal from "@/components/PrizeWheelModerationModal";
 
 interface PrizeWheelGridProps {
   wheels: any[] | undefined;
@@ -44,20 +44,20 @@ export default function PrizeWheelGrid({
     if (!host?.id) return;
 
     const channel = supabase
-      .channel('prizewheel-grid-sync')
+      .channel("prizewheel-grid-sync")
       .on(
-        'postgres_changes',
+        "postgres_changes",
         {
-          schema: 'public',
-          table: 'wheel_entries',
-          event: '*',
+          schema: "public",
+          table: "wheel_entries",
+          event: "*",
         },
         async () => {
           const { data } = await supabase
-            .from('prize_wheels')
-            .select('*')
-            .eq('host_id', host.id)
-            .order('created_at', { ascending: false });
+            .from("prize_wheels")
+            .select("*")
+            .eq("host_id", host.id)
+            .order("created_at", { ascending: false });
 
           setLocalWheels(data || []);
         }
@@ -70,25 +70,18 @@ export default function PrizeWheelGrid({
   }, [host?.id]);
 
   /* ------------------------------------------------------------
-     ✅ Broadcast helper
+     ✅ Broadcast helper (kept for other events if needed)
   ------------------------------------------------------------ */
   async function broadcast(event: string, payload: any) {
     try {
-      await supabase.channel('prizewheel-realtime').send({
-        type: 'broadcast',
+      await supabase.channel("prizewheel-realtime").send({
+        type: "broadcast",
         event,
         payload,
       });
     } catch (err) {
-      console.error('❌ PrizeWheelGrid broadcast failed:', err);
+      console.error("❌ PrizeWheelGrid broadcast failed:", err);
     }
-  }
-
-  /* ------------------------------------------------------------
-     ✅ SPIN
-  ------------------------------------------------------------ */
-  async function handleSpin(wheelId: string) {
-    await broadcast('spin_trigger', { id: wheelId });
   }
 
   /* ------------------------------------------------------------
@@ -96,41 +89,41 @@ export default function PrizeWheelGrid({
   ------------------------------------------------------------ */
   async function handlePlay(wheelId: string) {
     const { data: wheel } = await supabase
-      .from('prize_wheels')
-      .select('countdown')
-      .eq('id', wheelId)
+      .from("prize_wheels")
+      .select("countdown")
+      .eq("id", wheelId)
       .single();
 
-    const hasCountdown = wheel?.countdown && wheel.countdown.trim() !== '';
+    const hasCountdown = wheel?.countdown && wheel.countdown.trim() !== "";
 
     if (!hasCountdown) {
       await supabase
-        .from('prize_wheels')
+        .from("prize_wheels")
         .update({
-          status: 'live',
+          status: "live",
           countdown_active: false,
           updated_at: new Date().toISOString(),
         })
-        .eq('id', wheelId);
+        .eq("id", wheelId);
 
-      await broadcast('prizewheel_status_changed', {
+      await broadcast("prizewheel_status_changed", {
         id: wheelId,
-        status: 'live',
+        status: "live",
         countdown_active: false,
       });
     } else {
       await supabase
-        .from('prize_wheels')
+        .from("prize_wheels")
         .update({
-          status: 'inactive',
+          status: "inactive",
           countdown_active: true,
           updated_at: new Date().toISOString(),
         })
-        .eq('id', wheelId);
+        .eq("id", wheelId);
 
-      await broadcast('prizewheel_status_changed', {
+      await broadcast("prizewheel_status_changed", {
         id: wheelId,
-        status: 'inactive',
+        status: "inactive",
         countdown_active: true,
       });
     }
@@ -143,17 +136,17 @@ export default function PrizeWheelGrid({
   ------------------------------------------------------------ */
   async function handleStop(wheelId: string) {
     await supabase
-      .from('prize_wheels')
+      .from("prize_wheels")
       .update({
-        status: 'inactive',
+        status: "inactive",
         countdown_active: false,
         updated_at: new Date().toISOString(),
       })
-      .eq('id', wheelId);
+      .eq("id", wheelId);
 
-    await broadcast('prizewheel_status_changed', {
+    await broadcast("prizewheel_status_changed", {
       id: wheelId,
-      status: 'inactive',
+      status: "inactive",
       countdown_active: false,
     });
 
@@ -166,8 +159,8 @@ export default function PrizeWheelGrid({
   async function handleDelete(id: string) {
     setLocalWheels((prev) => prev.filter((w) => w.id !== id));
 
-    await supabase.from('prize_wheels').delete().eq('id', id);
-    await broadcast('prizewheel_deleted', { id });
+    await supabase.from("prize_wheels").delete().eq("id", id);
+    await broadcast("prizewheel_deleted", { id });
 
     delayedRefresh();
   }
@@ -198,18 +191,12 @@ export default function PrizeWheelGrid({
      ✅ RENDER
   ------------------------------------------------------------ */
   return (
-    <div className={cn('mt-10 w-full max-w-6xl')}>
-      <h2 className={cn('text-xl font-semibold mb-3')}>🎡 Prize Wheels</h2>
+    <div className={cn("mt-10 w-full max-w-6xl")}>
+      <h2 className={cn("text-xl font-semibold mb-3")}>🎡 Prize Wheels</h2>
 
-      <div
-        className={cn(
-          'grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5'
-        )}
-      >
+      <div className={cn("grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5")}>
         {localWheels.length === 0 && (
-          <p className={cn('text-gray-400 italic')}>
-            No Prize Wheels created yet.
-          </p>
+          <p className={cn("text-gray-400 italic")}>No Prize Wheels created yet.</p>
         )}
 
         {localWheels.map((wheel) => (
@@ -218,7 +205,6 @@ export default function PrizeWheelGrid({
             wheel={wheel}
             onOpenOptions={onOpenOptions}
             onDelete={handleDelete}
-            onSpin={handleSpin}
             onOpenModeration={handleOpenModeration}
             onPlay={handlePlay}
             onStop={handleStop}
@@ -226,7 +212,6 @@ export default function PrizeWheelGrid({
         ))}
       </div>
 
-      {/* ✅ PATCHED — removed invalid refreshWheel prop */}
       {moderationWheel && (
         <PrizeWheelModerationModal
           wheelId={moderationWheel.id}
