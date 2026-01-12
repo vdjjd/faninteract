@@ -162,12 +162,11 @@ export default function GuestSignupPage() {
 
   const [hostTerms, setHostTerms] = useState("");
   const [masterTerms, setMasterTerms] = useState("");
+  const [showTermsModal, setShowTermsModal] = useState(false);
 
-  // 🔹 NEW: venue-level terms + toggle
+  // ⭐ Venue terms from host_terms_sets
   const [venueTerms, setVenueTerms] = useState("");
   const [venueTermsEnabled, setVenueTermsEnabled] = useState(false);
-
-  const [showTermsModal, setShowTermsModal] = useState(false);
 
   const [form, setForm] = useState({
     first_name: "",
@@ -178,7 +177,7 @@ export default function GuestSignupPage() {
     city: "",
     state: "",
     zip: "",
-    date_of_birth: "", // ✅ birthday stored here
+    date_of_birth: "",
   });
 
   const [agree, setAgree] = useState(false);
@@ -218,10 +217,10 @@ export default function GuestSignupPage() {
           require_age,
           minimum_age,
           host_terms_markdown,
+          active_terms_set_id,
           loyalty_enabled,
           loyalty_show_badge,
-          loyalty_show_visit_count,
-          active_terms_set_id
+          loyalty_show_visit_count
         `)
         .eq("id", hostId)
         .single();
@@ -247,10 +246,10 @@ export default function GuestSignupPage() {
       setHostSettings(normalizedHost);
       setHostIdFromContext(hostId);
 
-      // host default terms
+      // Host-level terms
       setHostTerms(host.host_terms_markdown || "");
 
-      // master terms
+      // Master / platform terms (FanInteract)
       if (host.master_id) {
         const { data: master, error: masterErr } = await supabase
           .from("master_accounts")
@@ -266,25 +265,26 @@ export default function GuestSignupPage() {
         setMasterTerms("");
       }
 
-      // 🔹 venue terms (active_terms_set_id + enabled toggle)
+      // Venue terms (active_terms_set_id)
       if (host.active_terms_set_id) {
-        const { data: venueSet, error: venueErr } = await supabase
+        const { data: termsSet, error: termsErr } = await supabase
           .from("host_terms_sets")
           .select("venue_terms_markdown, venue_terms_enabled")
           .eq("id", host.active_terms_set_id)
           .maybeSingle();
 
-        if (!cancelled) {
-          if (venueErr) {
-            console.error("❌ host_terms_sets load error:", venueErr);
-            setVenueTerms("");
-            setVenueTermsEnabled(false);
-          } else {
-            setVenueTerms(venueSet?.venue_terms_markdown || "");
-            setVenueTermsEnabled(!!venueSet?.venue_terms_enabled);
-          }
+        if (termsErr) {
+          console.error("❌ host_terms_sets load error:", termsErr);
+          setVenueTerms("");
+          setVenueTermsEnabled(false);
+        } else if (termsSet) {
+          setVenueTerms(termsSet.venue_terms_markdown || "");
+          setVenueTermsEnabled(toBool(termsSet.venue_terms_enabled));
+        } else {
+          setVenueTerms("");
+          setVenueTermsEnabled(false);
         }
-      } else if (!cancelled) {
+      } else {
         setVenueTerms("");
         setVenueTermsEnabled(false);
       }
@@ -297,7 +297,7 @@ export default function GuestSignupPage() {
         let foundHostId: string | null = null;
         let foundBgCss: string | null = null;
 
-        // 1) Fan Wall (background_value)
+        // 1) Fan Wall
         if (wallId) {
           const { host_id, cssBg } = await fetchHostAndBgFromStandardTable(
             supabase,
@@ -309,7 +309,7 @@ export default function GuestSignupPage() {
           foundBgCss = cssBg;
         }
 
-        // 2) Prize Wheel (background_type + background_value) ✅
+        // 2) Prize Wheel
         if (!foundHostId && wheelId) {
           const { data, error } = await supabase
             .from("prize_wheels")
@@ -325,7 +325,7 @@ export default function GuestSignupPage() {
           }
         }
 
-        // 3) Poll (tries background_value if exists; otherwise host only)
+        // 3) Poll
         if (!foundHostId && pollId) {
           const { host_id, cssBg } = await fetchHostAndBgFromStandardTable(
             supabase,
@@ -337,7 +337,7 @@ export default function GuestSignupPage() {
           foundBgCss = cssBg ?? foundBgCss;
         }
 
-        // 4) Basketball (tries background_value if exists; otherwise host only)
+        // 4) Basketball
         if (!foundHostId && basketballId) {
           const { host_id, cssBg } = await fetchHostAndBgFromStandardTable(
             supabase,
@@ -349,7 +349,7 @@ export default function GuestSignupPage() {
           foundBgCss = cssBg ?? foundBgCss;
         }
 
-        // 5) Trivia (background_value)
+        // 5) Trivia
         if (!foundHostId && triviaId) {
           const { host_id, cssBg } = await fetchHostAndBgFromStandardTable(
             supabase,
@@ -361,7 +361,7 @@ export default function GuestSignupPage() {
           foundBgCss = cssBg ?? foundBgCss;
         }
 
-        // Legacy-only fallback
+        // Legacy fallback
         if (!foundHostId && hostParam) {
           console.warn("⚠️ Using host from URL as fallback (legacy QR):", hostParam);
           foundHostId = hostParam;
@@ -466,12 +466,11 @@ export default function GuestSignupPage() {
         triviaId ? "trivia" :
         "";
 
-      // ✅ Ensure birthday is stored in `date_of_birth` and age is computed accurately
       const dob = form.date_of_birth ? form.date_of_birth : null;
 
       const payload = {
         ...form,
-        date_of_birth: dob, // ✅ this is the birthday column in your schema
+        date_of_birth: dob,
         age: dob ? calculateAgeFromDob(dob) : null,
       };
 
@@ -514,17 +513,10 @@ export default function GuestSignupPage() {
     );
   }
 
-  // ✅ Combine terms: master + host + (optional) venue
-  const termsChunks: string[] = [];
-  if (masterTerms) termsChunks.push(masterTerms);
-  if (hostTerms) termsChunks.push(hostTerms);
-  if (venueTermsEnabled && venueTerms) termsChunks.push(venueTerms);
-  const combinedTermsMarkdown = termsChunks.join("\n\n---\n\n");
-
-  // ✅ NOT a hook — safe after early return
+  // ✅ Background
   const bgImage = bgCss || "linear-gradient(135deg,#0a2540,#1b2b44,#000000)";
 
-  // ✅ NOT a hook — safe after early return
+  // ✅ Logo
   const logoSrc =
     hostSettings?.branding_logo_url ||
     hostSettings?.logo_url ||
@@ -535,6 +527,16 @@ export default function GuestSignupPage() {
     : "FanInteract";
 
   const isRemoteLogo = typeof logoSrc === "string" && logoSrc.startsWith("http");
+
+  // ✅ Terms ordering: Host → Venue → FanInteract
+  const hostVenueChunks: string[] = [];
+  if (hostTerms && hostTerms.trim().length > 0) {
+    hostVenueChunks.push(hostTerms);
+  }
+  if (venueTermsEnabled && venueTerms.trim().length > 0) {
+    hostVenueChunks.push(venueTerms);
+  }
+  const hostVenueTermsMarkdown = hostVenueChunks.join("\n\n---\n\n");
 
   return (
     <main className={cn("relative flex items-center justify-center min-h-screen w-full text-white")}>
@@ -689,11 +691,7 @@ export default function GuestSignupPage() {
           )}
 
           <label className={cn("flex items-center gap-2 text-sm text-gray-300 mt-2")}>
-            <input
-              type="checkbox"
-              checked={agree}
-              onChange={(e) => setAgree(e.target.checked)}
-            />
+            <input type="checkbox" checked={agree} onChange={(e) => setAgree(e.target.checked)} />
             I agree to the{" "}
             <button
               type="button"
@@ -720,10 +718,10 @@ export default function GuestSignupPage() {
       <TermsModal
         isOpen={showTermsModal}
         onClose={() => setShowTermsModal(false)}
-        // 👇 We send the combined markdown as hostTerms so we don't
-        // have to change the TermsModal props.
-        hostTerms={combinedTermsMarkdown}
-        masterTerms={""}
+        // Host + Venue (in that order)
+        hostTerms={hostVenueTermsMarkdown}
+        // FanInteract platform terms last
+        masterTerms={masterTerms}
       />
     </main>
   );
