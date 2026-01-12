@@ -38,8 +38,7 @@ function normalizeDifficultyKey(
 
   if (v === "college") return "college";
 
-  if (v === "phd" || v === "ph.d" || v === "ph.d." || v === "ph d")
-    return "phd";
+  if (v === "phd" || v === "ph.d" || v === "ph.d." || v === "ph d") return "phd";
 
   return "";
 }
@@ -98,6 +97,19 @@ MANDATORY CHARACTERISTICS:
 }
 
 /**
+ * ✅ Clarify: difficulty = knowledge depth, not wording complexity
+ */
+function getDifficultyNote(): string {
+  return `
+IMPORTANT DIFFICULTY NOTE:
+- Difficulty labels refer to HOW HARD the knowledge/reasoning is.
+- They do NOT mean "use childish wording" or "write academically."
+- Use clear, modern, concise wording at ALL levels (roughly 8th–10th grade readability).
+- Difficulty must come from concept/knowledge required, not confusing phrasing.
+`;
+}
+
+/**
  * Safety: AI never controls correctness bounds
  */
 function normalizeCorrectIndex(index: any): number {
@@ -127,9 +139,7 @@ function extractJson(raw: string): string {
 }
 
 function norm(s: any): string {
-  return String(s || "")
-    .replace(/\s+/g, " ")
-    .trim();
+  return String(s || "").replace(/\s+/g, " ").trim();
 }
 
 function lowerNorm(s: any): string {
@@ -175,6 +185,101 @@ function shuffleQuestionOptions(q: {
 /* ============================================================
    ENGINE IMPROVEMENTS
 ============================================================ */
+
+/**
+ * ✅ Stronger “same meaning” duplicate detection
+ */
+function stripStopwords(s: string) {
+  const stop = new Set([
+    "the",
+    "a",
+    "an",
+    "of",
+    "to",
+    "in",
+    "on",
+    "at",
+    "for",
+    "and",
+    "or",
+    "but",
+    "with",
+    "by",
+    "from",
+    "is",
+    "are",
+    "was",
+    "were",
+    "be",
+    "been",
+    "being",
+    "as",
+    "that",
+    "this",
+    "these",
+    "those",
+    "which",
+    "who",
+    "whom",
+    "what",
+    "when",
+    "where",
+    "why",
+    "how",
+    "most",
+    "least",
+  ]);
+
+  return lowerNorm(s)
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(" ")
+    .filter(Boolean)
+    .filter((w) => !stop.has(w))
+    .join(" ");
+}
+
+/** Fingerprint stable across light rewording */
+function stemFingerprint(stem: string) {
+  const core = stripStopwords(stem);
+  const parts = core.split(" ").filter(Boolean).sort();
+  return parts.join(" ");
+}
+
+/** Dice similarity on character bigrams (better at paraphrase detection than word Jaccard) */
+function diceBigramSimilarity(a: string, b: string) {
+  const A = stripStopwords(a);
+  const B = stripStopwords(b);
+  if (!A || !B) return 0;
+
+  const bigrams = (t: string) => {
+    const s = t.replace(/\s+/g, " ");
+    const out: string[] = [];
+    for (let i = 0; i < s.length - 1; i++) out.push(s.slice(i, i + 2));
+    return out;
+  };
+
+  const aB = bigrams(A);
+  const bB = bigrams(B);
+  if (aB.length === 0 || bB.length === 0) return 0;
+
+  const freq = new Map<string, number>();
+  for (let i = 0; i < aB.length; i++) {
+    const x = aB[i];
+    freq.set(x, (freq.get(x) || 0) + 1);
+  }
+
+  let inter = 0;
+  for (let i = 0; i < bB.length; i++) {
+    const x = bB[i];
+    const c = freq.get(x) || 0;
+    if (c > 0) {
+      inter++;
+      freq.set(x, c - 1);
+    }
+  }
+
+  return (2 * inter) / (aB.length + bB.length);
+}
 
 /**
  * Per-difficulty hard caps (helps stop long answers and giveaways)
@@ -377,6 +482,8 @@ Rules:
   const res = await openai.responses.create({
     model: "gpt-4.1",
     input: prompt,
+    // ✅ reduce random JSON/format failures
+    text: { format: { type: "json_object" } },
   });
 
   const txt = res.output_text?.trim() || "";
@@ -390,6 +497,7 @@ Rules:
     if (conf < 55) return { ok: false, note: "Low confidence on unambiguity" };
     return { ok: true };
   } catch {
+    // fail-open: don't 500 the whole build for grader flake
     return { ok: true };
   }
 }
@@ -432,22 +540,6 @@ function getStemOpener(stem: string) {
   return parts.slice(0, 3).join(" ");
 }
 
-function jaccardSimilarity(a: string, b: string) {
-  const A = new Set(lowerNorm(a).split(" ").filter(Boolean));
-  const B = new Set(lowerNorm(b).split(" ").filter(Boolean));
-  if (A.size === 0 || B.size === 0) return 0;
-
-  let inter = 0;
-
-  // ✅ TS-safe: don't iterate Set with for...of (downlevelIteration)
-  A.forEach((w) => {
-    if (B.has(w)) inter++;
-  });
-
-  const union = A.size + B.size - inter;
-  return union === 0 ? 0 : inter / union;
-}
-
 /**
  * Generate a single question (used for regeneration of failures)
  */
@@ -477,6 +569,8 @@ Question #: ${qNumber}
 DIFFICULTY CONTRACT:
 ${difficultySpec}
 
+${getDifficultyNote()}
+
 FORMAT + FAIRNESS RULES (MANDATORY):
 - Write the correct answer FIRST internally, then craft 3 plausible distractors.
 - All 4 options must be the same TYPE (all dates OR all numbers OR all text/proper nouns).
@@ -505,6 +599,8 @@ Return ONLY JSON (no markdown):
   const res = await openai.responses.create({
     model: "gpt-4.1",
     input: prompt,
+    // ✅ reduce random JSON/format failures
+    text: { format: { type: "json_object" } },
   });
 
   const txt = res.output_text?.trim() || "";
@@ -637,6 +733,8 @@ Create ${nRounds} rounds with ${nQuestions} questions per round.
 DIFFICULTY CONTRACT — VIOLATION INVALIDATES OUTPUT:
 ${difficultySpec}
 
+${getDifficultyNote()}
+
 Topics per round: ${JSON.stringify(finalTopicList)}
 
 FAIRNESS RULES (MANDATORY):
@@ -674,6 +772,8 @@ Return ONLY JSON (no markdown fences, no commentary):
     const response = await openai.responses.create({
       model: "gpt-4.1",
       input: generationPrompt,
+      // ✅ reduce random JSON/format failures
+      text: { format: { type: "json_object" } },
     });
 
     rawText = response.output_text;
@@ -686,10 +786,7 @@ Return ONLY JSON (no markdown fences, no commentary):
       parsed = JSON.parse(cleaned);
     } catch {
       throw new Error(
-        `AI output was not valid JSON after cleaning. First 200 chars: ${cleaned.slice(
-          0,
-          200
-        )}`
+        `AI output was not valid JSON after cleaning. First 200 chars: ${cleaned.slice(0, 200)}`
       );
     }
 
@@ -705,6 +802,7 @@ Return ONLY JSON (no markdown fences, no commentary):
     // ============================================================
     const seenAnswers = new Set<string>();
     const seenStems: string[] = [];
+    const seenStemFingerprints = new Set<string>();
     const openerCounts = new Map<string, number>();
 
     // ✅ increased to stop random 500s
@@ -743,17 +841,27 @@ Return ONLY JSON (no markdown fences, no commentary):
             difficultyKey,
           });
 
+          const fp = stemFingerprint(q.question);
+          const duplicateFingerprint = fp && seenStemFingerprints.has(fp);
+
           const stemOpener = getStemOpener(q.question);
           const nextOpenerCount = (openerCounts.get(stemOpener) || 0) + 1;
 
           const tooManySameOpeners = nextOpenerCount >= openerSpamThreshold;
+
+          // ✅ stronger paraphrase detection than word-jaccard
           const tooSimilarToPrevious = seenStems.some(
-            (s) => jaccardSimilarity(s, q.question) >= 0.82
+            (s) => diceBigramSimilarity(s, q.question) >= 0.78
           );
 
           const correctAnswerText = q.options[q.correct_index] || "";
           const answerKey = lowerNorm(correctAnswerText);
           const duplicateAnswer = answerKey && seenAnswers.has(answerKey);
+
+          // ✅ Allow same correct answer in a game UNLESS the stem is also similar
+          const duplicateAnswerAndSimilarStem =
+            duplicateAnswer &&
+            seenStems.some((s) => diceBigramSimilarity(s, q.question) >= 0.7);
 
           let ambiguityFail = false;
           let ambiguityNote: string | undefined;
@@ -778,15 +886,19 @@ Return ONLY JSON (no markdown fences, no commentary):
 
           const failReasons = [
             ...(fairness.ok ? [] : fairness.reasons),
-            ...(duplicateAnswer ? ["Duplicate correct answer in this game"] : []),
-            ...(tooManySameOpeners ? ["Too many questions start the same way (template spam)"] : []),
-            ...(tooSimilarToPrevious ? ["Question stem too similar to another question"] : []),
+            ...(duplicateFingerprint ? ["Duplicate question meaning (fingerprint match)"] : []),
+            ...(tooManySameOpeners
+              ? ["Too many questions start the same way (template spam)"]
+              : []),
+            ...(tooSimilarToPrevious ? ["Question stem too similar to another question (paraphrase)"] : []),
+            ...(duplicateAnswerAndSimilarStem ? ["Duplicate correct answer + similar question (near-duplicate)"] : []),
             ...(ambiguityFail ? [`Ambiguity check failed: ${ambiguityNote || "ambiguous"}`] : []),
           ];
 
           if (failReasons.length === 0) {
             openerCounts.set(stemOpener, nextOpenerCount);
             if (answerKey) seenAnswers.add(answerKey);
+            if (fp) seenStemFingerprints.add(fp);
             seenStems.push(q.question);
             qs[qi] = q;
             break;
