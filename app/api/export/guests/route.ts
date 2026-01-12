@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
-type SupabaseClient = ReturnType<typeof createClient>;
+export const runtime = "nodejs";
 
 async function fetchAll<T>(
   supabase: SupabaseClient,
@@ -14,15 +14,27 @@ async function fetchAll<T>(
   let from = 0;
   const all: T[] = [];
 
+  // If orderColumn doesn't exist on a table, fallback to created_at
+  let safeOrder = orderColumn;
+
   while (true) {
-    const { data, error } = await supabase
+    const q = supabase
       .from(table)
       .select(select)
       .eq("host_id", hostId)
-      .order(orderColumn, { ascending: true })
+      .order(safeOrder, { ascending: true })
       .range(from, from + pageSize - 1);
 
-    if (error) throw error;
+    const { data, error } = await q;
+
+    if (error) {
+      // fallback once if the requested order column doesn't exist
+      if (safeOrder !== "created_at") {
+        safeOrder = "created_at";
+        continue;
+      }
+      throw error;
+    }
 
     const batch = (data ?? []) as T[];
     all.push(...batch);
@@ -62,9 +74,9 @@ export async function GET(req: Request) {
       fetchAll<any>(
         supabase,
         "priority_leads",
-        "first_name,last_name,email,phone,city,region,zip,country,venue_name,product_interest,wants_contact,scanned_at,submitted_at",
+        "first_name,last_name,email,phone,city,region,zip,country,venue_name,product_interest,wants_contact,scanned_at,submitted_at,created_at",
         hostId,
-        "submitted_at" // if this column exists; otherwise use created_at or scanned_at
+        "submitted_at"
       ),
     ]);
 
@@ -83,7 +95,7 @@ export async function GET(req: Request) {
         venue: l.venue_name ?? "",
         product: l.product_interest ?? "",
         wants_contact: l.wants_contact ?? "",
-        created_at: l.scanned_at ?? l.submitted_at ?? "",
+        created_at: l.scanned_at ?? l.submitted_at ?? l.created_at ?? "",
       })),
       ...(guests ?? []).map((g: any) => ({
         type: "guest",
@@ -142,7 +154,10 @@ export async function GET(req: Request) {
   } catch (e: any) {
     return new NextResponse(
       JSON.stringify({ error: e?.message ?? String(e) }),
-      { status: 500 }
+      {
+        status: 500,
+        headers: { "Content-Type": "application/json; charset=utf-8" },
+      }
     );
   }
 }

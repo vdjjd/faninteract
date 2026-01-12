@@ -91,6 +91,15 @@ export default function PrizeWheelCard({
   // ✅ local session holder (per card)
   const [spinSessionId, setSpinSessionId] = useState<string | null>(null);
 
+  // ✅ simple toast so errors don't crash the page
+  const [toast, setToast] = useState<{ text: string; color?: string } | null>(
+    null
+  );
+  function showToast(text: string, color = "rgba(239,68,68,0.95)") {
+    setToast({ text, color });
+    setTimeout(() => setToast(null), 2800);
+  }
+
   useEffect(() => {
     const check = () => {
       if (typeof window !== "undefined") setIsMobile(window.innerWidth < 768);
@@ -104,20 +113,35 @@ export default function PrizeWheelCard({
     setThankYouPopupEnabled(!!wheel.thank_you_popup_enabled);
   }, [wheel.id, wheel.thank_you_popup_enabled]);
 
+  /* ---------------------------------------------------------
+     ✅ FIXED: counts using head:true + count:exact (no 1000 cap)
+  --------------------------------------------------------- */
   async function loadCounts() {
-    const { data } = await supabase
-      .from("wheel_entries")
-      .select("status")
-      .eq("wheel_id", wheel.id);
+    try {
+      const [{ count: approvedCount, error: aErr }, { count: pendCount, error: pErr }] =
+        await Promise.all([
+          supabase
+            .from("wheel_entries")
+            .select("id", { count: "exact", head: true })
+            .eq("wheel_id", wheel.id)
+            .eq("status", "approved"),
+          supabase
+            .from("wheel_entries")
+            .select("id", { count: "exact", head: true })
+            .eq("wheel_id", wheel.id)
+            .eq("status", "pending"),
+        ]);
 
-    if (!data) {
+      if (aErr) console.error("loadCounts approved error:", aErr);
+      if (pErr) console.error("loadCounts pending error:", pErr);
+
+      setEntryCount(approvedCount ?? 0);
+      setPendingCount(pendCount ?? 0);
+    } catch (e) {
+      console.error("loadCounts exception:", e);
       setEntryCount(0);
       setPendingCount(0);
-      return;
     }
-
-    setEntryCount(data.filter((e) => e.status === "approved").length);
-    setPendingCount(data.filter((e) => e.status === "pending").length);
   }
 
   useEffect(() => {
@@ -135,12 +159,14 @@ export default function PrizeWheelCard({
           table: "wheel_entries",
           filter: `wheel_id=eq.${wheel.id}`,
         },
-        loadCounts
+        () => {
+          void loadCounts();
+        }
       )
       .subscribe();
 
     return () => {
-      supabase.removeChannel(channel);
+      void supabase.removeChannel(channel);
     };
   }, [wheel.id]);
 
@@ -157,62 +183,119 @@ export default function PrizeWheelCard({
       .subscribe();
 
     return () => {
-      supabase.removeChannel(ch);
+      void supabase.removeChannel(ch);
     };
   }, [wheel.id]);
 
   async function handleRemoteToggle() {
-    const newEnabled = !toggleRemote;
-    setToggleRemote(newEnabled);
+    try {
+      const newEnabled = !toggleRemote;
+      setToggleRemote(newEnabled);
 
-    await supabase
-      .from("prize_wheels")
-      .update({
-        remote_spin_enabled: newEnabled,
-        selected_remote_spinner: null,
-      })
-      .eq("id", wheel.id);
+      const { error } = await supabase
+        .from("prize_wheels")
+        .update({
+          remote_spin_enabled: newEnabled,
+          selected_remote_spinner: null,
+        })
+        .eq("id", wheel.id);
 
-    setSelectedSpinner(null);
+      if (error) {
+        showToast(error.message || "Remote toggle failed");
+        // revert
+        setToggleRemote(!newEnabled);
+        return;
+      }
+
+      setSelectedSpinner(null);
+    } catch (e: any) {
+      showToast(e?.message || "Remote toggle failed");
+    }
   }
 
   async function handleThankYouPopupToggle() {
-    const newEnabled = !thankYouPopupEnabled;
-    setThankYouPopupEnabled(newEnabled);
+    try {
+      const newEnabled = !thankYouPopupEnabled;
+      setThankYouPopupEnabled(newEnabled);
 
-    await supabase
-      .from("prize_wheels")
-      .update({
-        thank_you_popup_enabled: newEnabled,
-      })
-      .eq("id", wheel.id);
+      const { error } = await supabase
+        .from("prize_wheels")
+        .update({ thank_you_popup_enabled: newEnabled })
+        .eq("id", wheel.id);
 
-    if (newEnabled) setSettingsModalOpen(true);
+      if (error) {
+        showToast(error.message || "Toggle failed");
+        setThankYouPopupEnabled(!newEnabled);
+        return;
+      }
+
+      if (newEnabled) setSettingsModalOpen(true);
+    } catch (e: any) {
+      showToast(e?.message || "Toggle failed");
+    }
   }
 
+  /* ---------------------------------------------------------
+     ✅ FIXED: random spinner without downloading all approved
+     (count -> random offset -> range(offset, offset))
+  --------------------------------------------------------- */
   async function pickRandomSpinner() {
-    const { data } = await supabase
-      .from("wheel_entries")
-      .select("guest_profile_id")
-      .eq("wheel_id", wheel.id)
-      .eq("status", "approved");
+    try {
+      const { count: approvedCount, error: cErr } = await supabase
+        .from("wheel_entries")
+        .select("id", { count: "exact", head: true })
+        .eq("wheel_id", wheel.id)
+        .eq("status", "approved");
 
-    if (!data?.length) {
-      alert("No approved entrants yet.");
-      return;
+      if (cErr) {
+        showToast(cErr.message || "Could not count approved");
+        return;
+      }
+
+      const total = approvedCount ?? 0;
+      if (total === 0) {
+        alert("No approved entrants yet.");
+        return;
+      }
+
+      const offset = Math.floor(Math.random() * total);
+
+      const { data, error } = await supabase
+        .from("wheel_entries")
+        .select("guest_profile_id")
+        .eq("wheel_id", wheel.id)
+        .eq("status", "approved")
+        .order("created_at", { ascending: true })
+        .range(offset, offset)
+        .maybeSingle();
+
+      if (error) {
+        showToast(error.message || "Could not pick spinner");
+        return;
+      }
+
+      const guestId = (data as any)?.guest_profile_id;
+      if (!guestId) {
+        showToast("Could not pick spinner (no guest id)");
+        return;
+      }
+
+      setSelectedSpinner(guestId);
+
+      const { error: updErr } = await supabase
+        .from("prize_wheels")
+        .update({ selected_remote_spinner: guestId })
+        .eq("id", wheel.id);
+
+      if (updErr) {
+        showToast(updErr.message || "Could not save spinner");
+        return;
+      }
+
+      await broadcastRemoteSelection(wheel.id, guestId);
+    } catch (e: any) {
+      showToast(e?.message || "Could not pick spinner");
     }
-
-    const random = data[Math.floor(Math.random() * data.length)];
-    const guestId = random.guest_profile_id;
-
-    setSelectedSpinner(guestId);
-
-    await supabase
-      .from("prize_wheels")
-      .update({ selected_remote_spinner: guestId })
-      .eq("id", wheel.id);
-
-    await broadcastRemoteSelection(wheel.id, guestId);
   }
 
   function handleLaunch() {
@@ -261,6 +344,10 @@ export default function PrizeWheelCard({
     setSelectedSpinner(null);
   }
 
+  /* ---------------------------------------------------------
+     ✅ FIXED: spin api call no longer crashes UI
+     - we catch errors in handlers and show toast
+  --------------------------------------------------------- */
   async function callSpinApi(action: Action, extra?: any) {
     const res = await fetch("/api/prizewheel/spin", {
       method: "POST",
@@ -270,80 +357,102 @@ export default function PrizeWheelCard({
 
     if (!res.ok) {
       const txt = await res.text().catch(() => "");
-      throw new Error(txt || "Spin API failed");
+      const msg = txt || "Spin API failed";
+      const err: any = new Error(msg);
+      err.status = res.status;
+      throw err;
     }
 
     return res.json();
   }
 
   async function handleSpinAuto() {
-    const data = await callSpinApi("auto");
-    const winnerIndex = Number(data?.winner_index ?? 0);
-    const winner = data?.winner ?? null;
-
-    setSpinSessionId(data?.spinSessionId ?? null);
-
     try {
-      const popup = window._activePrizeWheel;
-      popup?._pw?.spinAuto?.(winnerIndex, winner);
-    } catch {}
+      const data = await callSpinApi("auto");
+      const winnerIndex = Number(data?.winner_index ?? 0);
+      const winner = data?.winner ?? null;
 
-    await broadcastToWheel(wheel.id, "spin_auto", {
-      wheelId: wheel.id,
-      spinSessionId: data?.spinSessionId ?? null,
-      winner_index: winnerIndex,
-      winner,
-    });
+      setSpinSessionId(data?.spinSessionId ?? null);
+
+      try {
+        const popup = window._activePrizeWheel;
+        popup?._pw?.spinAuto?.(winnerIndex, winner);
+      } catch {}
+
+      await broadcastToWheel(wheel.id, "spin_auto", {
+        wheelId: wheel.id,
+        spinSessionId: data?.spinSessionId ?? null,
+        winner_index: winnerIndex,
+        winner,
+      });
+    } catch (e: any) {
+      // 409 from API will land here instead of crashing the whole page
+      showToast(e?.message || "Spin Auto failed");
+    }
   }
 
   async function handleSpinGo() {
-    const data = await callSpinApi("go");
-    setSpinSessionId(data?.spinSessionId ?? null);
-
     try {
-      const popup = window._activePrizeWheel;
-      popup?._pw?.spinGo?.();
-    } catch {}
+      const data = await callSpinApi("go");
+      setSpinSessionId(data?.spinSessionId ?? null);
 
-    await broadcastToWheel(wheel.id, "spin_go", {
-      wheelId: wheel.id,
-      spinSessionId: data?.spinSessionId ?? null,
-    });
+      try {
+        const popup = window._activePrizeWheel;
+        popup?._pw?.spinGo?.();
+      } catch {}
+
+      await broadcastToWheel(wheel.id, "spin_go", {
+        wheelId: wheel.id,
+        spinSessionId: data?.spinSessionId ?? null,
+      });
+    } catch (e: any) {
+      showToast(e?.message || "Spin GO failed");
+    }
   }
 
   async function handleSpinStop() {
-    let session = spinSessionId;
-
-    // fallback: if state lost, pull from DB
-    if (!session) {
-      const { data: w } = await supabase
-        .from("prize_wheels")
-        .select("spin_session_id")
-        .eq("id", wheel.id)
-        .maybeSingle();
-      session = (w as any)?.spin_session_id ?? null;
-    }
-
-    if (!session) {
-      alert("No active Spin GO session yet. Press Spin GO first.");
-      return;
-    }
-
-    const data = await callSpinApi("stop", { spinSessionId: session });
-    const winnerIndex = Number(data?.winner_index ?? 0);
-    const winner = data?.winner ?? null;
-
     try {
-      const popup = window._activePrizeWheel;
-      popup?._pw?.spinStop?.(winnerIndex, winner);
-    } catch {}
+      let session = spinSessionId;
 
-    await broadcastToWheel(wheel.id, "spin_stop", {
-      wheelId: wheel.id,
-      spinSessionId: session,
-      winner_index: winnerIndex,
-      winner,
-    });
+      // fallback: if state lost, pull from DB
+      if (!session) {
+        const { data: w, error } = await supabase
+          .from("prize_wheels")
+          .select("spin_session_id")
+          .eq("id", wheel.id)
+          .maybeSingle();
+
+        if (error) {
+          showToast(error.message || "Could not load spin session");
+          return;
+        }
+
+        session = (w as any)?.spin_session_id ?? null;
+      }
+
+      if (!session) {
+        alert("No active Spin GO session yet. Press Spin GO first.");
+        return;
+      }
+
+      const data = await callSpinApi("stop", { spinSessionId: session });
+      const winnerIndex = Number(data?.winner_index ?? 0);
+      const winner = data?.winner ?? null;
+
+      try {
+        const popup = window._activePrizeWheel;
+        popup?._pw?.spinStop?.(winnerIndex, winner);
+      } catch {}
+
+      await broadcastToWheel(wheel.id, "spin_stop", {
+        wheelId: wheel.id,
+        spinSessionId: session,
+        winner_index: winnerIndex,
+        winner,
+      });
+    } catch (e: any) {
+      showToast(e?.message || "Spin STOP failed");
+    }
   }
 
   function StatusBadge() {
@@ -621,6 +730,19 @@ export default function PrizeWheelCard({
           setThankYouPopupEnabled(!!patch.thank_you_popup_enabled);
         }}
       />
+
+      {/* ✅ Toast */}
+      {toast && (
+        <div
+          className={cn(
+            "fixed bottom-6 left-1/2 -translate-x-1/2 z-[99999]",
+            "px-4 py-2 rounded-lg font-semibold text-white shadow-lg"
+          )}
+          style={{ background: toast.color || "rgba(239,68,68,0.95)" }}
+        >
+          {toast.text}
+        </div>
+      )}
     </>
   );
 }

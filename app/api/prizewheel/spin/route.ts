@@ -33,7 +33,7 @@ export async function POST(req: Request) {
   const { data: wheel, error: wheelErr } = await supabase
     .from("prize_wheels")
     .select(
-      "id, spin_state, spin_session_id, winner_entry_id, winner_guest_profile_id, winner_index, winner_selected_at, winner_session_id"
+      "id, spin_state, spin_session_id, winner_entry_id, winner_guest_profile_id, winner_index, winner_selected_at, winner_session_id, spin_started_at"
     )
     .eq("id", wheelId)
     .single();
@@ -45,34 +45,85 @@ export async function POST(req: Request) {
     );
   }
 
-  // Helper: fetch approved entries
-  async function fetchApproved() {
-    const { data, error } = await supabase
+  /* ---------------------------------------------------------
+     Helpers (fast + scalable)
+  --------------------------------------------------------- */
+
+  async function countByStatus(status: "approved" | "pending") {
+    const { count, error } = await supabase
       .from("wheel_entries")
-      .select("id,wheel_id,guest_profile_id,status,photo_url,first_name,last_name,created_at")
+      .select("id", { count: "exact", head: true })
       .eq("wheel_id", wheelId)
-      .eq("status", "approved")
-      .order("created_at", { ascending: true });
+      .eq("status", status);
 
     if (error) throw error;
-    if (!data?.length) {
-      const err: any = new Error("No approved entries");
+    return count ?? 0;
+  }
+
+  async function fetchRandomApprovedEntry() {
+    const approvedCount = await countByStatus("approved");
+
+    if (approvedCount === 0) {
+      const pendingCount = await countByStatus("pending");
+      const err: any = new Error(
+        pendingCount > 0
+          ? `No approved entries (pending: ${pendingCount}). Approve entries first.`
+          : "No approved entries."
+      );
       err.status = 409;
       throw err;
     }
+
+    // Pick a random offset within approved set
+    const offset = randomInt(0, approvedCount);
+
+    const { data, error } = await supabase
+      .from("wheel_entries")
+      .select(
+        "id,wheel_id,guest_profile_id,status,photo_url,first_name,last_name,created_at"
+      )
+      .eq("wheel_id", wheelId)
+      .eq("status", "approved")
+      .order("created_at", { ascending: true })
+      .range(offset, offset)
+      .maybeSingle();
+
+    if (error) throw error;
+
+    // Rare edge case: row removed between count and fetch
+    if (!data) {
+      const { data: fallback, error: fbErr } = await supabase
+        .from("wheel_entries")
+        .select(
+          "id,wheel_id,guest_profile_id,status,photo_url,first_name,last_name,created_at"
+        )
+        .eq("wheel_id", wheelId)
+        .eq("status", "approved")
+        .order("created_at", { ascending: true })
+        .range(0, 0)
+        .maybeSingle();
+
+      if (fbErr) throw fbErr;
+
+      if (!fallback) {
+        const err: any = new Error("No approved entries.");
+        err.status = 409;
+        throw err;
+      }
+
+      return fallback;
+    }
+
     return data;
   }
 
-  // Helper: pick winner (authoritative, server random)
-  function pickWinner(approved: any[]) {
-    const winnerEntry = approved[randomInt(0, approved.length)];
-    const winnerIndex = randomInt(0, 16); // tile index 0-15
-    return { winnerEntry, winnerIndex };
+  function pickWinnerIndex() {
+    return randomInt(0, 16); // tile index 0-15
   }
 
-  // ─────────────────────────────────────────────────────────────
-  // GO: create a spin session (no winner yet)
-  // ─────────────────────────────────────────────────────────────
+  /* ---------------------------------------------------------
+     GO: create a spin session (no winner yet)
+  --------------------------------------------------------- */
   if (action === "go") {
     const sessionId = randomUUID();
 
@@ -103,9 +154,9 @@ export async function POST(req: Request) {
     });
   }
 
-  // ─────────────────────────────────────────────────────────────
-  // STOP: pick winner ONCE for the provided session (idempotent)
-  // ─────────────────────────────────────────────────────────────
+  /* ---------------------------------------------------------
+     STOP: pick winner ONCE for the provided session (idempotent)
+  --------------------------------------------------------- */
   if (action === "stop") {
     if (!spinSessionId) {
       return new NextResponse("Missing spinSessionId", { status: 400 });
@@ -118,7 +169,6 @@ export async function POST(req: Request) {
       wheel.winner_guest_profile_id != null &&
       wheel.winner_index != null
     ) {
-      // fetch winner entry minimal for payload
       const { data: winnerRow } = await supabase
         .from("wheel_entries")
         .select("id,guest_profile_id,photo_url,first_name,last_name,status")
@@ -136,15 +186,17 @@ export async function POST(req: Request) {
       });
     }
 
-    // Otherwise: choose winner now
-    let approved: any[] = [];
+    // Otherwise: choose winner now (FAST, no 1000 row issue)
+    let winnerEntry: any;
     try {
-      approved = await fetchApproved();
+      winnerEntry = await fetchRandomApprovedEntry();
     } catch (e: any) {
-      return new NextResponse(e?.message || "Error", { status: e?.status || 500 });
+      return new NextResponse(e?.message || "Error", {
+        status: e?.status || 500,
+      });
     }
 
-    const { winnerEntry, winnerIndex } = pickWinner(approved);
+    const winnerIndex = pickWinnerIndex();
 
     const { error: updErr } = await supabase
       .from("prize_wheels")
@@ -181,19 +233,21 @@ export async function POST(req: Request) {
     });
   }
 
-  // ─────────────────────────────────────────────────────────────
-  // AUTO: create session + pick winner immediately (authoritative)
-  // ─────────────────────────────────────────────────────────────
+  /* ---------------------------------------------------------
+     AUTO: create session + pick winner immediately (authoritative)
+  --------------------------------------------------------- */
   if (action === "auto") {
-    let approved: any[] = [];
+    let winnerEntry: any;
     try {
-      approved = await fetchApproved();
+      winnerEntry = await fetchRandomApprovedEntry();
     } catch (e: any) {
-      return new NextResponse(e?.message || "Error", { status: e?.status || 500 });
+      return new NextResponse(e?.message || "Error", {
+        status: e?.status || 500,
+      });
     }
 
     const sessionId = randomUUID();
-    const { winnerEntry, winnerIndex } = pickWinner(approved);
+    const winnerIndex = pickWinnerIndex();
 
     const { error: updErr } = await supabase
       .from("prize_wheels")

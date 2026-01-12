@@ -1,9 +1,12 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import * as THREE from "three";
-import { CSS3DRenderer, CSS3DObject } from "three/examples/jsm/renderers/CSS3DRenderer.js";
+import {
+  CSS3DRenderer,
+  CSS3DObject,
+} from "three/examples/jsm/renderers/CSS3DRenderer.js";
 
 /* ===========================================================
    HELPERS
@@ -43,6 +46,23 @@ function pickRandom<T>(arr: T[]) {
 
 function easeOutCubic(p: number) {
   return 1 - Math.pow(1 - p, 3);
+}
+
+function cleanUrl(v: any): string {
+  const s = typeof v === "string" ? v.trim() : "";
+  return s.length > 0 ? s : "";
+}
+
+function resolveHostLogoFromWheel(wheel: any): string {
+  // Supports either branding_logo_url or logo_url on the host relation
+  const h = wheel?.host;
+  const a = cleanUrl(h?.branding_logo_url);
+  if (a) return a;
+
+  const b = cleanUrl(h?.logo_url);
+  if (b) return b;
+
+  return "";
 }
 
 /* ===========================================================
@@ -111,11 +131,66 @@ export default function ActivePrizeWheel3D({ wheel, entries }: any) {
   const brightA = wheel?.tile_brightness_a ?? 100;
   const brightB = wheel?.tile_brightness_b ?? 100;
 
-  const hostLogo =
-    typeof wheel?.host?.branding_logo_url === "string"
-      ? wheel.host.branding_logo_url.trim()
-      : "";
-  const logoUrl = hostLogo.length > 0 ? hostLogo : "/faninteractlogo.png";
+  /**
+   * ✅ LOGO RESOLUTION
+   * - Prefer wheel.host.branding_logo_url
+   * - Fallback wheel.host.logo_url
+   * - If wheel.host relation isn't present, fetch from hosts table using host_id
+   */
+  const [resolvedLogoUrl, setResolvedLogoUrl] = useState<string>(
+    resolveHostLogoFromWheel(wheel) || "/faninteractlogo.png"
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function resolveLogo() {
+      // 1) If wheel already includes host relation with logo, use it
+      const direct = resolveHostLogoFromWheel(wheel);
+      if (direct) {
+        if (!cancelled) setResolvedLogoUrl(direct);
+        return;
+      }
+
+      // 2) If host relation missing, try to fetch by host id
+      // Prefer wheel.host_id if present; otherwise try wheel.host?.id
+      const hostId = wheel?.host_id || wheel?.host?.id;
+      if (!hostId) {
+        if (!cancelled) setResolvedLogoUrl("/faninteractlogo.png");
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from("hosts")
+        .select("branding_logo_url, logo_url")
+        .eq("id", hostId)
+        .single();
+
+      if (error || !data) {
+        if (!cancelled) setResolvedLogoUrl("/faninteractlogo.png");
+        return;
+      }
+
+      const a = cleanUrl(data.branding_logo_url);
+      const b = cleanUrl(data.logo_url);
+      const finalUrl = a || b || "/faninteractlogo.png";
+
+      if (!cancelled) setResolvedLogoUrl(finalUrl);
+    }
+
+    resolveLogo();
+
+    return () => {
+      cancelled = true;
+    };
+    // only depend on primitives (avoid re-running from object identity changes)
+  }, [
+    wheel?.id,
+    wheel?.host_id,
+    wheel?.host?.id,
+    wheel?.host?.branding_logo_url,
+    wheel?.host?.logo_url,
+  ]);
 
   /* ===========================================================
      keep pool updated
@@ -175,8 +250,6 @@ export default function ActivePrizeWheel3D({ wheel, entries }: any) {
 
   /* ===========================================================
      ✅ INJECT WHILE SPINNING (AUTO + GO)
-     - still blocks during STOP and winner freeze
-     - still only injects BACKSIDE tiles
 =========================================================== */
   function injectBacksideRandoms() {
     const pool = approvedPoolRef.current || [];
@@ -185,12 +258,8 @@ export default function ActivePrizeWheel3D({ wheel, entries }: any) {
     const wheelGroup = wheelGroupRef.current;
     if (!wheelGroup) return;
 
-    // ✅ DO NOT change during stop curve or frozen winner (keeps winner stable)
     if (stopRef.current.stopping) return;
     if (winnerRef.current.isFrozen) return;
-
-    // ✅ allow during AUTO spin + GO spin (this is what you asked for)
-    // (no returns for spinRef.spinning / goRef.on)
 
     const frontSet = new Set<string>();
     const backIndices: number[] = [];
@@ -209,15 +278,14 @@ export default function ActivePrizeWheel3D({ wheel, entries }: any) {
     for (const idx of backIndices) {
       const current = tileDataRef.current[idx];
 
-      // prefer entries NOT on the visible front
       const candidates = pool.filter((p: any) => !frontSet.has(p.id));
       let chosen =
         (candidates.length ? pickRandom(candidates) : pickRandom(pool)) || null;
 
-      // try to avoid "no visible change" by not reusing same entry for this tile
       if (current?.id && chosen?.id === current.id) {
         chosen =
-          (candidates.length ? pickRandom(candidates) : pickRandom(pool)) || chosen;
+          (candidates.length ? pickRandom(candidates) : pickRandom(pool)) ||
+          chosen;
       }
 
       setTileEntry(idx, chosen);
@@ -324,7 +392,6 @@ export default function ActivePrizeWheel3D({ wheel, entries }: any) {
         if (typeof winnerIndex !== "number") return;
         (window as any)._pw?._spinGo?.stop?.(winnerIndex);
       })
-      // backward compat: your old Spin Now event
       .on("broadcast", { event: "spin_trigger" }, () => {
         (window as any)._pw?._spinAuto?.random?.();
       })
@@ -378,14 +445,12 @@ export default function ActivePrizeWheel3D({ wheel, entries }: any) {
     wheelGroupRef.current = wheelGroup;
     scene.add(wheelGroup);
 
-    // Expose controller
     (window as any)._pw = {
       _spinAuto: {
         start: (winnerIndex: number) => {
           const wg = wheelGroupRef.current;
           if (!wg) return;
 
-          // stop GO mode if running
           goRef.current.on = false;
           stopRef.current.stopping = false;
 
@@ -459,10 +524,8 @@ export default function ActivePrizeWheel3D({ wheel, entries }: any) {
       },
     };
 
-    // ✅ backwards compat alias (your dashboard used _prizewheel)
     (window as any)._prizewheel = (window as any)._pw;
 
-    // create tiles
     tileRefs.current = [];
     wrapperRefs.current = [];
 
@@ -528,7 +591,6 @@ export default function ActivePrizeWheel3D({ wheel, entries }: any) {
 
     initTileAssignments();
 
-    // ✅ faster so you SEE people swapping during spin
     const injectTimer = window.setInterval(() => injectBacksideRandoms(), 700);
 
     function animate(t: number) {
@@ -538,19 +600,15 @@ export default function ActivePrizeWheel3D({ wheel, entries }: any) {
         return;
       }
 
-      // unfreeze after 15s
       if (winnerRef.current.isFrozen && t - winnerRef.current.freezeStart > 15000) {
         winnerRef.current.isFrozen = false;
       }
 
-      // GO spin (infinite)
       if (goRef.current.on) {
         const dt = Math.max(0, t - (goRef.current.lastT || t));
         goRef.current.lastT = t;
         wg.rotation.y += (goRef.current.speed * dt) / 16.67;
-      }
-      // AUTO spin
-      else if (spinRef.current.spinning) {
+      } else if (spinRef.current.spinning) {
         const spin = spinRef.current;
         const p = Math.min((t - spin.start) / spin.duration, 1);
         const eased = p * p * (3 - 2 * p);
@@ -569,9 +627,7 @@ export default function ActivePrizeWheel3D({ wheel, entries }: any) {
 
           highlightIndex(idx);
         }
-      }
-      // STOP from GO
-      else if (stopRef.current.stopping) {
+      } else if (stopRef.current.stopping) {
         const stop = stopRef.current;
         const p = Math.min((t - stop.start) / stop.duration, 1);
         const eased = easeOutCubic(p);
@@ -590,13 +646,10 @@ export default function ActivePrizeWheel3D({ wheel, entries }: any) {
 
           highlightIndex(idx);
         }
-      }
-      // idle drift
-      else if (!winnerRef.current.isFrozen) {
+      } else if (!winnerRef.current.isFrozen) {
         wg.rotation.y += ambientRef.current.speed;
       }
 
-      // ✅ hard-hide backside tiles (keeps your “no backside cards” look)
       for (let i = 0; i < TILE_COUNT; i++) {
         const wrap = wrapperRefs.current[i];
         if (!wrap) continue;
@@ -604,7 +657,6 @@ export default function ActivePrizeWheel3D({ wheel, entries }: any) {
         const effectiveAngle = i * TILE_STEP + wg.rotation.y;
         const isFront = Math.cos(effectiveAngle) > 0;
 
-        // Hide backside entirely
         wrap.style.opacity = isFront ? "1" : "0";
       }
 
@@ -776,7 +828,7 @@ export default function ActivePrizeWheel3D({ wheel, entries }: any) {
         }}
       >
         <img
-          src={logoUrl}
+          src={resolvedLogoUrl}
           style={{
             width: "100%",
             height: "100%",
@@ -787,7 +839,11 @@ export default function ActivePrizeWheel3D({ wheel, entries }: any) {
       </div>
 
       <button
-        onClick={toggleFullscreen}
+        onClick={() =>
+          !document.fullscreenElement
+            ? document.documentElement.requestFullscreen().catch(() => {})
+            : document.exitFullscreen()
+        }
         style={{
           position: "absolute",
           bottom: "3vh",
