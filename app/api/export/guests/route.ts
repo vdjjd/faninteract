@@ -1,55 +1,29 @@
 import { NextResponse } from "next/server";
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { createClient } from "@supabase/supabase-js";
 
 export const runtime = "nodejs";
 
-async function fetchAll<T>(
-  supabase: SupabaseClient,
-  table: string,
-  select: string,
-  hostId: string,
-  orderColumn: string = "created_at"
-): Promise<T[]> {
-  const pageSize = 1000;
-  let from = 0;
-  const all: T[] = [];
+/** Split an ISO timestamp into YYYY-MM-DD and HH:MM (24h). */
+function splitDateTime(ts: string | null | undefined) {
+  if (!ts) return { date: "", time: "" };
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return { date: "", time: "" };
 
-  // If orderColumn doesn't exist on a table, fallback to created_at
-  let safeOrder = orderColumn;
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mi = String(d.getMinutes()).padStart(2, "0");
 
-  while (true) {
-    const q = supabase
-      .from(table)
-      .select(select)
-      .eq("host_id", hostId)
-      .order(safeOrder, { ascending: true })
-      .range(from, from + pageSize - 1);
-
-    const { data, error } = await q;
-
-    if (error) {
-      // fallback once if the requested order column doesn't exist
-      if (safeOrder !== "created_at") {
-        safeOrder = "created_at";
-        continue;
-      }
-      throw error;
-    }
-
-    const batch = (data ?? []) as T[];
-    all.push(...batch);
-
-    if (batch.length < pageSize) break;
-    from += pageSize;
-  }
-
-  return all;
+  return {
+    date: `${yyyy}-${mm}-${dd}`,
+    time: `${hh}:${mi}`,
+  };
 }
 
 export async function GET(req: Request) {
   const supabaseUrl =
     process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
-
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
   if (!supabaseUrl || !serviceKey) {
@@ -63,76 +37,145 @@ export async function GET(req: Request) {
   if (!hostId) return new NextResponse("Missing hostId", { status: 400 });
 
   try {
-    const [guests, leads] = await Promise.all([
-      fetchAll<any>(
-        supabase,
-        "guest_profiles",
-        "first_name,last_name,email,phone,age,date_of_birth,city,state,zip,created_at",
-        hostId,
-        "created_at"
-      ),
-      fetchAll<any>(
-        supabase,
-        "priority_leads",
-        "first_name,last_name,email,phone,city,region,zip,country,venue_name,product_interest,wants_contact,scanned_at,submitted_at,created_at",
-        hostId,
-        "submitted_at"
-      ),
-    ]);
+    // 1) EVENT GUESTS FROM FUNCTION export_host_guests(p_host_id)
+    const [{ data: guestData, error: guestError }, { data: leadData, error: leadError }] =
+      await Promise.all([
+        supabase.rpc("export_host_guests", {
+          p_host_id: hostId,
+        }),
+        supabase
+          .from("priority_leads")
+          .select(
+            `
+            first_name,
+            last_name,
+            email,
+            phone,
+            city,
+            region,
+            zip,
+            zip_code,
+            venue_name,
+            product_interest,
+            wants_contact,
+            scanned_at,
+            submitted_at,
+            created_at,
+            source,
+            source_type
+          `
+          )
+          .eq("host_id", hostId)
+          .order("submitted_at", { ascending: true }),
+      ]);
 
-    const rows = [
-      ...(leads ?? []).map((l: any) => ({
+    if (guestError) {
+      console.error("export_host_guests error:", guestError);
+      return new NextResponse(
+        JSON.stringify({ error: guestError.message }),
+        {
+          status: 500,
+          headers: { "Content-Type": "application/json; charset=utf-8" },
+        }
+      );
+    }
+
+    if (leadError) {
+      console.error("priority_leads export error:", leadError);
+      return new NextResponse(
+        JSON.stringify({ error: leadError.message }),
+        {
+          status: 500,
+          headers: { "Content-Type": "application/json; charset=utf-8" },
+        }
+      );
+    }
+
+    // 2) MAP GUEST ROWS (FROM FUNCTION)
+    const guestRows = (guestData ?? []).map((r: any) => ({
+      type: "guest",
+      first_name: r.first_name ?? "",
+      last_name: r.last_name ?? "",
+      email: r.email ?? "",
+      phone: r.phone ?? "",
+      profile_created_date: r.profile_created_date ?? "",
+      profile_created_time: r.profile_created_time ?? "",
+      joined_date: r.joined_date ?? "",
+      joined_time: r.joined_time ?? "",
+      event_id: r.event_id ?? "",
+      source: r.source ?? "",
+      feature: r.feature ?? "",
+      city: r.city ?? "",
+      state: r.state ?? "",
+      zip: r.zip ?? "",
+      venue: "",
+      product: "",
+      wants_contact: "",
+    }));
+
+    // 3) MAP PRIORITY LEAD ROWS
+    const priorityRows = (leadData ?? []).map((l: any) => {
+      // “Joined” = when they actually scanned/filled the form
+      const joinedTs = l.scanned_at ?? l.submitted_at ?? l.created_at ?? null;
+      const { date: joined_date, time: joined_time } = splitDateTime(joinedTs);
+      // “Profile created” – we can treat as created_at for now
+      const { date: profile_created_date, time: profile_created_time } =
+        splitDateTime(l.created_at ?? joinedTs);
+
+      return {
         type: "priority",
         first_name: l.first_name ?? "",
         last_name: l.last_name ?? "",
         email: l.email ?? "",
         phone: l.phone ?? "",
-        age: "",
-        birthday: "",
+        profile_created_date,
+        profile_created_time,
+        joined_date,
+        joined_time,
+        event_id: "", // no trivia event id here, it's an ad slide lead
+        source: l.source ?? l.source_type ?? "",
+        feature: "priority_lead",
         city: l.city ?? "",
         state: l.region ?? "",
-        zip: l.zip ?? "",
+        zip: l.zip ?? l.zip_code ?? "",
         venue: l.venue_name ?? "",
         product: l.product_interest ?? "",
-        wants_contact: l.wants_contact ?? "",
-        created_at: l.scanned_at ?? l.submitted_at ?? l.created_at ?? "",
-      })),
-      ...(guests ?? []).map((g: any) => ({
-        type: "guest",
-        first_name: g.first_name ?? "",
-        last_name: g.last_name ?? "",
-        email: g.email ?? "",
-        phone: g.phone ?? "",
-        age: g.age ?? "",
-        birthday: g.date_of_birth ?? "",
-        city: g.city ?? "",
-        state: g.state ?? "",
-        zip: g.zip ?? "",
-        venue: "",
-        product: "",
-        wants_contact: "",
-        created_at: g.created_at ?? "",
-      })),
-    ];
+        wants_contact:
+          l.wants_contact === true
+            ? "yes"
+            : l.wants_contact === false
+            ? "no"
+            : "",
+      };
+    });
 
+    // 4) COMBINE (YOU CAN FLIP ORDER IF YOU WANT GUESTS FIRST)
+    const rows = [...guestRows, ...priorityRows];
+
+    // 5) CSV HEADERS – DATE + TIME SEPARATE, PLUS MARKETING FIELDS
     const headers = [
       "type",
       "first_name",
       "last_name",
       "email",
       "phone",
-      "age",
-      "birthday",
+      "profile_created_date",
+      "profile_created_time",
+      "joined_date",
+      "joined_time",
+      "event_id",
+      "source",
+      "feature",
       "city",
       "state",
       "zip",
       "venue",
       "product",
       "wants_contact",
-      "created_at",
     ];
 
-    const escapeCsv = (v: any) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const escapeCsv = (v: any) =>
+      `"${String(v ?? "").replace(/"/g, '""')}"`;
 
     // BOM helps Excel open UTF-8 correctly
     const bom = "\ufeff";
@@ -140,7 +183,9 @@ export async function GET(req: Request) {
       bom +
       [
         headers.join(","),
-        ...rows.map((r: any) => headers.map((h) => escapeCsv(r[h])).join(",")),
+        ...rows.map((r: any) =>
+          headers.map((h) => escapeCsv(r[h])).join(",")
+        ),
       ].join("\n");
 
     return new NextResponse(csv, {
@@ -152,6 +197,7 @@ export async function GET(req: Request) {
       },
     });
   } catch (e: any) {
+    console.error("export guests route error:", e);
     return new NextResponse(
       JSON.stringify({ error: e?.message ?? String(e) }),
       {

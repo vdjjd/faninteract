@@ -162,6 +162,11 @@ export default function GuestSignupPage() {
 
   const [hostTerms, setHostTerms] = useState("");
   const [masterTerms, setMasterTerms] = useState("");
+
+  // 🔹 NEW: venue-level terms + toggle
+  const [venueTerms, setVenueTerms] = useState("");
+  const [venueTermsEnabled, setVenueTermsEnabled] = useState(false);
+
   const [showTermsModal, setShowTermsModal] = useState(false);
 
   const [form, setForm] = useState({
@@ -215,7 +220,8 @@ export default function GuestSignupPage() {
           host_terms_markdown,
           loyalty_enabled,
           loyalty_show_badge,
-          loyalty_show_visit_count
+          loyalty_show_visit_count,
+          active_terms_set_id
         `)
         .eq("id", hostId)
         .single();
@@ -241,8 +247,10 @@ export default function GuestSignupPage() {
       setHostSettings(normalizedHost);
       setHostIdFromContext(hostId);
 
+      // host default terms
       setHostTerms(host.host_terms_markdown || "");
 
+      // master terms
       if (host.master_id) {
         const { data: master, error: masterErr } = await supabase
           .from("master_accounts")
@@ -256,6 +264,29 @@ export default function GuestSignupPage() {
         }
       } else {
         setMasterTerms("");
+      }
+
+      // 🔹 venue terms (active_terms_set_id + enabled toggle)
+      if (host.active_terms_set_id) {
+        const { data: venueSet, error: venueErr } = await supabase
+          .from("host_terms_sets")
+          .select("venue_terms_markdown, venue_terms_enabled")
+          .eq("id", host.active_terms_set_id)
+          .maybeSingle();
+
+        if (!cancelled) {
+          if (venueErr) {
+            console.error("❌ host_terms_sets load error:", venueErr);
+            setVenueTerms("");
+            setVenueTermsEnabled(false);
+          } else {
+            setVenueTerms(venueSet?.venue_terms_markdown || "");
+            setVenueTermsEnabled(!!venueSet?.venue_terms_enabled);
+          }
+        }
+      } else if (!cancelled) {
+        setVenueTerms("");
+        setVenueTermsEnabled(false);
       }
     }
 
@@ -358,6 +389,8 @@ export default function GuestSignupPage() {
           setHostIdFromContext(null);
           setHostTerms("");
           setMasterTerms("");
+          setVenueTerms("");
+          setVenueTermsEnabled(false);
         }
       } finally {
         if (!cancelled) setLoadingHost(false);
@@ -480,6 +513,13 @@ export default function GuestSignupPage() {
       </main>
     );
   }
+
+  // ✅ Combine terms: master + host + (optional) venue
+  const termsChunks: string[] = [];
+  if (masterTerms) termsChunks.push(masterTerms);
+  if (hostTerms) termsChunks.push(hostTerms);
+  if (venueTermsEnabled && venueTerms) termsChunks.push(venueTerms);
+  const combinedTermsMarkdown = termsChunks.join("\n\n---\n\n");
 
   // ✅ NOT a hook — safe after early return
   const bgImage = bgCss || "linear-gradient(135deg,#0a2540,#1b2b44,#000000)";
@@ -649,7 +689,11 @@ export default function GuestSignupPage() {
           )}
 
           <label className={cn("flex items-center gap-2 text-sm text-gray-300 mt-2")}>
-            <input type="checkbox" checked={agree} onChange={(e) => setAgree(e.target.checked)} />
+            <input
+              type="checkbox"
+              checked={agree}
+              onChange={(e) => setAgree(e.target.checked)}
+            />
             I agree to the{" "}
             <button
               type="button"
@@ -676,8 +720,10 @@ export default function GuestSignupPage() {
       <TermsModal
         isOpen={showTermsModal}
         onClose={() => setShowTermsModal(false)}
-        hostTerms={hostTerms}
-        masterTerms={masterTerms}
+        // 👇 We send the combined markdown as hostTerms so we don't
+        // have to change the TermsModal props.
+        hostTerms={combinedTermsMarkdown}
+        masterTerms={""}
       />
     </main>
   );
