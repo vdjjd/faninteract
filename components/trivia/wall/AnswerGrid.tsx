@@ -35,6 +35,9 @@ function isRemovedIndex(
   return removed instanceof Set ? removed.has(idx) : removed.includes(idx);
 }
 
+/** 🔹 Control how tall the answer buttons are */
+const ANSWER_MIN_HEIGHT_PX = 200; // bump this up/down to taste
+
 export default function AnswerGrid({
   options,
   correctIndex,
@@ -77,9 +80,10 @@ export default function AnswerGrid({
           !revealAnswer &&
           !isRemoved;
 
-        const herdLabel = showHerd && herdLabelForIndex
-          ? herdLabelForIndex(idx)
-          : undefined;
+        const herdLabel =
+          showHerd && herdLabelForIndex
+            ? herdLabelForIndex(idx)
+            : undefined;
 
         return (
           <div
@@ -87,7 +91,8 @@ export default function AnswerGrid({
             style={{
               position: "relative",
               width: "100%",
-              height: "100%",
+              // 🔥 This is what makes the button rows taller
+              minHeight: `${ANSWER_MIN_HEIGHT_PX}px`,
             }}
           >
             <AnswerTile

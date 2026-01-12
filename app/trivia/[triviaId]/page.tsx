@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import { getSupabaseClient } from "@/lib/supabaseClient";
 
@@ -9,12 +9,34 @@ import TriviaActiveWall from "@/app/trivia/layouts/TriviaActiveWall";
 
 const supabase = getSupabaseClient();
 
+const STAGE_W = 1920;
+const STAGE_H = 1080;
+
 export default function TriviaWallPage() {
   const { triviaId } = useParams();
   const [trivia, setTrivia] = useState<any>(null);
 
-  // 🔥 Fullscreen container (same pattern as FanWallPage)
+  // Fullscreen container (router-level)
   const wallRef = useRef<HTMLDivElement | null>(null);
+
+  // Viewport for stage scaling (ACTIVE ONLY)
+  const [vw, setVw] = useState(0);
+  const [vh, setVh] = useState(0);
+
+  useEffect(() => {
+    // prevent any scrollbars/margins that can throw centering off
+    document.documentElement.style.overflow = "hidden";
+    document.body.style.overflow = "hidden";
+    document.body.style.margin = "0";
+
+    const onResize = () => {
+      setVw(window.innerWidth);
+      setVh(window.innerHeight);
+    };
+    onResize();
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
 
   /* ------------------------------------------------------------
      POLLING — trivia_cards + host (via host_id)
@@ -25,7 +47,6 @@ export default function TriviaWallPage() {
     let alive = true;
 
     async function fetchTrivia() {
-      // 1️⃣ Load trivia card
       const { data: triviaRow, error: triviaErr } = await supabase
         .from("trivia_cards")
         .select("*")
@@ -38,7 +59,6 @@ export default function TriviaWallPage() {
         return;
       }
 
-      // 2️⃣ If we have a host_id, load host branding
       let host: any = null;
 
       if (triviaRow?.host_id) {
@@ -48,18 +68,14 @@ export default function TriviaWallPage() {
           .eq("id", triviaRow.host_id)
           .maybeSingle();
 
-        if (hostErr) {
-          console.error("❌ hosts fetch error:", hostErr);
-        } else {
-          host = hostRow;
-        }
+        if (hostErr) console.error("❌ hosts fetch error:", hostErr);
+        else host = hostRow;
       }
 
-      // 3️⃣ Merge host into trivia object so layouts can read trivia.host
       if (alive) {
         setTrivia({
           ...triviaRow,
-          host, // may be null if not found
+          host,
         });
       }
     }
@@ -73,25 +89,18 @@ export default function TriviaWallPage() {
     };
   }, [triviaId]);
 
-  if (!trivia) return null;
-
   /* ------------------------------------------------------------
-     SHARED FULLSCREEN HANDLER (router-level)
+     FULLSCREEN HANDLER (router-level)
   ------------------------------------------------------------ */
   const toggleFullscreen = async () => {
     const el = wallRef.current;
-    if (!el) {
-      console.warn("Fullscreen element missing");
-      return;
-    }
+    if (!el) return;
 
     try {
       if (!document.fullscreenElement) {
         await (el as any)
-          .requestFullscreen({ navigationUI: "hide" } as any)
-          .catch((err: any) => {
-            console.error("❌ Fullscreen failed:", err);
-          });
+          .requestFullscreen?.({ navigationUI: "hide" } as any)
+          .catch((err: any) => console.error("❌ Fullscreen failed:", err));
       } else {
         await document.exitFullscreen();
       }
@@ -100,46 +109,62 @@ export default function TriviaWallPage() {
     }
   };
 
+  if (!trivia) return null;
+
   const isInactive =
     trivia.status === "inactive" ||
     trivia.countdown_active === true ||
     trivia.status === "finished";
 
+  // ✅ ACTIVE-ONLY: COVER scale 1920x1080 (fills screen, crops overflow)
+  const scale = vw && vh ? Math.max(vw / STAGE_W, vh / STAGE_H) : 1;
+  const stageLeft = (vw - STAGE_W * scale) / 2;
+  const stageTop = (vh - STAGE_H * scale) / 2;
+
   return (
     <div
       ref={wallRef}
       style={{
-        position: "relative",
-        width: "100%",
+        position: "fixed",
+        inset: 0,
+        width: "100vw",
         height: "100vh",
-        overflow: "hidden", // ⬅️ no background/filter here anymore
+        overflow: "hidden",
+        background: "#000",
       }}
     >
-      {/* INACTIVE WALL */}
-      <div
-        style={{
-          position: "absolute",
-          inset: 0,
-          opacity: isInactive ? 1 : 0,
-          transition: "opacity 0.6s ease",
-          zIndex: 1,
-        }}
-      >
-        <InactiveWall trivia={trivia} />
-      </div>
+      {/* ✅ INACTIVE WALL: unchanged (no stage wrapper, no router bg layers) */}
+      {isInactive && (
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            zIndex: 1,
+          }}
+        >
+          <InactiveWall trivia={trivia} />
+        </div>
+      )}
 
-      {/* ACTIVE WALL */}
-      <div
-        style={{
-          position: "absolute",
-          inset: 0,
-          opacity: isInactive ? 0 : 1,
-          transition: "opacity 0.6s ease",
-          zIndex: 2,
-        }}
-      >
-        <TriviaActiveWall trivia={trivia} />
-      </div>
+      {/* ✅ ACTIVE WALL: stage model wrapper only */}
+      {!isInactive && (
+        <div style={{ position: "absolute", inset: 0, zIndex: 2 }}>
+          {/* This wrapper handles 1920×1080 placement/scale only */}
+          <div
+            style={{
+              position: "absolute",
+              left: stageLeft,
+              top: stageTop,
+              width: STAGE_W,
+              height: STAGE_H,
+              transform: `scale(${scale})`,
+              transformOrigin: "top left",
+            }}
+          >
+            <TriviaActiveWall trivia={trivia} />
+          </div>
+        </div>
+      )}
 
       {/* FULLSCREEN BUTTON (shared) */}
       <div
@@ -159,10 +184,12 @@ export default function TriviaWallPage() {
           opacity: 0.35,
           transition: "opacity 0.2s ease",
           zIndex: 999999999,
+          userSelect: "none",
         }}
         onMouseEnter={(e) => (e.currentTarget.style.opacity = "1")}
         onMouseLeave={(e) => (e.currentTarget.style.opacity = "0.35")}
         onClick={toggleFullscreen}
+        title="Fullscreen"
       >
         ⛶
       </div>

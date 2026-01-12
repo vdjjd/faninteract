@@ -33,11 +33,11 @@ const fallbackLogo = "/faninteractlogo.png";
 const fallbackPhoto = "/fallback.png";
 const FALLBACK_BG = "linear-gradient(135deg,#1b2735,#090a0f)";
 
-/* ---------- CONFETTI LOOP CONTROL ---------- */
+/* ---------- CONFETTI LOOP CONTROL (MORE, FASTER, LONGER) ---------- */
 
-const CONFETTI_BURSTS = 5; // ✅ loop 5 times
-const CONFETTI_BURST_INTERVAL_MS = 6200; // ✅ spacing between bursts
-const CONFETTI_CLEAR_AFTER_MS = 6500; // ✅ clear after last burst finishes
+const CONFETTI_BURSTS = 16; // 🔥 more bursts
+const CONFETTI_BURST_INTERVAL_MS = 5000; // 🔥 faster cadence
+const CONFETTI_CLEAR_AFTER_MS = 20000; // 🔥 keep them around longer
 
 /* ---------- HELPERS ---------- */
 
@@ -103,7 +103,7 @@ function getPodiumGlow(place?: "1st" | "2nd" | "3rd") {
       baseShadow:
         "0 0 16px rgba(212,175,55,0.55), 0 0 34px rgba(212,175,55,0.30)",
       pulseShadow:
-        "0 0 22px rgba(212,175,55,0.75), 0 0 52px rgba(212,175,55,0.45), 0 0 88px rgba(212,175,55,0.20)",
+        "0 0 22px rgba(212,175,55,0.85), 0 0 60px rgba(212,175,55,0.60), 0 0 110px rgba(212,175,55,0.30)",
     };
   }
   if (place === "2nd") {
@@ -112,7 +112,7 @@ function getPodiumGlow(place?: "1st" | "2nd" | "3rd") {
       baseShadow:
         "0 0 16px rgba(192,192,192,0.55), 0 0 34px rgba(192,192,192,0.30)",
       pulseShadow:
-        "0 0 22px rgba(192,192,192,0.75), 0 0 52px rgba(192,192,192,0.45), 0 0 88px rgba(192,192,192,0.20)",
+        "0 0 22px rgba(192,192,192,0.85), 0 0 60px rgba(192,192,192,0.60), 0 0 110px rgba(192,192,192,0.30)",
     };
   }
   if (place === "3rd") {
@@ -121,7 +121,7 @@ function getPodiumGlow(place?: "1st" | "2nd" | "3rd") {
       baseShadow:
         "0 0 16px rgba(205,127,50,0.55), 0 0 34px rgba(205,127,50,0.30)",
       pulseShadow:
-        "0 0 22px rgba(205,127,50,0.75), 0 0 52px rgba(205,127,50,0.45), 0 0 88px rgba(205,127,50,0.20)",
+        "0 0 22px rgba(205,127,50,0.85), 0 0 60px rgba(205,127,50,0.60), 0 0 110px rgba(205,127,50,0.30)",
     };
   }
   return {
@@ -146,19 +146,26 @@ type ConfettiParticle = {
 };
 
 function makeConfetti(count: number): ConfettiParticle[] {
-  const colors = ["#D4AF37", "#C0C0C0", "#CD7F32", "#ffffff"];
+  const colors = [
+    "#FFD700", // bright gold
+    "#FFFFFF",
+    "#60A5FA", // blue
+    "#FB7185", // pink
+    "#A855F7", // purple
+    "#F97316", // orange
+  ];
   const arr: ConfettiParticle[] = [];
   for (let i = 0; i < count; i++) {
     arr.push({
       id: `${Date.now()}-${i}-${Math.random().toString(16).slice(2)}`,
       leftPct: Math.random() * 100,
-      size: 6 + Math.random() * 10,
-      delay: Math.random() * 0.6,
-      duration: 2.8 + Math.random() * 2.0,
-      drift: (Math.random() - 0.5) * 380,
-      rotate: (Math.random() - 0.5) * 1080,
+      size: 10 + Math.random() * 18, // bigger pieces
+      delay: Math.random() * 0.4, // quicker
+      duration: 3.0 + Math.random() * 2.6, // stay longer
+      drift: (Math.random() - 0.5) * 520, // spread wider
+      rotate: (Math.random() - 0.5) * 1800, // more spin
       color: colors[Math.floor(Math.random() * colors.length)],
-      opacity: 0.45 + Math.random() * 0.25,
+      opacity: 0.9, // bright
     });
   }
   return arr;
@@ -450,7 +457,7 @@ export default function TriviaPodum({ trivia }: TriviaPodiumProps) {
             const currentStreak =
               typeof p.current_streak === "number" ? p.current_streak : 0;
             const bestStreak =
-              typeof p.best_streak === "number" ? p.best_streak : 0;
+              typeof p.best_streak === "number" ? p.bestStreak : 0;
 
             return {
               rank: 0,
@@ -564,7 +571,8 @@ export default function TriviaPodum({ trivia }: TriviaPodiumProps) {
   /* --- Step 3rd → 2nd → 1st every 10s, winner stays --- */
   useEffect(() => {
     if (!podiumRows.length) return;
-    if (podiumRows.length === 1 || currentIndex >= podiumRows.length - 1) return;
+    if (podiumRows.length === 1 || currentIndex >= podiumRows.length - 1)
+      return;
 
     const id = window.setTimeout(() => {
       setCurrentIndex((prev) => Math.min(prev + 1, podiumRows.length - 1));
@@ -576,7 +584,7 @@ export default function TriviaPodum({ trivia }: TriviaPodiumProps) {
   const current = podiumRows[currentIndex] || null;
   const glow = getPodiumGlow(current?.placeLabel);
 
-  // ✅ Confetti bursts: loop 5 times, starts at frosted top border
+  // ✅ Confetti bursts: loop many times, more dense and bright
   useEffect(() => {
     if (!current) return;
     if (current.placeLabel !== "1st") return;
@@ -585,11 +593,13 @@ export default function TriviaPodum({ trivia }: TriviaPodiumProps) {
 
     const triggerBurst = () => {
       setConfettiKey((k) => k + 1);
-      setConfetti(makeConfetti(110));
+      setConfetti(makeConfetti(320)); // 💣 way more pieces per burst
     };
 
     for (let i = 0; i < CONFETTI_BURSTS; i++) {
-      timers.push(window.setTimeout(triggerBurst, i * CONFETTI_BURST_INTERVAL_MS));
+      timers.push(
+        window.setTimeout(triggerBurst, i * CONFETTI_BURST_INTERVAL_MS)
+      );
     }
 
     timers.push(
@@ -618,10 +628,11 @@ export default function TriviaPodum({ trivia }: TriviaPodiumProps) {
       : "";
 
   return (
+    // 🔧 ROOT: act as a 1920×1080 stage child, NOT a full viewport
     <div
       style={{
-        width: "100vw",
-        height: "100vh",
+        width: "100%",
+        height: "100%",
         overflow: "hidden",
         position: "relative",
         display: "flex",
@@ -668,41 +679,14 @@ export default function TriviaPodum({ trivia }: TriviaPodiumProps) {
           justifyContent: "center",
         }}
       >
-        {/* TOP TITLE */}
-        <div
-          style={{
-            position: "absolute",
-            top: "2.5vh",
-            left: "50%",
-            transform: "translateX(-50%)",
-            zIndex: 30,
-            pointerEvents: "none",
-            textAlign: "center",
-          }}
-        >
-          <div
-            style={{
-              color: "#fff",
-              fontSize: "clamp(2.5rem,4vw,5rem)",
-              fontWeight: 900,
-              textShadow: `
-                2px 2px 2px #000,
-                -2px 2px 2px #000,
-                2px -2px 2px #000,
-                -2px -2px 2px #000
-              `,
-              lineHeight: 1,
-            }}
-          >
-            {publicName}
-          </div>
-        </div>
-
         {/* MAIN CARD */}
         <div
           style={{
-            width: "min(92vw,1800px)",
-            height: "min(83vh,950px)",
+            // 🔧 use stage-relative sizing instead of vw/vh
+            width: "92%",
+            maxWidth: 1800,
+            height: "83%",
+            maxHeight: 950,
             background: "rgba(255,255,255,0.08)",
             backdropFilter: "blur(20px)",
             borderRadius: 24,
@@ -751,7 +735,7 @@ export default function TriviaPodum({ trivia }: TriviaPodiumProps) {
                       height: `${Math.max(6, p.size * 0.6)}px`,
                       borderRadius: 2,
                       background: p.color,
-                      boxShadow: "0 0 10px rgba(255,255,255,0.22)",
+                      boxShadow: "0 0 10px rgba(255,255,255,0.55)",
                       opacity: p.opacity,
                     }}
                   />
@@ -916,7 +900,11 @@ export default function TriviaPodum({ trivia }: TriviaPodiumProps) {
                       initial={{ opacity: 0, y: 18, scale: 0.98 }}
                       animate={{ opacity: 1, y: 0, scale: 1 }}
                       exit={{ opacity: 0, y: -14, scale: 0.98 }}
-                      transition={{ duration: 0.5, ease: "easeOut", delay: 0.45 }}
+                      transition={{
+                        duration: 0.5,
+                        ease: "easeOut",
+                        delay: 0.45,
+                      }}
                     >
                       <span role="img" aria-label="fire">
                         🔥
