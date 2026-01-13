@@ -279,7 +279,15 @@ export default function GuestSignupPage() {
           setVenueTermsEnabled(false);
         } else if (termsSet) {
           setVenueTerms(termsSet.venue_terms_markdown || "");
-          setVenueTermsEnabled(toBool(termsSet.venue_terms_enabled));
+
+          // ⭐ Treat null/undefined as ON for backwards compatibility
+          const rawEnabled = (termsSet as any).venue_terms_enabled;
+          const enabled =
+            rawEnabled === null || rawEnabled === undefined
+              ? true
+              : toBool(rawEnabled);
+
+          setVenueTermsEnabled(enabled);
         } else {
           setVenueTerms("");
           setVenueTermsEnabled(false);
@@ -670,7 +678,7 @@ export default function GuestSignupPage() {
                 type="date"
                 max={new Date().toISOString().split("T")[0]}
                 className={cn(
-                  "w-full h-[52px] px-3 rounded-xl",
+                  "w-full h/[52px] px-3 rounded-xl",
                   "bg-black/40 border border-white/20",
                   "text-white appearance-none [color-scheme:dark]"
                 )}
@@ -691,7 +699,11 @@ export default function GuestSignupPage() {
           )}
 
           <label className={cn("flex items-center gap-2 text-sm text-gray-300 mt-2")}>
-            <input type="checkbox" checked={agree} onChange={(e) => setAgree(e.target.checked)} />
+            <input
+              type="checkbox"
+              checked={agree}
+              onChange={(e) => setAgree(e.target.checked)}
+            />
             I agree to the{" "}
             <button
               type="button"
