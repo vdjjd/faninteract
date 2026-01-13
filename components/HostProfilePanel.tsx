@@ -7,7 +7,6 @@ import { supabase } from "@/lib/supabaseClient";
 
 import {
   User,
-  Settings,
   CreditCard,
   LogOut,
   SlidersHorizontal,
@@ -141,14 +140,15 @@ export default function HostProfilePanel({ host, setHost }: HostProfilePanelProp
   async function setCollectAge(enabled: boolean) {
     if (!host?.id) return;
 
-    // Turning OFF age collection clears blockers too
     if (!enabled) {
-      await supabase.from("hosts").update({ require_age: false, minimum_age: null }).eq("id", host.id);
+      await supabase
+        .from("hosts")
+        .update({ require_age: false, minimum_age: null })
+        .eq("id", host.id);
       setHost((prev: any) => ({ ...prev, require_age: false, minimum_age: null }));
       return;
     }
 
-    // Turning ON just enables collection; blockers optional
     await supabase.from("hosts").update({ require_age: true }).eq("id", host.id);
     setHost((prev: any) => ({ ...prev, require_age: true }));
   }
@@ -158,15 +158,19 @@ export default function HostProfilePanel({ host, setHost }: HostProfilePanelProp
     if (!collectAgeEnabled) return;
 
     if (enabled) {
-      // Setting one blocker automatically unsets the other because minimum_age becomes a single value.
-      await supabase.from("hosts").update({ require_age: true, minimum_age: age }).eq("id", host.id);
+      await supabase
+        .from("hosts")
+        .update({ require_age: true, minimum_age: age })
+        .eq("id", host.id);
       setHost((prev: any) => ({ ...prev, require_age: true, minimum_age: age }));
       return;
     }
 
-    // If toggling OFF the currently active blocker, clear minimum_age (but keep collecting age)
     if (Number(minimumAge) === age) {
-      await supabase.from("hosts").update({ require_age: true, minimum_age: null }).eq("id", host.id);
+      await supabase
+        .from("hosts")
+        .update({ require_age: true, minimum_age: null })
+        .eq("id", host.id);
       setHost((prev: any) => ({ ...prev, require_age: true, minimum_age: null }));
     }
   }
@@ -216,7 +220,6 @@ export default function HostProfilePanel({ host, setHost }: HostProfilePanelProp
         }
       }
 
-      // Legacy support: "<hostId>.png" treated as slot 1 if empty
       if (!nextSlots[0] && fileSet.has(`${host.id}.png`)) {
         const legacyPath = `${host.id}.png`;
         const { data } = supabase.storage.from(LOGO_BUCKET).getPublicUrl(legacyPath);
@@ -312,7 +315,6 @@ export default function HostProfilePanel({ host, setHost }: HostProfilePanelProp
         return;
       }
 
-      // If deleting active logo, clear host branding_logo_url
       const slotBase = stripQuery(slotUrl);
       if (activeLogoBase && slotBase === activeLogoBase) {
         await supabase.from("hosts").update({ branding_logo_url: null }).eq("id", host.id);
@@ -336,7 +338,6 @@ export default function HostProfilePanel({ host, setHost }: HostProfilePanelProp
 
     try {
       const cacheBusted = `${stripQuery(slotUrl)}?t=${Date.now()}`;
-
       await supabase.from("hosts").update({ branding_logo_url: cacheBusted }).eq("id", host.id);
       setHost((prev: any) => ({ ...prev, branding_logo_url: cacheBusted }));
     } catch (e) {
@@ -460,15 +461,12 @@ export default function HostProfilePanel({ host, setHost }: HostProfilePanelProp
             </div>
           ))}
 
-          {/* ✅ AGE SECTION GOES UNDER ZIP */}
           <div className={cn("p-3", "bg-black/40", "rounded-lg", "border", "border-white/10", "space-y-3")}>
             <div className={cn("flex", "items-center", "justify-between")}>
               <span className={cn("font-medium")}>Age</span>
               <Switch checked={collectAgeEnabled} onCheckedChange={(v) => setCollectAge(v)} />
             </div>
 
-            {/* No disabled prop (your SwitchProps doesn't include it).
-                We disable the blockers via pointer-events + opacity. */}
             <div className={cn(!collectAgeEnabled ? "opacity-40 pointer-events-none" : "")}>
               <div className={cn("flex", "items-center", "justify-between")}>
                 <span className={cn("font-medium")}>Block under 18</span>
@@ -574,13 +572,29 @@ export default function HostProfilePanel({ host, setHost }: HostProfilePanelProp
                 </span>
               </div>
 
+              {/* ✅ MOVED BLOCK ABOVE LOGO LIBRARY */}
+              <div className={cn("text-center", "mt-2")}>
+                <p className={cn("font-semibold", "text-lg", "text-white")}>
+                  {host?.first_name && host?.last_name
+                    ? `${host.first_name} ${host.last_name}`
+                    : host?.venue_name || "Host User"}
+                </p>
+
+                <p className={cn("text-sm", "text-gray-400")}>{host?.email}</p>
+
+                <div className={cn("mt-2", "space-y-1")}>
+                  <p className={cn("text-xs", "text-gray-400")}>Venue: {host?.venue_name}</p>
+                  <p className={cn("text-xs", "text-gray-400")}>Username: {host?.username}</p>
+                  <p className={cn("text-xs", "text-gray-400")}>
+                    Created: {new Date(host?.created_at).toLocaleDateString()}
+                  </p>
+                </div>
+              </div>
+
               {/* ---------------- VENUE LOGO LIBRARY ---------------- */}
               <div className={cn("w-full", "mt-2")}>
                 <div className={cn("text-sm", "text-gray-200", "font-semibold", "text-center")}>
-                  Venue Logo Library{" "}
-                  <span className={cn("text-xs", "text-gray-400", "font-normal")}>
-                    (select a slot, then Upload / Delete / Set Active)
-                  </span>
+                  Venue Logo Library
                 </div>
 
                 <div className={cn("mt-3", "grid", "grid-cols-5", "gap-2", "justify-items-center")}>
@@ -694,15 +708,6 @@ export default function HostProfilePanel({ host, setHost }: HostProfilePanelProp
                 </p>
               </div>
 
-              <div className={cn("text-center", "mt-2")}>
-                <p className={cn("font-semibold", "text-lg", "text-white")}>
-                  {host?.first_name && host?.last_name
-                    ? `${host.first_name} ${host.last_name}`
-                    : host?.venue_name || "Host User"}
-                </p>
-                <p className={cn("text-sm", "text-gray-400")}>{host?.email}</p>
-              </div>
-
               <div className={cn("flex", "flex-col", "gap-2", "w-full", "mt-2")}>
                 <Button variant="outline" onClick={() => setShowEmailModal(true)}>
                   Change Email
@@ -714,28 +719,8 @@ export default function HostProfilePanel({ host, setHost }: HostProfilePanelProp
             </div>
           </section>
 
-          {/* ---------------------- SETTINGS ----------------------- */}
+          {/* ---------------------- REST OF PANEL (unchanged) ----------------------- */}
           <section>
-            <div
-              className={cn(
-                "flex",
-                "items-center",
-                "justify-center",
-                "gap-3",
-                "mb-3",
-                "text-blue-400",
-                "font-semibold"
-              )}
-            >
-              <Settings className={cn("w-5", "h-5")} /> Settings
-            </div>
-
-            <p className={cn("text-sm", "text-gray-400", "text-center")}>Venue: {host?.venue_name}</p>
-            <p className={cn("text-sm", "text-gray-400", "text-center")}>Username: {host?.username}</p>
-            <p className={cn("text-sm", "text-gray-400", "text-center")}>
-              Created: {new Date(host?.created_at).toLocaleDateString()}
-            </p>
-
             <div
               className={cn(
                 "mt-4",
@@ -754,7 +739,7 @@ export default function HostProfilePanel({ host, setHost }: HostProfilePanelProp
                 <span className={cn("text-xs", "text-gray-400")}>Track return visits and show badges</span>
               </div>
 
-              <Switch checked={loyaltyEnabled} onCheckedChange={(v) => updateGuestOption("loyalty_enabled", v)} />
+              <Switch checked={!!host.loyalty_enabled} onCheckedChange={(v) => updateGuestOption("loyalty_enabled", v)} />
             </div>
 
             <Button
@@ -802,7 +787,7 @@ export default function HostProfilePanel({ host, setHost }: HostProfilePanelProp
 
               <p className={cn("text-xs", "text-gray-400")}>
                 This will clear data attached to this host: event guest buckets and priority lead forms.
-                {loyaltyEnabled ? (
+                {!!host.loyalty_enabled ? (
                   <>
                     {" "}
                     Your loyalty guests & badges are kept — only per-show buckets and lead capture for this host are
@@ -822,7 +807,7 @@ export default function HostProfilePanel({ host, setHost }: HostProfilePanelProp
                 className={cn("w-full", "mt-1", "text-sm")}
                 onClick={() => setShowClearGuestsModal(true)}
               >
-                {loyaltyEnabled ? "Clear Event Guest & Lead Data" : "Clear All Guest & Lead Data for This Host"}
+                {!!host.loyalty_enabled ? "Clear Event Guest & Lead Data" : "Clear All Guest & Lead Data for This Host"}
               </Button>
 
               {clearGuestsError && <p className={cn("text-xs", "text-red-400", "mt-1")}>{clearGuestsError}</p>}
@@ -911,11 +896,11 @@ export default function HostProfilePanel({ host, setHost }: HostProfilePanelProp
         >
           <div className={cn("text-white", "max-w-sm")}>
             <h2 className={cn("text-lg", "font-semibold", "text-center", "text-red-300", "mb-3")}>
-              {loyaltyEnabled ? "Clear Event Guests & Leads?" : "Clear All Guests & Leads for This Host?"}
+              {!!host.loyalty_enabled ? "Clear Event Guests & Leads?" : "Clear All Guests & Leads for This Host?"}
             </h2>
 
             <p className={cn("text-sm", "text-gray-300", "mb-4")}>
-              {loyaltyEnabled ? (
+              {!!host.loyalty_enabled ? (
                 <>
                   This will clear the guest/event buckets and priority_leads tied to this host, but will{" "}
                   <strong>keep</strong> your loyalty guests and badge history.

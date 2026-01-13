@@ -47,6 +47,9 @@ async function broadcastReload(wheelId: string) {
 
 type Action = "go" | "stop" | "auto";
 
+const DEFAULT_SMS_TEMPLATE =
+  "Congrats {first_name}! You won {wheel_title}. Please come to claim your prize.";
+
 export default function PrizeWheelCard({
   wheel,
   onOpenOptions,
@@ -86,6 +89,16 @@ export default function PrizeWheelCard({
   );
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);
 
+  // ✅ SMS Winner Settings (NEW)
+  const [smsWinnerEnabled, setSmsWinnerEnabled] = useState<boolean>(
+    !!wheel.sms_winner_enabled
+  );
+  const [smsWinnerMessage, setSmsWinnerMessage] = useState<string>(
+    (wheel.sms_winner_message ?? "").trim() || DEFAULT_SMS_TEMPLATE
+  );
+  const [smsDirty, setSmsDirty] = useState(false);
+  const [smsSaving, setSmsSaving] = useState(false);
+
   const [isMobile, setIsMobile] = useState(false);
 
   // ✅ local session holder (per card)
@@ -113,24 +126,36 @@ export default function PrizeWheelCard({
     setThankYouPopupEnabled(!!wheel.thank_you_popup_enabled);
   }, [wheel.id, wheel.thank_you_popup_enabled]);
 
+  // ✅ keep SMS state synced if wheel updates from realtime/dashboard refresh
+  useEffect(() => {
+    setSmsWinnerEnabled(!!wheel.sms_winner_enabled);
+
+    const nextMsg =
+      (wheel.sms_winner_message ?? "").trim() || DEFAULT_SMS_TEMPLATE;
+    setSmsWinnerMessage(nextMsg);
+    setSmsDirty(false);
+  }, [wheel.id, wheel.sms_winner_enabled, wheel.sms_winner_message]);
+
   /* ---------------------------------------------------------
      ✅ FIXED: counts using head:true + count:exact (no 1000 cap)
   --------------------------------------------------------- */
   async function loadCounts() {
     try {
-      const [{ count: approvedCount, error: aErr }, { count: pendCount, error: pErr }] =
-        await Promise.all([
-          supabase
-            .from("wheel_entries")
-            .select("id", { count: "exact", head: true })
-            .eq("wheel_id", wheel.id)
-            .eq("status", "approved"),
-          supabase
-            .from("wheel_entries")
-            .select("id", { count: "exact", head: true })
-            .eq("wheel_id", wheel.id)
-            .eq("status", "pending"),
-        ]);
+      const [
+        { count: approvedCount, error: aErr },
+        { count: pendCount, error: pErr },
+      ] = await Promise.all([
+        supabase
+          .from("wheel_entries")
+          .select("id", { count: "exact", head: true })
+          .eq("wheel_id", wheel.id)
+          .eq("status", "approved"),
+        supabase
+          .from("wheel_entries")
+          .select("id", { count: "exact", head: true })
+          .eq("wheel_id", wheel.id)
+          .eq("status", "pending"),
+      ]);
 
       if (aErr) console.error("loadCounts approved error:", aErr);
       if (pErr) console.error("loadCounts pending error:", pErr);
@@ -232,6 +257,71 @@ export default function PrizeWheelCard({
       if (newEnabled) setSettingsModalOpen(true);
     } catch (e: any) {
       showToast(e?.message || "Toggle failed");
+    }
+  }
+
+  // ✅ NEW: SMS toggle
+  async function handleSmsWinnerToggle() {
+    try {
+      const newEnabled = !smsWinnerEnabled;
+      setSmsWinnerEnabled(newEnabled);
+
+      const patch: any = { sms_winner_enabled: newEnabled };
+
+      // If enabling and message is blank, seed a default so the API can send immediately
+      if (newEnabled) {
+        const trimmed = (smsWinnerMessage ?? "").trim();
+        patch.sms_winner_message = trimmed || DEFAULT_SMS_TEMPLATE;
+        if (!trimmed) {
+          setSmsWinnerMessage(DEFAULT_SMS_TEMPLATE);
+          setSmsDirty(true);
+        }
+      }
+
+      const { error } = await supabase
+        .from("prize_wheels")
+        .update(patch)
+        .eq("id", wheel.id);
+
+      if (error) {
+        showToast(error.message || "Text Winner toggle failed");
+        setSmsWinnerEnabled(!newEnabled);
+        return;
+      }
+    } catch (e: any) {
+      showToast(e?.message || "Text Winner toggle failed");
+    }
+  }
+
+  // ✅ NEW: Save SMS template
+  async function handleSaveSmsMessage() {
+    try {
+      setSmsSaving(true);
+      const msg = (smsWinnerMessage ?? "").trim();
+
+      if (!msg) {
+        showToast("Message cannot be empty");
+        setSmsSaving(false);
+        return;
+      }
+
+      const { error } = await supabase
+        .from("prize_wheels")
+        .update({ sms_winner_message: msg })
+        .eq("id", wheel.id);
+
+      if (error) {
+        showToast(error.message || "Failed to save message");
+        setSmsSaving(false);
+        return;
+      }
+
+      setSmsDirty(false);
+      showToast("Winner text message saved", "rgba(16,185,129,0.95)");
+    } catch (e: any) {
+      showToast(e?.message || "Failed to save message");
+    } finally {
+      setSmsSaving(false);
     }
   }
 
@@ -386,7 +476,6 @@ export default function PrizeWheelCard({
         winner,
       });
     } catch (e: any) {
-      // 409 from API will land here instead of crashing the whole page
       showToast(e?.message || "Spin Auto failed");
     }
   }
@@ -496,7 +585,9 @@ export default function PrizeWheelCard({
           value={activeTab}
           onValueChange={(v) => setActiveTab(v as "menu" | "settings")}
         >
-          <Tabs.List className={cn("flex gap-4 mb-3 border-b border-white/10 pb-1 text-sm")}>
+          <Tabs.List
+            className={cn("flex gap-4 mb-3 border-b border-white/10 pb-1 text-sm")}
+          >
             <Tabs.Trigger
               value="menu"
               className={cn("px-2 py-1 font-semibold data-[state=active]:text-blue-400")}
@@ -550,7 +641,11 @@ export default function PrizeWheelCard({
               </p>
             </div>
 
-            <div className={cn("flex flex-wrap justify-center gap-2 mt-auto pt-2 border-t border-white/10")}>
+            <div
+              className={cn(
+                "flex flex-wrap justify-center gap-2 mt-auto pt-2 border-t border-white/10"
+              )}
+            >
               <div
                 onClick={handleRemoteToggle}
                 className={cn(
@@ -583,14 +678,18 @@ export default function PrizeWheelCard({
 
               <button
                 onClick={handlePlay}
-                className={cn("px-3 py-1 rounded text-sm font-semibold bg-yellow-600 hover:bg-yellow-700 text-black")}
+                className={cn(
+                  "px-3 py-1 rounded text-sm font-semibold bg-yellow-600 hover:bg-yellow-700 text-black"
+                )}
               >
                 ▶ Play
               </button>
 
               <button
                 onClick={handleStopWall}
-                className={cn("px-3 py-1 rounded text-sm font-semibold bg-red-600 hover:bg-red-700")}
+                className={cn(
+                  "px-3 py-1 rounded text-sm font-semibold bg-red-600 hover:bg-red-700"
+                )}
               >
                 ⏹ Stop
               </button>
@@ -624,7 +723,9 @@ export default function PrizeWheelCard({
               {/* ✅ Spin GO */}
               <button
                 onClick={handleSpinGo}
-                className={cn("px-3 py-1 rounded text-sm font-semibold bg-sky-600 hover:bg-sky-700 text-white")}
+                className={cn(
+                  "px-3 py-1 rounded text-sm font-semibold bg-sky-600 hover:bg-sky-700 text-white"
+                )}
               >
                 🌀 Spin GO
               </button>
@@ -632,7 +733,9 @@ export default function PrizeWheelCard({
               {/* ✅ Spin Stop */}
               <button
                 onClick={handleSpinStop}
-                className={cn("px-3 py-1 rounded text-sm font-semibold bg-amber-500 hover:bg-amber-600 text-black")}
+                className={cn(
+                  "px-3 py-1 rounded text-sm font-semibold bg-amber-500 hover:bg-amber-600 text-black"
+                )}
               >
                 🛑 Spin Stop
               </button>
@@ -657,28 +760,40 @@ export default function PrizeWheelCard({
                     window._activePrizeWheel = popup;
                   }
                 }}
-                className={cn("px-3 py-1 rounded text-sm font-semibold bg-purple-600 hover:bg-purple-700 text-white")}
+                className={cn(
+                  "px-3 py-1 rounded text-sm font-semibold bg-purple-600 hover:bg-purple-700 text-white"
+                )}
               >
                 🔄 Reload Wheel
               </button>
 
               <button
                 onClick={() => onOpenOptions(wheel)}
-                className={cn("px-3 py-1 rounded text-sm font-semibold bg-indigo-500 hover:bg-indigo-600")}
+                className={cn(
+                  "px-3 py-1 rounded text-sm font-semibold bg-indigo-500 hover:bg-indigo-600"
+                )}
               >
                 ⚙ Options
               </button>
 
               <button
                 onClick={() => onDelete(wheel.id)}
-                className={cn("px-3 py-1 rounded text-sm font-semibold bg-red-700 hover:bg-red-800")}
+                className={cn(
+                  "px-3 py-1 rounded text-sm font-semibold bg-red-700 hover:bg-red-800"
+                )}
               >
                 ❌ Delete
               </button>
             </div>
           </Tabs.Content>
 
-          <Tabs.Content value="settings" className={cn("mt-2", "text-left", "text-sm")}>
+          <Tabs.Content
+            value="settings"
+            className={cn("mt-2", "text-left", "text-sm")}
+          >
+            {/* =========================
+                Thank You Popup (existing)
+            ========================== */}
             <div className={cn("flex", "items-center", "justify-between", "gap-2")}>
               <span className={cn("text-sm", "font-semibold", "whitespace-nowrap")}>
                 Thank You Popup
@@ -717,6 +832,84 @@ export default function PrizeWheelCard({
                   />
                 </button>
               </div>
+            </div>
+
+            {/* =========================
+                Text Winner (NEW)
+            ========================== */}
+            <div className={cn("mt-4 pt-3 border-t border-white/10")}>
+              <div className={cn("flex items-center justify-between gap-2")}>
+                <span className={cn("text-sm font-semibold whitespace-nowrap")}>
+                  Text Winner
+                </span>
+
+                <div className={cn("flex items-center gap-2 ml-auto")}>
+                  <button
+                    type="button"
+                    onClick={handleSmsWinnerToggle}
+                    className={cn(
+                      "relative w-14 h-7 rounded-full cursor-pointer transition-all",
+                      smsWinnerEnabled
+                        ? "bg-emerald-500 shadow-[0_0_12px_rgba(16,185,129,0.7)]"
+                        : "bg-gray-600"
+                    )}
+                    title="Enable texting a winner when Spin Auto / Spin Stop selects a winner"
+                  >
+                    <span
+                      className={cn(
+                        "absolute top-1 left-1 w-5 h-5 rounded-full bg-white shadow transition-all",
+                        smsWinnerEnabled ? "translate-x-7" : ""
+                      )}
+                    />
+                  </button>
+                </div>
+              </div>
+
+              <div className={cn("mt-2 text-xs text-white/70")}>
+                Sends a text to the winner when a winner is selected (Auto or Stop).<br />
+                Tokens: <span className="font-mono">{`{first_name}`}</span>,{" "}
+                <span className="font-mono">{`{last_name}`}</span>,{" "}
+                <span className="font-mono">{`{wheel_title}`}</span>
+              </div>
+
+              {smsWinnerEnabled && (
+                <div className={cn("mt-3")}>
+                  <textarea
+                    value={smsWinnerMessage}
+                    onChange={(e) => {
+                      setSmsWinnerMessage(e.target.value);
+                      setSmsDirty(true);
+                    }}
+                    rows={4}
+                    className={cn(
+                      "w-full rounded-lg p-2 text-sm",
+                      "bg-black/40 text-white border border-white/15",
+                      "focus:outline-none focus:ring-2 focus:ring-emerald-400/50"
+                    )}
+                    placeholder={DEFAULT_SMS_TEMPLATE}
+                  />
+
+                  <div className={cn("flex items-center justify-between mt-2 gap-2")}>
+                    <div className={cn("text-[0.7rem] text-white/60")}>
+                      Example: Congrats {`{first_name}`}! You won {`{wheel_title}`}.
+                    </div>
+
+                    <button
+                      type="button"
+                      disabled={!smsDirty || smsSaving}
+                      onClick={handleSaveSmsMessage}
+                      className={cn(
+                        "px-3 py-1 rounded-md text-sm font-semibold transition",
+                        smsDirty && !smsSaving
+                          ? "bg-emerald-500 hover:bg-emerald-600 text-black"
+                          : "bg-gray-600 text-gray-300 cursor-not-allowed"
+                      )}
+                    >
+                      {smsSaving ? "Saving…" : "Save Message"}
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </Tabs.Content>
         </Tabs.Root>
