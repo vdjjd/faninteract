@@ -1,8 +1,4 @@
-diff --git a/app/trivia/ai-generate/route.ts b/app/trivia/ai-generate/route.ts
-index 1111111..2222222 100644
---- a/app/trivia/ai-generate/route.ts
-+++ b/app/trivia/ai-generate/route.ts
-@@ -1,4 +1,4 @@
+
  // app/trivia/ai-generate/route.ts
  // If you want /api/trivia/generate, move this file to:
  // app/api/trivia/generate/route.ts
