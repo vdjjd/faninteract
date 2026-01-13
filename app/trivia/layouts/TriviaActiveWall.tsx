@@ -70,7 +70,7 @@ const FIRE_STREAK = 3;
 const FIRE_VIDEO_SRC = "/streak-flames.mp4";
 
 /* QUESTION FONT AUTOFIT */
-const QUESTION_MAX_LINES = 3;
+const QUESTION_MAX_LINES = 4; // ✅ allow up to 4 lines before scaling down
 const QUESTION_BASE_FONT_SIZE = "clamp(2.4rem,3.5vw,4.5rem)";
 const QUESTION_MIN_SCALE = 0.55;
 
