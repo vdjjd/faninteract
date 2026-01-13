@@ -36,8 +36,8 @@ type WallView = "question" | "leaderboard" | "podium";
 /* QR + LOGO CONTROL (use % so it respects 1920x1080)   */
 /* ---------------------------------------------------- */
 const QR_CTRL = {
-  bottom: "7.5%",
-  left: "4%",
+  bottom: "6.5%",
+  left: "3.5%",
   size: 210,
   opacity: 0.35,
 };
@@ -56,7 +56,7 @@ const LOGO_CTRL = {
 const LEADER_UI = {
   titleTop: "9%",
   listTop: "18%",
-  maxWidth: 1400,
+  maxWidth: 1350,
   rowGap: 14,
   rowPadX: 22,
   rowHeight: 92,
@@ -70,7 +70,7 @@ const FIRE_STREAK = 3;
 const FIRE_VIDEO_SRC = "/streak-flames.mp4";
 
 /* QUESTION FONT AUTOFIT */
-const QUESTION_MAX_LINES = 4; // ✅ allow up to 4 lines before scaling down
+const QUESTION_MAX_LINES = 4;
 const QUESTION_BASE_FONT_SIZE = "clamp(2.4rem,3.5vw,4.5rem)";
 const QUESTION_MIN_SCALE = 0.55;
 
@@ -118,7 +118,6 @@ function pickPublicName(row: any): string {
   return "Trivia Game";
 }
 
-/* Herd flag reader */
 function readHerdEnabled(row: any): boolean {
   if (typeof row?.highlight_the_herd_enabled !== "undefined") {
     return !!row.highlight_the_herd_enabled;
@@ -879,7 +878,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
         .map((p: any) => {
           const safeName = formatDisplayName(p.display_name);
           const currentStreak = typeof p.current_streak === "number" ? p.current_streak : 0;
-          const bestStreak = typeof p.best_streak === "number" ? p.best_streak : 0;
+          const bestStreak = typeof p.best_streak === "number" ? p.bestStreak : 0;
 
           return {
             rank: 0,
@@ -1321,8 +1320,8 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                       <div style={{ display: "flex", flexDirection: "column", gap: LEADER_UI.rowGap }}>
                         {leaderRows.slice(0, 10).map((r) => {
                           const streak = r.currentStreak ?? 0;
-                          const showStreak = !!streakMultiplierEnabled; // ✅ hide streak UI when option is off
-                          const isOnFire = showStreak && streak >= FIRE_STREAK; // ✅ ON FIRE depends on streak being enabled too
+                          const showStreak = !!streakMultiplierEnabled;
+                          const isOnFire = showStreak && streak >= FIRE_STREAK;
 
                           return (
                             <div
@@ -1354,7 +1353,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                                 }}
                               />
 
-                              {/* ✅ flames video spans the FULL row */}
+                              {/* flames video spans the FULL row */}
                               {isOnFire && (
                                 <video
                                   className="fi-fire-video"
@@ -1374,6 +1373,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                                   alignItems: "center",
                                   gap: 12,
                                   zIndex: 2,
+                                  marginRight: 28, // ⬅️ extra space between selfie and player name
                                 }}
                               >
                                 <div
@@ -1466,8 +1466,8 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                                       padding: "0.35em 0.65em",
                                       borderRadius: 999,
                                       border: "1px solid rgba(255,255,255,0.35)",
-                                      background: "rgba(0,0,0,0.78)", // ✅ black pill
-                                      color: "#fff", // ✅ white letters
+                                      background: "rgba(0,0,0,0.78)",
+                                      color: "#fff",
                                       textShadow: "0 0 2px #000, 0 0 12px rgba(0,0,0,0.75)",
                                       display: "inline-flex",
                                       alignItems: "center",
@@ -1656,7 +1656,6 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
             0 0 22px rgba(255, 160, 0, 0.25);
         }
 
-        /* ✅ flames: true full-row background */
         .fi-fire-video {
           position: absolute;
           inset: 0;
