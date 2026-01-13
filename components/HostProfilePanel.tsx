@@ -39,9 +39,7 @@ export default function HostProfilePanel({
   const [showTermsModal, setShowTermsModal] = useState(false);
 
   const [uploadingLogo, setUploadingLogo] = useState(false);
-  const [logoPreview, setLogoPreview] = useState(
-    host?.branding_logo_url || ""
-  );
+  const [logoPreview, setLogoPreview] = useState(host?.branding_logo_url || "");
 
   // ✅ Billing portal button state
   const [billingLoading, setBillingLoading] = useState(false);
@@ -55,6 +53,10 @@ export default function HostProfilePanel({
   const [activeTermsLabel, setActiveTermsLabel] = useState<string | null>(null);
   const [activeTermsLoading, setActiveTermsLoading] = useState(false);
 
+  // ✅ Dedupe state (new)
+  const [dedupeLoading, setDedupeLoading] = useState(false);
+  const [dedupeError, setDedupeError] = useState<string | null>(null);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   async function handleLogout() {
@@ -65,10 +67,6 @@ export default function HostProfilePanel({
   /* ---------------------- EXPORT GUEST / LEAD DATA ---------------------- */
   function exportGuestsCSV() {
     if (!host?.id) return;
-    // This now exports:
-    // - event guests from export_host_guests()
-    // - priority_leads rows
-    // with separate date + time columns
     window.open(`/api/export/guests?hostId=${host.id}`, "_blank");
   }
 
@@ -213,15 +211,10 @@ export default function HostProfilePanel({
         return;
       }
 
-      const { data } = supabase.storage
-        .from("host-logos")
-        .getPublicUrl(filePath);
+      const { data } = supabase.storage.from("host-logos").getPublicUrl(filePath);
       const cacheBusted = `${data.publicUrl}?t=${Date.now()}`;
 
-      await supabase
-        .from("hosts")
-        .update({ branding_logo_url: cacheBusted })
-        .eq("id", host.id);
+      await supabase.from("hosts").update({ branding_logo_url: cacheBusted }).eq("id", host.id);
 
       setHost((prev: any) => ({ ...prev, branding_logo_url: cacheBusted }));
       setLogoPreview(cacheBusted);
@@ -241,9 +234,7 @@ export default function HostProfilePanel({
     const filename = url.split("/").pop()?.split("?")[0];
     if (!filename) return alert("Could not extract logo filename.");
 
-    const { error: deleteError } = await supabase.storage
-      .from("host-logos")
-      .remove([filename]);
+    const { error: deleteError } = await supabase.storage.from("host-logos").remove([filename]);
 
     if (deleteError) {
       console.error(deleteError);
@@ -251,10 +242,7 @@ export default function HostProfilePanel({
       return;
     }
 
-    await supabase
-      .from("hosts")
-      .update({ branding_logo_url: null })
-      .eq("id", host.id);
+    await supabase.from("hosts").update({ branding_logo_url: null }).eq("id", host.id);
 
     setHost((prev: any) => ({ ...prev, branding_logo_url: null }));
     setLogoPreview("");
@@ -267,18 +255,13 @@ export default function HostProfilePanel({
     setClearGuestsError(null);
 
     try {
-      // 🔥 This RPC implements:
-      // 1) Always clear host_event_guests + priority_leads for this host
-      // 2) If host.loyalty_enabled = false → also clear guest_host_links + orphan guest_profiles
       const { error } = await supabase.rpc("clear_host_guests_hard", {
         p_host_id: host.id,
       });
 
       if (error) {
         console.error("clear_host_guests_hard error:", error);
-        setClearGuestsError(
-          error.message || "Unable to clear guest / lead data."
-        );
+        setClearGuestsError(error.message || "Unable to clear guest / lead data.");
         return;
       }
 
@@ -286,11 +269,41 @@ export default function HostProfilePanel({
       alert("Guest and lead data cleared for this host.");
     } catch (e: any) {
       console.error("handleConfirmClearGuests error:", e);
-      setClearGuestsError(
-        e?.message || "Unable to clear guest / lead data."
-      );
+      setClearGuestsError(e?.message || "Unable to clear guest / lead data.");
     } finally {
       setClearGuestsLoading(false);
+    }
+  }
+
+  /* ---------------------- DELETE DUPLICATE GUEST PROFILES ---------------------- */
+  async function handleDeleteDuplicateProfiles() {
+    if (!host?.id) return;
+    setDedupeLoading(true);
+    setDedupeError(null);
+
+    try {
+      const { data, error } = await supabase.rpc("delete_duplicate_guest_profiles", {
+        p_host_id: host.id,
+      });
+
+      if (error) {
+        console.error("delete_duplicate_guest_profiles error:", error);
+        setDedupeError(error.message || "Unable to delete duplicate guest profiles.");
+        return;
+      }
+
+      const deletedCount = (typeof data === "number" ? data : 0);
+
+      alert(
+        deletedCount > 0
+          ? `Deleted ${deletedCount} duplicate guest profile${deletedCount === 1 ? "" : "s"}.`
+          : "No duplicate guest profiles found for this host."
+      );
+    } catch (e: any) {
+      console.error("handleDeleteDuplicateProfiles error:", e);
+      setDedupeError(e?.message || "Unable to delete duplicate guest profiles.");
+    } finally {
+      setDedupeLoading(false);
     }
   }
 
@@ -361,12 +374,8 @@ export default function HostProfilePanel({
               "border-white/10"
             )}
           >
-            <span className={cn("font-medium", "text-gray-200")}>
-              First Name
-            </span>
-            <span
-              className={cn("text-gray-400", "text-sm", "italic")}
-            >
+            <span className={cn("font-medium", "text-gray-200")}>First Name</span>
+            <span className={cn("text-gray-400", "text-sm", "italic")}>
               (always required)
             </span>
           </div>
@@ -409,16 +418,7 @@ export default function HostProfilePanel({
   /* --------------------------- RENDER PANEL --------------------------- */
   if (!host) {
     return (
-      <div
-        className={cn(
-          "flex",
-          "items-center",
-          "justify-center",
-          "text-gray-400",
-          "text-sm",
-          "py-6"
-        )}
-      >
+      <div className={cn("flex", "items-center", "justify-center", "text-gray-400", "text-sm", "py-6")}>
         Loading profile…
       </div>
     );
@@ -486,15 +486,7 @@ export default function HostProfilePanel({
               <User className={cn("w-5", "h-5")} /> Account
             </div>
 
-            <div
-              className={cn(
-                "flex",
-                "flex-col",
-                "items-center",
-                "gap-3",
-                "text-center"
-              )}
-            >
+            <div className={cn("flex", "flex-col", "items-center", "gap-3", "text-center")}>
               {/* Avatar */}
               <div
                 className={cn(
@@ -511,13 +503,7 @@ export default function HostProfilePanel({
                   "bg-gray-800"
                 )}
               >
-                <span
-                  className={cn(
-                    "text-3xl",
-                    "font-semibold",
-                    "text-gray-300"
-                  )}
-                >
+                <span className={cn("text-3xl", "font-semibold", "text-gray-300")}>
                   {host?.first_name?.[0]?.toUpperCase() || "H"}
                 </span>
               </div>
@@ -556,22 +542,14 @@ export default function HostProfilePanel({
                   )}
                 >
                   <Upload className={cn("w-4", "h-4")} />
-                  <span className="text-sm">
-                    {uploadingLogo ? "Uploading…" : "Upload"}
-                  </span>
+                  <span className="text-sm">{uploadingLogo ? "Uploading…" : "Upload"}</span>
                 </Button>
 
                 <Button
                   variant="destructive"
                   disabled={!logoPreview}
                   onClick={handleDeleteLogo}
-                  className={cn(
-                    "px-3",
-                    "py-2",
-                    "flex",
-                    "items-center",
-                    "gap-1"
-                  )}
+                  className={cn("px-3", "py-2", "flex", "items-center", "gap-1")}
                 >
                   <Trash2 className={cn("w-4", "h-4")} />
                   <span className="text-sm">Delete</span>
@@ -586,14 +564,7 @@ export default function HostProfilePanel({
                 onChange={handleLogoUpload}
               />
 
-              <p
-                className={cn(
-                  "text-xs",
-                  "text-gray-400",
-                  "mt-1",
-                  "text-center"
-                )}
-              >
+              <p className={cn("text-xs", "text-gray-400", "mt-1", "text-center")}>
                 Best results:
                 <br />
                 <strong>1600 × 1600 PNG</strong> (transparent background)
@@ -601,42 +572,20 @@ export default function HostProfilePanel({
 
               {/* Name + Email */}
               <div className={cn("text-center", "mt-4")}>
-                <p
-                  className={cn(
-                    "font-semibold",
-                    "text-lg",
-                    "text-white"
-                  )}
-                >
+                <p className={cn("font-semibold", "text-lg", "text-white")}>
                   {host?.first_name && host?.last_name
                     ? `${host.first_name} ${host.last_name}`
                     : host?.venue_name || "Host User"}
                 </p>
-                <p className={cn("text-sm", "text-gray-400")}>
-                  {host?.email}
-                </p>
+                <p className={cn("text-sm", "text-gray-400")}>{host?.email}</p>
               </div>
 
               {/* Change Email + Pass */}
-              <div
-                className={cn(
-                  "flex",
-                  "flex-col",
-                  "gap-2",
-                  "w-full",
-                  "mt-4"
-                )}
-              >
-                <Button
-                  variant="outline"
-                  onClick={() => setShowEmailModal(true)}
-                >
+              <div className={cn("flex", "flex-col", "gap-2", "w-full", "mt-4")}>
+                <Button variant="outline" onClick={() => setShowEmailModal(true)}>
                   Change Email
                 </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => setShowPassModal(true)}
-                >
+                <Button variant="outline" onClick={() => setShowPassModal(true)}>
                   Change Password
                 </Button>
               </div>
@@ -659,31 +608,13 @@ export default function HostProfilePanel({
               <Settings className={cn("w-5", "h-5")} /> Settings
             </div>
 
-            <p
-              className={cn(
-                "text-sm",
-                "text-gray-400",
-                "text-center"
-              )}
-            >
+            <p className={cn("text-sm", "text-gray-400", "text-center")}>
               Venue: {host?.venue_name}
             </p>
-            <p
-              className={cn(
-                "text-sm",
-                "text-gray-400",
-                "text-center"
-              )}
-            >
+            <p className={cn("text-sm", "text-gray-400", "text-center")}>
               Username: {host?.username}
             </p>
-            <p
-              className={cn(
-                "text-sm",
-                "text-gray-400",
-                "text-center"
-              )}
-            >
+            <p className={cn("text-sm", "text-gray-400", "text-center")}>
               Created: {new Date(host?.created_at).toLocaleDateString()}
             </p>
 
@@ -702,42 +633,41 @@ export default function HostProfilePanel({
               )}
             >
               <div className={cn("flex", "flex-col")}>
-                <span
-                  className={cn(
-                    "font-medium",
-                    "text-gray-200"
-                  )}
-                >
-                  🏅 Guest Loyalty
-                </span>
-                <span
-                  className={cn(
-                    "text-xs",
-                    "text-gray-400"
-                  )}
-                >
+                <span className={cn("font-medium", "text-gray-200")}>🏅 Guest Loyalty</span>
+                <span className={cn("text-xs", "text-gray-400")}>
                   Track return visits and show badges
                 </span>
               </div>
 
               <Switch
                 checked={loyaltyEnabled}
-                onCheckedChange={(v) =>
-                  updateGuestOption("loyalty_enabled", v)
-                }
+                onCheckedChange={(v) => updateGuestOption("loyalty_enabled", v)}
               />
             </div>
 
+            {/* ✅ Delete duplicates button (NEW) */}
             <Button
               variant="outline"
               className={cn(
                 "w-full",
-                "mt-3",
-                "flex",
-                "items-center",
-                "justify-center",
-                "gap-2"
+                "mt-2",
+                !loyaltyEnabled && "opacity-50 cursor-not-allowed"
               )}
+              disabled={!loyaltyEnabled || dedupeLoading}
+              onClick={handleDeleteDuplicateProfiles}
+            >
+              {dedupeLoading ? "Deleting duplicates…" : "Delete Duplicate Profiles"}
+            </Button>
+
+            {dedupeError && (
+              <p className={cn("text-xs", "text-red-400", "mt-1")}>
+                {dedupeError}
+              </p>
+            )}
+
+            <Button
+              variant="outline"
+              className={cn("w-full", "mt-3", "flex", "items-center", "justify-center", "gap-2")}
               onClick={() => setShowGuestModal(true)}
             >
               <SlidersHorizontal className={cn("w-4", "h-4")} />
@@ -755,17 +685,13 @@ export default function HostProfilePanel({
             {/* Active venue terms badge */}
             <div className={cn("mt-1", "text-center")}>
               {activeTermsLoading ? (
-                <p className={cn("text-xs", "text-gray-500")}>
-                  Loading active venue terms…
-                </p>
+                <p className={cn("text-xs", "text-gray-500")}>Loading active venue terms…</p>
               ) : activeTermsLabel ? (
                 <p className={cn("text-xs", "text-gray-300")}>
                   Active venue terms: <span className="font-medium">{activeTermsLabel}</span>
                 </p>
               ) : (
-                <p className={cn("text-xs", "text-gray-500")}>
-                  Using host default terms only.
-                </p>
+                <p className={cn("text-xs", "text-gray-500")}>Using host default terms only.</p>
               )}
             </div>
 
@@ -783,32 +709,14 @@ export default function HostProfilePanel({
                 "space-y-2"
               )}
             >
-              <div
-                className={cn(
-                  "flex",
-                  "items-center",
-                  "justify-between"
-                )}
-              >
-                <span
-                  className={cn(
-                    "font-semibold",
-                    "text-red-300"
-                  )}
-                >
+              <div className={cn("flex", "items-center", "justify-between")}>
+                <span className={cn("font-semibold", "text-red-300")}>
                   Guest & Lead Data Management
                 </span>
-                <Trash2
-                  className={cn("w-4", "h-4", "text-red-400")}
-                />
+                <Trash2 className={cn("w-4", "h-4", "text-red-400")} />
               </div>
 
-              <p
-                className={cn(
-                  "text-xs",
-                  "text-gray-400"
-                )}
-              >
+              <p className={cn("text-xs", "text-gray-400")}>
                 This will clear data attached to this host: event guest
                 buckets and priority lead forms.
                 {loyaltyEnabled ? (
@@ -839,32 +747,18 @@ export default function HostProfilePanel({
               </Button>
 
               {clearGuestsError && (
-                <p
-                  className={cn(
-                    "text-xs",
-                    "text-red-400",
-                    "mt-1"
-                  )}
-                >
+                <p className={cn("text-xs", "text-red-400", "mt-1")}>
                   {clearGuestsError}
                 </p>
               )}
             </div>
           </section>
 
-          <Button
-            variant="outline"
-            className={cn("w-full", "mt-3")}
-            onClick={exportGuestsCSV}
-          >
+          <Button variant="outline" className={cn("w-full", "mt-3")} onClick={exportGuestsCSV}>
             Export Guests & Leads (CSV)
           </Button>
 
-          <Button
-            variant="outline"
-            className={cn("w-full", "mt-2")}
-            onClick={printGuestsPDF}
-          >
+          <Button variant="outline" className={cn("w-full", "mt-2")} onClick={printGuestsPDF}>
             Print Guests (PDF)
           </Button>
 
@@ -894,14 +788,7 @@ export default function HostProfilePanel({
             </Button>
 
             {!host?.stripe_customer_id ? (
-              <p
-                className={cn(
-                  "text-xs",
-                  "text-gray-400",
-                  "mt-2",
-                  "text-center"
-                )}
-              >
+              <p className={cn("text-xs", "text-gray-400", "mt-2", "text-center")}>
                 No billing profile yet — subscribe first.
               </p>
             ) : null}
@@ -922,11 +809,7 @@ export default function HostProfilePanel({
             >
               <LogOut className={cn("w-5", "h-5")} /> Security
             </div>
-            <Button
-              variant="destructive"
-              className="w-full"
-              onClick={handleLogout}
-            >
+            <Button variant="destructive" className="w-full" onClick={handleLogout}>
               Logout
             </Button>
           </section>
@@ -935,23 +818,13 @@ export default function HostProfilePanel({
         </div>
 
         {/* EMAIL MODAL */}
-        <Modal
-          isOpen={showEmailModal}
-          onClose={() => setShowEmailModal(false)}
-        >
-          <ChangeEmailModal
-            onClose={() => setShowEmailModal(false)}
-          />
+        <Modal isOpen={showEmailModal} onClose={() => setShowEmailModal(false)}>
+          <ChangeEmailModal onClose={() => setShowEmailModal(false)} />
         </Modal>
 
         {/* PASSWORD MODAL */}
-        <Modal
-          isOpen={showPassModal}
-          onClose={() => setShowPassModal(false)}
-        >
-          <ChangePasswordModal
-            onClose={() => setShowPassModal(false)}
-          />
+        <Modal isOpen={showPassModal} onClose={() => setShowPassModal(false)}>
+          <ChangePasswordModal onClose={() => setShowPassModal(false)} />
         </Modal>
 
         {/* TERMS MODAL */}
@@ -982,55 +855,28 @@ export default function HostProfilePanel({
                 "mb-3"
               )}
             >
-              {loyaltyEnabled
-                ? "Clear Event Guests & Leads?"
-                : "Clear All Guests & Leads for This Host?"}
+              {loyaltyEnabled ? "Clear Event Guests & Leads?" : "Clear All Guests & Leads for This Host?"}
             </h2>
 
-            <p
-              className={cn(
-                "text-sm",
-                "text-gray-300",
-                "mb-4"
-              )}
-            >
+            <p className={cn("text-sm", "text-gray-300", "mb-4")}>
               {loyaltyEnabled ? (
                 <>
-                  This will clear the guest/event buckets and
-                  priority_leads tied to this host, but will{" "}
-                  <strong>keep</strong> your loyalty guests and badge
-                  history. Use this to reset between regular shows.
+                  This will clear the guest/event buckets and priority_leads tied to this host, but will{" "}
+                  <strong>keep</strong> your loyalty guests and badge history. Use this to reset between regular shows.
                 </>
               ) : (
                 <>
-                  This will clear event buckets, priority_leads, and
-                  stored guest profiles linked to this host. This is
-                  ideal for tours, rodeos, and one-off festivals where
-                  you don&apos;t need long-term loyalty.
+                  This will clear event buckets, priority_leads, and stored guest profiles linked to this host.
+                  This is ideal for tours, rodeos, and one-off festivals where you don&apos;t need long-term loyalty.
                 </>
               )}
             </p>
 
             {clearGuestsError && (
-              <p
-                className={cn(
-                  "text-xs",
-                  "text-red-400",
-                  "mb-3"
-                )}
-              >
-                {clearGuestsError}
-              </p>
+              <p className={cn("text-xs", "text-red-400", "mb-3")}>{clearGuestsError}</p>
             )}
 
-            <div
-              className={cn(
-                "flex",
-                "items-center",
-                "justify-end",
-                "gap-2"
-              )}
-            >
+            <div className={cn("flex", "items-center", "justify-end", "gap-2")}>
               <Button
                 variant="outline"
                 disabled={clearGuestsLoading}
@@ -1048,9 +894,7 @@ export default function HostProfilePanel({
                 disabled={clearGuestsLoading}
                 onClick={handleConfirmClearGuests}
               >
-                {clearGuestsLoading
-                  ? "Clearing…"
-                  : "Yes, Clear Data"}
+                {clearGuestsLoading ? "Clearing…" : "Yes, Clear Data"}
               </Button>
             </div>
           </div>
