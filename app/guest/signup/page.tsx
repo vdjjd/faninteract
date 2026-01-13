@@ -18,7 +18,6 @@ const stateOptions = [
   "SD","TN","TX","UT","VT","VA","WA","WV","WI","WY"
 ];
 
-// Normalize booleans from DB just in case
 function toBool(val: any): boolean {
   if (val === true) return true;
   if (val === false || val == null) return false;
@@ -34,11 +33,6 @@ function looksLikeUrl(v: any): boolean {
   return typeof v === "string" && /^https?:\/\//i.test(v.trim());
 }
 
-/**
- * Convert "background_type + background_value" into a CSS backgroundImage string:
- * - image -> `url(...)`
- * - gradient/color -> use string directly
- */
 function toCssBg(background_type: any, background_value: any): string | null {
   const v = typeof background_value === "string" ? background_value.trim() : "";
   if (!v) return null;
@@ -49,20 +43,15 @@ function toCssBg(background_type: any, background_value: any): string | null {
       : "";
 
   if (t === "image" || looksLikeUrl(v)) return `url(${v})`;
-  return v; // gradient or any valid CSS background-image value
+  return v;
 }
 
-/**
- * Safe helper: some tables won't have background_* columns.
- * This attempts host_id + background_value, and if column missing, falls back to host_id only.
- */
 async function fetchHostAndBgFromStandardTable(
   supabase: any,
   table: string,
   id: string,
   bgColumn = "background_value"
 ): Promise<{ host_id: string | null; cssBg: string | null }> {
-  // 1) Attempt host_id + background_value
   {
     const { data, error } = await supabase
       .from(table)
@@ -92,7 +81,6 @@ async function fetchHostAndBgFromStandardTable(
     }
   }
 
-  // 2) Fallback host_id only
   {
     const { data, error } = await supabase
       .from(table)
@@ -126,6 +114,16 @@ function calculateAgeFromDob(dobStr: string): number | null {
   return age;
 }
 
+/* -------------------------------------------------
+   ✅ Normalize minimum age from host settings
+------------------------------------------------- */
+function normalizeMinAge(val: any): 18 | 21 | null {
+  const n = Number(val);
+  if (n === 18) return 18;
+  if (n === 21) return 21;
+  return null;
+}
+
 type GuestProfileRow = {
   id: string;
   device_id: string | null;
@@ -146,27 +144,19 @@ export default function GuestSignupPage() {
   const params = useSearchParams();
   const supabase = getSupabaseClient();
 
-  /* -------------------------------------------------
-     NORMALIZE QR PARAMS
-  ------------------------------------------------- */
   const redirect = params.get("redirect") || "";
   const wallId = params.get("wall");
   const wheelId = params.get("prizewheel");
   const basketballId = params.get("basketball");
-  const triviaQueryId = params.get("trivia"); // may be null
-
-  // Legacy-only fallback. Ideally remove once all QRs carry wall/poll/etc.
+  const triviaQueryId = params.get("trivia");
   const hostParam = params.get("host");
 
   const rawType = params.get("type");
   let pollId = params.get("poll");
-
-  // Handles malformed QR: ?type=poll=UUID
   if (!pollId && rawType?.startsWith("poll=")) {
     pollId = rawType.split("=")[1];
   }
 
-  // Infer triviaId from redirect if missing
   let triviaId = triviaQueryId || null;
   if (!triviaId && redirect) {
     const match = redirect.match(
@@ -175,7 +165,6 @@ export default function GuestSignupPage() {
     if (match?.[1]) triviaId = match[1];
   }
 
-  /* ------------------------------------------------- */
   const [bgCss, setBgCss] = useState<string | null>(null);
 
   const [hostIdFromContext, setHostIdFromContext] = useState<string | null>(null);
@@ -186,9 +175,7 @@ export default function GuestSignupPage() {
   const [masterTerms, setMasterTerms] = useState("");
   const [showTermsModal, setShowTermsModal] = useState(false);
 
-  // ⭐ Venue terms from host_terms_sets (body for active set)
   const [venueTerms, setVenueTerms] = useState("");
-  // ⭐ On/off toggle lives on hosts.venue_terms_enabled
   const [venueTermsEnabled, setVenueTermsEnabled] = useState(false);
 
   const [form, setForm] = useState({
@@ -206,12 +193,14 @@ export default function GuestSignupPage() {
   const [agree, setAgree] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
-  // ✅ Progressive profiling
   const [existingProfile, setExistingProfile] = useState<GuestProfileRow | null>(null);
   const [checkingExisting, setCheckingExisting] = useState(true);
   const [missingFields, setMissingFields] = useState<string[]>([]);
 
-  /* ------------------------------------------------- */
+  // ✅ Age block UI state
+  const [ageBlocked, setAgeBlocked] = useState(false);
+  const [ageBlockedMin, setAgeBlockedMin] = useState<18 | 21 | null>(null);
+
   useEffect(() => {
     if (typeof window !== "undefined") {
       getOrCreateGuestDeviceId();
@@ -219,7 +208,7 @@ export default function GuestSignupPage() {
   }, []);
 
   /* -------------------------------------------------
-     LOAD HOST CONTEXT + BACKGROUND from the QR source
+     LOAD HOST CONTEXT + BACKGROUND
   ------------------------------------------------- */
   useEffect(() => {
     let cancelled = false;
@@ -275,10 +264,8 @@ export default function GuestSignupPage() {
       setHostSettings(normalizedHost);
       setHostIdFromContext(hostId);
 
-      // Host-level terms
       setHostTerms(host.host_terms_markdown || "");
 
-      // Master / platform terms
       if (host.master_id) {
         const { data: master, error: masterErr } = await supabase
           .from("master_accounts")
@@ -294,7 +281,6 @@ export default function GuestSignupPage() {
         setMasterTerms("");
       }
 
-      // Venue terms body from active_terms_set_id
       if (host.active_terms_set_id) {
         const { data: termsSet, error: termsErr } = await supabase
           .from("host_terms_sets")
@@ -314,7 +300,6 @@ export default function GuestSignupPage() {
         setVenueTerms("");
       }
 
-      // On/off toggle from hosts.venue_terms_enabled
       setVenueTermsEnabled(toBool(host.venue_terms_enabled));
     }
 
@@ -325,7 +310,6 @@ export default function GuestSignupPage() {
         let foundHostId: string | null = null;
         let foundBgCss: string | null = null;
 
-        // 1) Fan Wall
         if (wallId) {
           const { host_id, cssBg } = await fetchHostAndBgFromStandardTable(
             supabase,
@@ -337,7 +321,6 @@ export default function GuestSignupPage() {
           foundBgCss = cssBg;
         }
 
-        // 2) Prize Wheel
         if (!foundHostId && wheelId) {
           const { data, error } = await supabase
             .from("prize_wheels")
@@ -353,7 +336,6 @@ export default function GuestSignupPage() {
           }
         }
 
-        // 3) Poll
         if (!foundHostId && pollId) {
           const { host_id, cssBg } = await fetchHostAndBgFromStandardTable(
             supabase,
@@ -365,7 +347,6 @@ export default function GuestSignupPage() {
           foundBgCss = cssBg ?? foundBgCss;
         }
 
-        // 4) Basketball
         if (!foundHostId && basketballId) {
           const { host_id, cssBg } = await fetchHostAndBgFromStandardTable(
             supabase,
@@ -377,7 +358,6 @@ export default function GuestSignupPage() {
           foundBgCss = cssBg ?? foundBgCss;
         }
 
-        // 5) Trivia
         if (!foundHostId && triviaId) {
           const { host_id, cssBg } = await fetchHostAndBgFromStandardTable(
             supabase,
@@ -389,7 +369,6 @@ export default function GuestSignupPage() {
           foundBgCss = cssBg ?? foundBgCss;
         }
 
-        // Legacy fallback
         if (!foundHostId && hostParam) {
           console.warn("⚠️ Using host from URL as fallback (legacy QR):", hostParam);
           foundHostId = hostParam;
@@ -413,6 +392,7 @@ export default function GuestSignupPage() {
             require_state: false,
             require_zip: false,
             require_age: false,
+            minimum_age: null,
           });
           setHostIdFromContext(null);
           setHostTerms("");
@@ -463,22 +443,19 @@ export default function GuestSignupPage() {
     return missing;
   }
 
-  // show only missing required fields for returning guests
   const isReturning = !!existingProfile?.id;
+
   const showField = (key: string) => {
-    // New guest: show all required fields (like before)
     if (!isReturning) {
       if (key === "first_name") return true;
       return requiredKeys.includes(key);
     }
-    // Returning guest: show only missing fields
     return missingFields.includes(key);
   };
 
   /* -------------------------------------------------
      LOAD EXISTING GUEST BY device_id
-     - if nothing missing -> redirect
-     - if missing required -> stay + prefill + show only missing
+     + ✅ AGE BLOCK CHECK BEFORE REDIRECT
   ------------------------------------------------- */
   useEffect(() => {
     let cancelled = false;
@@ -488,6 +465,8 @@ export default function GuestSignupPage() {
       if (loadingHost || !hostSettings) return;
 
       setCheckingExisting(true);
+      setAgeBlocked(false);
+      setAgeBlockedMin(null);
 
       const deviceId = localStorage.getItem("guest_device_id");
       if (!deviceId) {
@@ -516,7 +495,6 @@ export default function GuestSignupPage() {
       }
 
       if (!data) {
-        // No existing profile
         localStorage.removeItem("guest_profile");
         setExistingProfile(null);
         setMissingFields([]);
@@ -527,7 +505,6 @@ export default function GuestSignupPage() {
       const profile = data as GuestProfileRow;
       setExistingProfile(profile);
 
-      // Prefill form with existing values (so if we show any field it's filled)
       setForm((prev) => ({
         ...prev,
         first_name: profile.first_name ?? "",
@@ -541,12 +518,23 @@ export default function GuestSignupPage() {
         date_of_birth: profile.date_of_birth ?? "",
       }));
 
+      // ✅ AGE BLOCK: if host requires age and has minimum_age, and we have DOB -> block immediately if underage
+      const minAge = hostSettings?.require_age ? normalizeMinAge(hostSettings?.minimum_age) : null;
+      if (minAge && profile.date_of_birth) {
+        const a = calculateAgeFromDob(profile.date_of_birth);
+        if (typeof a === "number" && a < minAge) {
+          setAgeBlocked(true);
+          setAgeBlockedMin(minAge);
+          setMissingFields([]);
+          setCheckingExisting(false);
+          return;
+        }
+      }
+
       const missing = computeMissing(profile);
       setMissingFields(missing);
 
-      // If nothing missing, behave like before and bounce them through
       if (missing.length === 0) {
-        // Keep cached profile for downstream pages
         localStorage.setItem("guest_profile", JSON.stringify(profile));
 
         if (redirect) return router.push(redirect);
@@ -579,7 +567,8 @@ export default function GuestSignupPage() {
   ]);
 
   /* -------------------------------------------------
-     SUBMIT
+     SUBMIT + ✅ AGE ENFORCEMENT
+     ✅ PATCH: catch AGE_RESTRICTED from syncGuestProfile
   ------------------------------------------------- */
   async function handleSubmit(e: any) {
     e.preventDefault();
@@ -604,15 +593,14 @@ export default function GuestSignupPage() {
         triviaId ? "trivia" :
         "";
 
-      // ✅ Merge strategy: never overwrite existing values with blank strings
       const merged: any = { ...(existingProfile ?? {}) };
-
       for (const key of Object.keys(form) as (keyof typeof form)[]) {
         const v = (form[key] ?? "").toString().trim();
         if (v.length > 0) merged[key] = v;
       }
 
       const dob = merged.date_of_birth ? String(merged.date_of_birth) : null;
+      const computedAge = dob ? calculateAgeFromDob(dob) : null;
 
       const payload = {
         first_name: merged.first_name ?? "",
@@ -624,10 +612,16 @@ export default function GuestSignupPage() {
         state: merged.state ?? "",
         zip: merged.zip ?? "",
         date_of_birth: dob,
-        age: dob ? calculateAgeFromDob(dob) : null,
+        age: computedAge,
       };
 
       const hostIdForSync = hostIdFromContext || hostSettings?.id || null;
+
+      if (toBool(hostSettings?.require_age) && !dob) {
+        alert("Please enter your date of birth.");
+        setSubmitting(false);
+        return;
+      }
 
       const { profile } = await syncGuestProfile(
         type,
@@ -647,8 +641,25 @@ export default function GuestSignupPage() {
       else if (basketballId) router.push(`/basketball/${basketballId}/submit`);
       else if (triviaId) router.push(`/trivia/${triviaId}/join`);
       else router.push("/");
-    } catch (err) {
+    } catch (err: any) {
       console.error("❌ handleSubmit error:", err);
+
+      // ✅ NEW: underage blocked by syncGuestProfile (server-side enforcement)
+      if (err?.code === "AGE_RESTRICTED") {
+        const min = normalizeMinAge(err?.minimum_age);
+        setAgeBlocked(true);
+        setAgeBlockedMin(min);
+        setSubmitting(false);
+        return;
+      }
+
+      // Optional: DOB required (server-side)
+      if (err?.code === "AGE_DOB_REQUIRED") {
+        alert("Please enter your date of birth.");
+        setSubmitting(false);
+        return;
+      }
+
       alert("Error saving your information.");
     }
 
@@ -666,10 +677,8 @@ export default function GuestSignupPage() {
     );
   }
 
-  // ✅ Background
   const bgImage = bgCss || "linear-gradient(135deg,#0a2540,#1b2b44,#000000)";
 
-  // ✅ Logo
   const logoSrc =
     hostSettings?.branding_logo_url ||
     hostSettings?.logo_url ||
@@ -681,26 +690,80 @@ export default function GuestSignupPage() {
 
   const isRemoteLogo = typeof logoSrc === "string" && logoSrc.startsWith("http");
 
-  // ✅ Terms ordering: Host → Venue → FanInteract
   const hostVenueChunks: string[] = [];
-  if (hostTerms && hostTerms.trim().length > 0) {
-    hostVenueChunks.push(hostTerms);
-  }
-  if (venueTermsEnabled && venueTerms.trim().length > 0) {
-    hostVenueChunks.push(venueTerms);
-  }
+  if (hostTerms && hostTerms.trim().length > 0) hostVenueChunks.push(hostTerms);
+  if (venueTermsEnabled && venueTerms.trim().length > 0) hostVenueChunks.push(venueTerms);
   const hostVenueTermsMarkdown = hostVenueChunks.join("\n\n---\n\n");
 
-  // ✅ UI text
   const showReturningNotice = isReturning && missingFields.length > 0;
   const visitCount = existingProfile?.total_visit_count ?? null;
 
+  // ✅ AGE BLOCK SCREEN (hard stop)
+  if (ageBlocked) {
+    return (
+      <main className={cn("relative flex items-center justify-center min-h-screen w-full text-white")}>
+        <div className={cn("absolute inset-0 bg-cover bg-center")} style={{ backgroundImage: bgImage }} />
+        <div className={cn("absolute inset-0 bg-black/60 backdrop-blur-md")} />
+
+        <motion.div
+          initial={{ opacity: 0, y: 30, scale: 0.97 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          transition={{ duration: 0.5 }}
+          className={cn(
+            "relative z-10 w-[95%] max-w-md rounded-2xl p-8",
+            "border border-white/10 bg-white/10 backdrop-blur-lg text-center"
+          )}
+        >
+          <div className={cn("flex justify-center mb-6")}>
+            {isRemoteLogo ? (
+              <img
+                src={logoSrc}
+                alt={logoAlt}
+                className={cn("w-[240px] md:w-[320px] object-contain")}
+                style={{ maxHeight: 120 }}
+              />
+            ) : (
+              <Image
+                src={logoSrc}
+                alt={logoAlt}
+                width={360}
+                height={120}
+                className={cn("w-[240px] md:w-[320px] object-contain")}
+                priority
+              />
+            )}
+          </div>
+
+          <h2 className={cn("text-2xl font-semibold text-red-300 mb-3")}>Age Restricted</h2>
+          <p className={cn("text-gray-200")}>
+            You must be <span className="font-semibold">{ageBlockedMin ?? "of required age"}+</span> to participate.
+          </p>
+          <p className={cn("text-sm text-gray-400 mt-2")}>
+            If you believe this is a mistake, please check your date of birth.
+          </p>
+
+          <button
+            onClick={() => setShowTermsModal(true)}
+            className={cn("mt-5 underline text-sky-400 text-sm")}
+            type="button"
+          >
+            View Terms
+          </button>
+        </motion.div>
+
+        <TermsModal
+          isOpen={showTermsModal}
+          onClose={() => setShowTermsModal(false)}
+          hostTerms={hostVenueTermsMarkdown}
+          masterTerms={masterTerms}
+        />
+      </main>
+    );
+  }
+
   return (
     <main className={cn("relative flex items-center justify-center min-h-screen w-full text-white")}>
-      <div
-        className={cn("absolute inset-0 bg-cover bg-center")}
-        style={{ backgroundImage: bgImage }}
-      />
+      <div className={cn("absolute inset-0 bg-cover bg-center")} style={{ backgroundImage: bgImage }} />
       <div className={cn("absolute inset-0 bg-black/60 backdrop-blur-md")} />
 
       <motion.div
@@ -738,8 +801,10 @@ export default function GuestSignupPage() {
 
         {showReturningNotice && (
           <div className={cn("mb-5 p-3 rounded-xl border border-white/10 bg-black/30 text-sm text-gray-200")}>
-            <div className={cn('font-medium', 'text-white')}>Welcome back{existingProfile?.first_name ? `, ${existingProfile.first_name}` : ""}.</div>
-            <div className={cn('text-gray-300', 'mt-1')}>
+            <div className={cn("font-medium", "text-white")}>
+              Welcome back{existingProfile?.first_name ? `, ${existingProfile.first_name}` : ""}.
+            </div>
+            <div className={cn("text-gray-300", "mt-1")}>
               We just need {missingFields.length} more thing{missingFields.length === 1 ? "" : "s"} to finish your profile.
               {typeof visitCount === "number" && visitCount > 0 ? (
                 <span className="text-gray-400"> (Visits: {visitCount})</span>
@@ -896,9 +961,7 @@ export default function GuestSignupPage() {
       <TermsModal
         isOpen={showTermsModal}
         onClose={() => setShowTermsModal(false)}
-        // Host + Venue (in that order)
         hostTerms={hostVenueTermsMarkdown}
-        // FanInteract platform terms last
         masterTerms={masterTerms}
       />
     </main>

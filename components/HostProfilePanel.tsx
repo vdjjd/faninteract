@@ -37,7 +37,6 @@ function stripQuery(u: string) {
 }
 
 function slotFilename(slotIndex: number) {
-  // slotIndex: 0..9
   return `slot-${String(slotIndex + 1).padStart(2, "0")}.png`;
 }
 
@@ -45,29 +44,22 @@ function buildSlotPath(hostId: string, slotIndex: number) {
   return `${hostId}/${slotFilename(slotIndex)}`;
 }
 
-export default function HostProfilePanel({
-  host,
-  setHost,
-}: HostProfilePanelProps) {
+export default function HostProfilePanel({ host, setHost }: HostProfilePanelProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [showEmailModal, setShowEmailModal] = useState(false);
   const [showPassModal, setShowPassModal] = useState(false);
   const [showGuestModal, setShowGuestModal] = useState(false);
   const [showTermsModal, setShowTermsModal] = useState(false);
 
-  // ✅ Billing portal button state
   const [billingLoading, setBillingLoading] = useState(false);
 
-  // ✅ Data-clear state (for “Clear All Guest / Lead Data”)
   const [showClearGuestsModal, setShowClearGuestsModal] = useState(false);
   const [clearGuestsLoading, setClearGuestsLoading] = useState(false);
   const [clearGuestsError, setClearGuestsError] = useState<string | null>(null);
 
-  // ✅ Active venue terms label (from host_terms_sets)
   const [activeTermsLabel, setActiveTermsLabel] = useState<string | null>(null);
   const [activeTermsLoading, setActiveTermsLoading] = useState(false);
 
-  // ✅ Venue Logo Library (2 rows x 5)
   const [logoSlots, setLogoSlots] = useState<(string | null)[]>(
     Array.from({ length: SLOT_COUNT }, () => null)
   );
@@ -142,42 +134,45 @@ export default function HostProfilePanel({
     }
   }
 
-  /* ---------------- AGE RESTRICTIONS ---------------- */
+  /* ---------------- AGE (COLLECT) + AGE BLOCKERS ---------------- */
+  const collectAgeEnabled = !!host?.require_age;
   const minimumAge = host?.minimum_age ?? null;
 
-  async function toggleAgeRestriction(age: 18 | 21, enabled: boolean) {
+  async function setCollectAge(enabled: boolean) {
     if (!host?.id) return;
 
+    // Turning OFF age collection clears blockers too
+    if (!enabled) {
+      await supabase.from("hosts").update({ require_age: false, minimum_age: null }).eq("id", host.id);
+      setHost((prev: any) => ({ ...prev, require_age: false, minimum_age: null }));
+      return;
+    }
+
+    // Turning ON just enables collection; blockers optional
+    await supabase.from("hosts").update({ require_age: true }).eq("id", host.id);
+    setHost((prev: any) => ({ ...prev, require_age: true }));
+  }
+
+  async function setAgeBlocker(age: 18 | 21, enabled: boolean) {
+    if (!host?.id) return;
+    if (!collectAgeEnabled) return;
+
     if (enabled) {
-      await supabase
-        .from("hosts")
-        .update({
-          require_age: true,
-          minimum_age: age,
-        })
-        .eq("id", host.id);
+      // Setting one blocker automatically unsets the other because minimum_age becomes a single value.
+      await supabase.from("hosts").update({ require_age: true, minimum_age: age }).eq("id", host.id);
+      setHost((prev: any) => ({ ...prev, require_age: true, minimum_age: age }));
+      return;
+    }
 
-      setHost((prev: any) => ({
-        ...prev,
-        require_age: true,
-        minimum_age: age,
-      }));
-    } else {
-      await supabase
-        .from("hosts")
-        .update({
-          require_age: false,
-          minimum_age: null,
-        })
-        .eq("id", host.id);
-
-      setHost((prev: any) => ({
-        ...prev,
-        require_age: false,
-        minimum_age: null,
-      }));
+    // If toggling OFF the currently active blocker, clear minimum_age (but keep collecting age)
+    if (Number(minimumAge) === age) {
+      await supabase.from("hosts").update({ require_age: true, minimum_age: null }).eq("id", host.id);
+      setHost((prev: any) => ({ ...prev, require_age: true, minimum_age: null }));
     }
   }
+
+  const blockUnder18 = collectAgeEnabled && Number(minimumAge) === 18;
+  const blockUnder21 = collectAgeEnabled && Number(minimumAge) === 21;
 
   /* ---------------------- VENUE LOGO LIBRARY HELPERS ---------------------- */
   const activeLogoBase = useMemo(() => {
@@ -200,7 +195,6 @@ export default function HostProfilePanel({
     try {
       setLogoBusy(true);
 
-      // List files inside folder "<hostId>/"
       const { data: files, error } = await supabase.storage
         .from(LOGO_BUCKET)
         .list(host.id, { limit: 100, offset: 0 });
@@ -210,31 +204,22 @@ export default function HostProfilePanel({
         return;
       }
 
-      const nextSlots = Array.from({ length: SLOT_COUNT }, () => null) as (
-        | string
-        | null
-      )[];
-
-      // Map known slot filenames to slots
+      const nextSlots = Array.from({ length: SLOT_COUNT }, () => null) as (string | null)[];
       const fileSet = new Set((files ?? []).map((f) => f.name));
 
       for (let i = 0; i < SLOT_COUNT; i++) {
         const name = slotFilename(i);
         if (fileSet.has(name)) {
           const path = buildSlotPath(host.id, i);
-          const { data } = supabase.storage
-            .from(LOGO_BUCKET)
-            .getPublicUrl(path);
+          const { data } = supabase.storage.from(LOGO_BUCKET).getPublicUrl(path);
           nextSlots[i] = data.publicUrl;
         }
       }
 
-      // Legacy support: if "<hostId>.png" exists, treat as slot-01 only if empty
+      // Legacy support: "<hostId>.png" treated as slot 1 if empty
       if (!nextSlots[0] && fileSet.has(`${host.id}.png`)) {
         const legacyPath = `${host.id}.png`;
-        const { data } = supabase.storage
-          .from(LOGO_BUCKET)
-          .getPublicUrl(legacyPath);
+        const { data } = supabase.storage.from(LOGO_BUCKET).getPublicUrl(legacyPath);
         nextSlots[0] = data.publicUrl;
       }
 
@@ -250,10 +235,9 @@ export default function HostProfilePanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [host?.id, isOpen]);
 
-  /* ---------------------- VENUE LOGO: UPLOAD / DELETE / SET ACTIVE ---------------------- */
   async function handleLogoUpload(e: any) {
     const file = e.target.files?.[0];
-    e.target.value = ""; // allow re-select same file
+    e.target.value = "";
     if (!file) return;
 
     if (!host?.id) return alert("Host not ready.");
@@ -262,7 +246,6 @@ export default function HostProfilePanel({
     setLogoBusy(true);
 
     try {
-      // Resize/crop to square png (same behavior you had)
       const bitmap = await createImageBitmap(file);
       const maxSize = 1600;
       const size = Math.min(maxSize, bitmap.width, bitmap.height);
@@ -287,15 +270,12 @@ export default function HostProfilePanel({
         canvas.toBlob((b) => resolve(b as Blob), "image/png")
       );
 
-      const finalFile = new File([blob], slotFilename(selectedLogoSlot), {
-        type: "image/png",
-      });
-
+      const finalFile = new File([blob], slotFilename(selectedLogoSlot), { type: "image/png" });
       const path = buildSlotPath(host.id, selectedLogoSlot);
 
-      const { error: uploadError } = await supabase.storage
-        .from(LOGO_BUCKET)
-        .upload(path, finalFile, { upsert: true });
+      const { error: uploadError } = await supabase.storage.from(LOGO_BUCKET).upload(path, finalFile, {
+        upsert: true,
+      });
 
       if (uploadError) {
         console.error(uploadError);
@@ -322,13 +302,9 @@ export default function HostProfilePanel({
     setLogoBusy(true);
 
     try {
-      // Determine file path by slot index (our canonical path)
       const path = buildSlotPath(host.id, selectedLogoSlot);
 
-      // Delete canonical slot path
-      const { error: deleteError } = await supabase.storage
-        .from(LOGO_BUCKET)
-        .remove([path]);
+      const { error: deleteError } = await supabase.storage.from(LOGO_BUCKET).remove([path]);
 
       if (deleteError) {
         console.error(deleteError);
@@ -336,27 +312,10 @@ export default function HostProfilePanel({
         return;
       }
 
-      // ✅ Improvement: if user is using the legacy "<hostId>.png" (shown in slot 1),
-      // delete that too so it doesn't "come back" after refresh.
-      if (selectedLogoSlot === 0) {
-        const legacyPath = `${host.id}.png`;
-        const { error: legacyDeleteError } = await supabase.storage
-          .from(LOGO_BUCKET)
-          .remove([legacyPath]);
-
-        // Don't hard-fail if it doesn't exist; just log.
-        if (legacyDeleteError) {
-          console.warn("legacy logo delete (non-fatal):", legacyDeleteError);
-        }
-      }
-
-      // If this logo was active, clear branding_logo_url
+      // If deleting active logo, clear host branding_logo_url
       const slotBase = stripQuery(slotUrl);
       if (activeLogoBase && slotBase === activeLogoBase) {
-        await supabase
-          .from("hosts")
-          .update({ branding_logo_url: null })
-          .eq("id", host.id);
+        await supabase.from("hosts").update({ branding_logo_url: null }).eq("id", host.id);
         setHost((prev: any) => ({ ...prev, branding_logo_url: null }));
       }
 
@@ -378,11 +337,7 @@ export default function HostProfilePanel({
     try {
       const cacheBusted = `${stripQuery(slotUrl)}?t=${Date.now()}`;
 
-      await supabase
-        .from("hosts")
-        .update({ branding_logo_url: cacheBusted })
-        .eq("id", host.id);
-
+      await supabase.from("hosts").update({ branding_logo_url: cacheBusted }).eq("id", host.id);
       setHost((prev: any) => ({ ...prev, branding_logo_url: cacheBusted }));
     } catch (e) {
       console.error(e);
@@ -392,22 +347,17 @@ export default function HostProfilePanel({
     }
   }
 
-  /* ---------------------- CLEAR ALL GUEST / LEAD DATA ---------------------- */
   async function handleConfirmClearGuests() {
     if (!host?.id) return;
     setClearGuestsLoading(true);
     setClearGuestsError(null);
 
     try {
-      const { error } = await supabase.rpc("clear_host_guests_hard", {
-        p_host_id: host.id,
-      });
+      const { error } = await supabase.rpc("clear_host_guests_hard", { p_host_id: host.id });
 
       if (error) {
         console.error("clear_host_guests_hard error:", error);
-        setClearGuestsError(
-          error.message || "Unable to clear guest / lead data."
-        );
+        setClearGuestsError(error.message || "Unable to clear guest / lead data.");
         return;
       }
 
@@ -421,7 +371,6 @@ export default function HostProfilePanel({
     }
   }
 
-  /* ---------------------- ACTIVE VENUE TERMS LABEL ---------------------- */
   useEffect(() => {
     let cancelled = false;
 
@@ -463,15 +412,7 @@ export default function HostProfilePanel({
   const GuestOptionsModal = () => (
     <Modal isOpen={showGuestModal} onClose={() => setShowGuestModal(false)}>
       <div className="text-white">
-        <h2
-          className={cn(
-            "text-xl",
-            "font-semibold",
-            "text-center",
-            "text-sky-300",
-            "mb-4"
-          )}
-        >
+        <h2 className={cn("text-xl", "font-semibold", "text-center", "text-sky-300", "mb-4")}>
           Guest Sign Up Options
         </h2>
 
@@ -488,12 +429,8 @@ export default function HostProfilePanel({
               "border-white/10"
             )}
           >
-            <span className={cn("font-medium", "text-gray-200")}>
-              First Name
-            </span>
-            <span className={cn("text-gray-400", "text-sm", "italic")}>
-              (always required)
-            </span>
+            <span className={cn("font-medium", "text-gray-200")}>First Name</span>
+            <span className={cn("text-gray-400", "text-sm", "italic")}>(always required)</span>
           </div>
 
           {[
@@ -504,7 +441,6 @@ export default function HostProfilePanel({
             { key: "require_city", label: "City" },
             { key: "require_state", label: "State" },
             { key: "require_zip", label: "ZIP Code" },
-            { key: "require_age", label: "Age" },
           ].map((field) => (
             <div
               key={field.key}
@@ -520,12 +456,33 @@ export default function HostProfilePanel({
               )}
             >
               <span className="font-medium">{field.label}</span>
-              <Switch
-                checked={host[field.key]}
-                onCheckedChange={(v) => updateGuestOption(field.key, v)}
-              />
+              <Switch checked={!!host[field.key]} onCheckedChange={(v) => updateGuestOption(field.key, v)} />
             </div>
           ))}
+
+          {/* ✅ AGE SECTION GOES UNDER ZIP */}
+          <div className={cn("p-3", "bg-black/40", "rounded-lg", "border", "border-white/10", "space-y-3")}>
+            <div className={cn("flex", "items-center", "justify-between")}>
+              <span className={cn("font-medium")}>Age</span>
+              <Switch checked={collectAgeEnabled} onCheckedChange={(v) => setCollectAge(v)} />
+            </div>
+
+            {/* No disabled prop (your SwitchProps doesn't include it).
+                We disable the blockers via pointer-events + opacity. */}
+            <div className={cn(!collectAgeEnabled ? "opacity-40 pointer-events-none" : "")}>
+              <div className={cn("flex", "items-center", "justify-between")}>
+                <span className={cn("font-medium")}>Block under 18</span>
+                <Switch checked={blockUnder18} onCheckedChange={(v) => setAgeBlocker(18, v)} />
+              </div>
+            </div>
+
+            <div className={cn(!collectAgeEnabled ? "opacity-40 pointer-events-none" : "")}>
+              <div className={cn("flex", "items-center", "justify-between")}>
+                <span className={cn("font-medium")}>Block under 21</span>
+                <Switch checked={blockUnder21} onCheckedChange={(v) => setAgeBlocker(21, v)} />
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </Modal>
@@ -534,16 +491,7 @@ export default function HostProfilePanel({
   /* --------------------------- RENDER PANEL --------------------------- */
   if (!host) {
     return (
-      <div
-        className={cn(
-          "flex",
-          "items-center",
-          "justify-center",
-          "text-gray-400",
-          "text-sm",
-          "py-6"
-        )}
-      >
+      <div className={cn("flex", "items-center", "justify-center", "text-gray-400", "text-sm", "py-6")}>
         Loading profile…
       </div>
     );
@@ -553,7 +501,6 @@ export default function HostProfilePanel({
 
   return (
     <Sheet open={isOpen} onOpenChange={setIsOpen}>
-      {/* Trigger Button */}
       <SheetTrigger asChild>
         <button
           className={cn(
@@ -580,19 +527,14 @@ export default function HostProfilePanel({
               "font-bold"
             )}
           >
-            {host?.first_name?.[0]?.toUpperCase() ||
-              host?.venue_name?.[0]?.toUpperCase() ||
-              "H"}
+            {host?.first_name?.[0]?.toUpperCase() || host?.venue_name?.[0]?.toUpperCase() || "H"}
           </div>
         </button>
       </SheetTrigger>
 
-      {/* SIDE PANEL */}
       <SheetContent
         side="right"
-        className={cn(
-          "w-80 bg-black/80 backdrop-blur-xl border-l border-gray-700 text-gray-100 overflow-y-auto"
-        )}
+        className={cn("w-80 bg-black/80 backdrop-blur-xl border-l border-gray-700 text-gray-100 overflow-y-auto")}
       >
         <div className={cn("mt-5", "flex", "flex-col", "gap-6")}>
           {/* ---------------------- ACCOUNT ----------------------- */}
@@ -611,16 +553,7 @@ export default function HostProfilePanel({
               <User className={cn("w-5", "h-5")} /> Account
             </div>
 
-            <div
-              className={cn(
-                "flex",
-                "flex-col",
-                "items-center",
-                "gap-3",
-                "text-center"
-              )}
-            >
-              {/* Avatar */}
+            <div className={cn("flex", "flex-col", "items-center", "gap-3", "text-center")}>
               <div
                 className={cn(
                   "w-24",
@@ -636,49 +569,21 @@ export default function HostProfilePanel({
                   "bg-gray-800"
                 )}
               >
-                <span
-                  className={cn(
-                    "text-3xl",
-                    "font-semibold",
-                    "text-gray-300"
-                  )}
-                >
+                <span className={cn("text-3xl", "font-semibold", "text-gray-300")}>
                   {host?.first_name?.[0]?.toUpperCase() || "H"}
                 </span>
               </div>
 
               {/* ---------------- VENUE LOGO LIBRARY ---------------- */}
               <div className={cn("w-full", "mt-2")}>
-                <div
-                  className={cn(
-                    "text-sm",
-                    "text-gray-200",
-                    "font-semibold",
-                    "text-center"
-                  )}
-                >
+                <div className={cn("text-sm", "text-gray-200", "font-semibold", "text-center")}>
                   Venue Logo Library{" "}
-                  <span
-                    className={cn(
-                      "text-xs",
-                      "text-gray-400",
-                      "font-normal"
-                    )}
-                  >
+                  <span className={cn("text-xs", "text-gray-400", "font-normal")}>
                     (select a slot, then Upload / Delete / Set Active)
                   </span>
                 </div>
 
-                {/* Grid 2 rows x 5 */}
-                <div
-                  className={cn(
-                    "mt-3",
-                    "grid",
-                    "grid-cols-5",
-                    "gap-2",
-                    "justify-items-center"
-                  )}
-                >
+                <div className={cn("mt-3", "grid", "grid-cols-5", "gap-2", "justify-items-center")}>
                   {Array.from({ length: SLOT_COUNT }).map((_, i) => {
                     const url = logoSlots[i];
                     const isSelected = selectedLogoSlot === i;
@@ -699,12 +604,8 @@ export default function HostProfilePanel({
                           "items-center",
                           "justify-center",
                           "bg-black/30",
-                          isSelected
-                            ? "border-sky-400 ring-2 ring-sky-400/40"
-                            : "border-white/10",
-                          isActive
-                            ? "ring-2 ring-yellow-400/40 border-yellow-400/60"
-                            : ""
+                          isSelected ? "border-sky-400 ring-2 ring-sky-400/40" : "border-white/10",
+                          isActive ? "ring-2 ring-yellow-400/40 border-yellow-400/60" : ""
                         )}
                         title={
                           isActive
@@ -718,33 +619,21 @@ export default function HostProfilePanel({
                           <img
                             src={url}
                             alt={`Logo slot ${i + 1}`}
-                            className={cn(
-                              "w-full",
-                              "h-full",
-                              "object-contain",
-                              "p-1"
-                            )}
+                            className={cn("w-full", "h-full", "object-contain", "p-1")}
                           />
                         ) : (
-                          <span className={cn("text-xs", "text-gray-500")}>
-                            {i + 1}
-                          </span>
+                          <span className={cn("text-xs", "text-gray-500")}>{i + 1}</span>
                         )}
                       </button>
                     );
                   })}
                 </div>
 
-                {/* Buttons Row */}
                 <div className={cn("mt-3", "flex", "justify-center", "gap-2")}>
                   <Button
                     type="button"
                     variant="outline"
-                    disabled={
-                      logoBusy ||
-                      selectedLogoSlot == null ||
-                      !logoSlots[selectedLogoSlot ?? 0]
-                    }
+                    disabled={logoBusy || selectedLogoSlot == null || !logoSlots[selectedLogoSlot ?? 0]}
                     onClick={handleSetActiveLogo}
                     className={cn(
                       "h-9",
@@ -766,8 +655,7 @@ export default function HostProfilePanel({
                     type="button"
                     disabled={logoBusy || selectedLogoSlot == null}
                     onClick={() => {
-                      if (selectedLogoSlot == null)
-                        return alert("Select a slot first.");
+                      if (selectedLogoSlot == null) return alert("Select a slot first.");
                       fileInputRef.current?.click();
                     }}
                     className={cn(
@@ -788,49 +676,24 @@ export default function HostProfilePanel({
                   <Button
                     type="button"
                     variant="destructive"
-                    disabled={
-                      logoBusy ||
-                      selectedLogoSlot == null ||
-                      !logoSlots[selectedLogoSlot ?? 0]
-                    }
+                    disabled={logoBusy || selectedLogoSlot == null || !logoSlots[selectedLogoSlot ?? 0]}
                     onClick={handleLogoDelete}
-                    className={cn(
-                      "h-9",
-                      "px-3",
-                      "flex",
-                      "items-center",
-                      "justify-center",
-                      "gap-2"
-                    )}
+                    className={cn("h-9", "px-3", "flex", "items-center", "justify-center", "gap-2")}
                   >
                     <Trash2 className={cn("w-4", "h-4")} />
                     Delete
                   </Button>
                 </div>
 
-                <input
-                  type="file"
-                  accept="image/*"
-                  ref={fileInputRef}
-                  className="hidden"
-                  onChange={handleLogoUpload}
-                />
+                <input type="file" accept="image/*" ref={fileInputRef} className="hidden" onChange={handleLogoUpload} />
 
-                <p
-                  className={cn(
-                    "text-xs",
-                    "text-gray-400",
-                    "mt-2",
-                    "text-center"
-                  )}
-                >
+                <p className={cn("text-xs", "text-gray-400", "mt-2", "text-center")}>
                   Best results:
                   <br />
                   <strong>1600 × 1600 PNG</strong> (transparent background)
                 </p>
               </div>
 
-              {/* Name + Email */}
               <div className={cn("text-center", "mt-2")}>
                 <p className={cn("font-semibold", "text-lg", "text-white")}>
                   {host?.first_name && host?.last_name
@@ -840,7 +703,6 @@ export default function HostProfilePanel({
                 <p className={cn("text-sm", "text-gray-400")}>{host?.email}</p>
               </div>
 
-              {/* Change Email + Pass */}
               <div className={cn("flex", "flex-col", "gap-2", "w-full", "mt-2")}>
                 <Button variant="outline" onClick={() => setShowEmailModal(true)}>
                   Change Email
@@ -868,17 +730,12 @@ export default function HostProfilePanel({
               <Settings className={cn("w-5", "h-5")} /> Settings
             </div>
 
-            <p className={cn("text-sm", "text-gray-400", "text-center")}>
-              Venue: {host?.venue_name}
-            </p>
-            <p className={cn("text-sm", "text-gray-400", "text-center")}>
-              Username: {host?.username}
-            </p>
+            <p className={cn("text-sm", "text-gray-400", "text-center")}>Venue: {host?.venue_name}</p>
+            <p className={cn("text-sm", "text-gray-400", "text-center")}>Username: {host?.username}</p>
             <p className={cn("text-sm", "text-gray-400", "text-center")}>
               Created: {new Date(host?.created_at).toLocaleDateString()}
             </p>
 
-            {/* Guest Loyalty */}
             <div
               className={cn(
                 "mt-4",
@@ -893,65 +750,40 @@ export default function HostProfilePanel({
               )}
             >
               <div className={cn("flex", "flex-col")}>
-                <span className={cn("font-medium", "text-gray-200")}>
-                  🏅 Guest Loyalty
-                </span>
-                <span className={cn("text-xs", "text-gray-400")}>
-                  Track return visits and show badges
-                </span>
+                <span className={cn("font-medium", "text-gray-200")}>🏅 Guest Loyalty</span>
+                <span className={cn("text-xs", "text-gray-400")}>Track return visits and show badges</span>
               </div>
 
-              <Switch
-                checked={loyaltyEnabled}
-                onCheckedChange={(v) => updateGuestOption("loyalty_enabled", v)}
-              />
+              <Switch checked={loyaltyEnabled} onCheckedChange={(v) => updateGuestOption("loyalty_enabled", v)} />
             </div>
 
             <Button
               variant="outline"
-              className={cn(
-                "w-full",
-                "mt-3",
-                "flex",
-                "items-center",
-                "justify-center",
-                "gap-2"
-              )}
+              className={cn("w-full", "mt-3", "flex", "items-center", "justify-center", "gap-2")}
               onClick={() => setShowGuestModal(true)}
             >
               <SlidersHorizontal className={cn("w-4", "h-4")} />
               Guest Sign Up Options
             </Button>
 
-            <Button
-              variant="outline"
-              className={cn("w-full", "mt-2")}
-              onClick={() => setShowTermsModal(true)}
-            >
+            <Button variant="outline" className={cn("w-full", "mt-2")} onClick={() => setShowTermsModal(true)}>
               Terms & Conditions For Guests
             </Button>
 
-            {/* Active venue terms badge */}
             <div className={cn("mt-1", "text-center")}>
               {activeTermsLoading ? (
-                <p className={cn("text-xs", "text-gray-500")}>
-                  Loading active venue terms…
-                </p>
+                <p className={cn("text-xs", "text-gray-500")}>Loading active venue terms…</p>
               ) : activeTermsLabel ? (
                 <p className={cn("text-xs", "text-gray-300")}>
-                  Active venue terms:{" "}
-                  <span className="font-medium">{activeTermsLabel}</span>
+                  Active venue terms: <span className="font-medium">{activeTermsLabel}</span>
                 </p>
               ) : (
-                <p className={cn("text-xs", "text-gray-500")}>
-                  Using host default terms only.
-                </p>
+                <p className={cn("text-xs", "text-gray-500")}>Using host default terms only.</p>
               )}
             </div>
 
             <GuestOptionsModal />
 
-            {/* ----------------- DATA MANAGEMENT ----------------- */}
             <div
               className={cn(
                 "mt-5",
@@ -964,27 +796,23 @@ export default function HostProfilePanel({
               )}
             >
               <div className={cn("flex", "items-center", "justify-between")}>
-                <span className={cn("font-semibold", "text-red-300")}>
-                  Guest & Lead Data Management
-                </span>
+                <span className={cn("font-semibold", "text-red-300")}>Guest & Lead Data Management</span>
                 <Trash2 className={cn("w-4", "h-4", "text-red-400")} />
               </div>
 
               <p className={cn("text-xs", "text-gray-400")}>
-                This will clear data attached to this host: event guest buckets
-                and priority lead forms.
+                This will clear data attached to this host: event guest buckets and priority lead forms.
                 {loyaltyEnabled ? (
                   <>
                     {" "}
-                    Your loyalty guests & badges are kept — only per-show buckets
-                    and lead capture for this host are cleared.
+                    Your loyalty guests & badges are kept — only per-show buckets and lead capture for this host are
+                    cleared.
                   </>
                 ) : (
                   <>
                     {" "}
-                    Because loyalty is off, this will also delete stored guests
-                    for this host (perfect for rodeos, tours, or festivals that
-                    don&apos;t need long-term data).
+                    Because loyalty is off, this will also delete stored guests for this host (perfect for rodeos,
+                    tours, or festivals that don&apos;t need long-term data).
                   </>
                 )}
               </p>
@@ -994,36 +822,21 @@ export default function HostProfilePanel({
                 className={cn("w-full", "mt-1", "text-sm")}
                 onClick={() => setShowClearGuestsModal(true)}
               >
-                {loyaltyEnabled
-                  ? "Clear Event Guest & Lead Data"
-                  : "Clear All Guest & Lead Data for This Host"}
+                {loyaltyEnabled ? "Clear Event Guest & Lead Data" : "Clear All Guest & Lead Data for This Host"}
               </Button>
 
-              {clearGuestsError && (
-                <p className={cn("text-xs", "text-red-400", "mt-1")}>
-                  {clearGuestsError}
-                </p>
-              )}
+              {clearGuestsError && <p className={cn("text-xs", "text-red-400", "mt-1")}>{clearGuestsError}</p>}
             </div>
           </section>
 
-          <Button
-            variant="outline"
-            className={cn("w-full", "mt-3")}
-            onClick={exportGuestsCSV}
-          >
+          <Button variant="outline" className={cn("w-full", "mt-3")} onClick={exportGuestsCSV}>
             Export Guests & Leads (CSV)
           </Button>
 
-          <Button
-            variant="outline"
-            className={cn("w-full", "mt-2")}
-            onClick={printGuestsPDF}
-          >
+          <Button variant="outline" className={cn("w-full", "mt-2")} onClick={printGuestsPDF}>
             Print Guests (PDF)
           </Button>
 
-          {/* ---------------------- BILLING ----------------------- */}
           <section>
             <div
               className={cn(
@@ -1049,20 +862,12 @@ export default function HostProfilePanel({
             </Button>
 
             {!host?.stripe_customer_id ? (
-              <p
-                className={cn(
-                  "text-xs",
-                  "text-gray-400",
-                  "mt-2",
-                  "text-center"
-                )}
-              >
+              <p className={cn("text-xs", "text-gray-400", "mt-2", "text-center")}>
                 No billing profile yet — subscribe first.
               </p>
             ) : null}
           </section>
 
-          {/* ---------------------- SECURITY ----------------------- */}
           <section>
             <div
               className={cn(
@@ -1077,11 +882,7 @@ export default function HostProfilePanel({
             >
               <LogOut className={cn("w-5", "h-5")} /> Security
             </div>
-            <Button
-              variant="destructive"
-              className="w-full"
-              onClick={handleLogout}
-            >
+            <Button variant="destructive" className="w-full" onClick={handleLogout}>
               Logout
             </Button>
           </section>
@@ -1089,25 +890,16 @@ export default function HostProfilePanel({
           <div className="h-8" />
         </div>
 
-        {/* EMAIL MODAL */}
         <Modal isOpen={showEmailModal} onClose={() => setShowEmailModal(false)}>
           <ChangeEmailModal onClose={() => setShowEmailModal(false)} />
         </Modal>
 
-        {/* PASSWORD MODAL */}
         <Modal isOpen={showPassModal} onClose={() => setShowPassModal(false)}>
           <ChangePasswordModal onClose={() => setShowPassModal(false)} />
         </Modal>
 
-        {/* TERMS MODAL */}
-        <HostTermsModal
-          isOpen={showTermsModal}
-          onClose={() => setShowTermsModal(false)}
-          host={host}
-          setHost={setHost}
-        />
+        <HostTermsModal isOpen={showTermsModal} onClose={() => setShowTermsModal(false)} host={host} setHost={setHost} />
 
-        {/* CLEAR GUESTS CONFIRM MODAL */}
         <Modal
           isOpen={showClearGuestsModal}
           onClose={() => {
@@ -1118,43 +910,22 @@ export default function HostProfilePanel({
           }}
         >
           <div className={cn("text-white", "max-w-sm")}>
-            <h2
-              className={cn(
-                "text-lg",
-                "font-semibold",
-                "text-center",
-                "text-red-300",
-                "mb-3"
-              )}
-            >
-              {loyaltyEnabled
-                ? "Clear Event Guests & Leads?"
-                : "Clear All Guests & Leads for This Host?"}
+            <h2 className={cn("text-lg", "font-semibold", "text-center", "text-red-300", "mb-3")}>
+              {loyaltyEnabled ? "Clear Event Guests & Leads?" : "Clear All Guests & Leads for This Host?"}
             </h2>
 
             <p className={cn("text-sm", "text-gray-300", "mb-4")}>
               {loyaltyEnabled ? (
                 <>
-                  This will clear the guest/event buckets and priority_leads tied
-                  to this host, but will <strong>keep</strong> your loyalty
-                  guests and badge history. Use this to reset between regular
-                  shows.
+                  This will clear the guest/event buckets and priority_leads tied to this host, but will{" "}
+                  <strong>keep</strong> your loyalty guests and badge history.
                 </>
               ) : (
-                <>
-                  This will clear event buckets, priority_leads, and stored guest
-                  profiles linked to this host. This is ideal for tours, rodeos,
-                  and one-off festivals where you don&apos;t need long-term
-                  loyalty.
-                </>
+                <>This will clear event buckets, priority_leads, and stored guest profiles linked to this host.</>
               )}
             </p>
 
-            {clearGuestsError && (
-              <p className={cn("text-xs", "text-red-400", "mb-3")}>
-                {clearGuestsError}
-              </p>
-            )}
+            {clearGuestsError && <p className={cn("text-xs", "text-red-400", "mb-3")}>{clearGuestsError}</p>}
 
             <div className={cn("flex", "items-center", "justify-end", "gap-2")}>
               <Button
@@ -1169,11 +940,7 @@ export default function HostProfilePanel({
               >
                 Cancel
               </Button>
-              <Button
-                variant="destructive"
-                disabled={clearGuestsLoading}
-                onClick={handleConfirmClearGuests}
-              >
+              <Button variant="destructive" disabled={clearGuestsLoading} onClick={handleConfirmClearGuests}>
                 {clearGuestsLoading ? "Clearing…" : "Yes, Clear Data"}
               </Button>
             </div>
