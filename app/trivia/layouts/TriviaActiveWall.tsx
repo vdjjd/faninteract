@@ -886,7 +886,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
             playerId: p.id,
             guestId: p.guest_id,
             name: safeName,
-            selfieUrl: null,
+            selfieUrl: p.photo_url || null,
             points: totals.get(p.id) || 0,
             currentStreak,
             bestStreak,
@@ -1321,7 +1321,8 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                       <div style={{ display: "flex", flexDirection: "column", gap: LEADER_UI.rowGap }}>
                         {leaderRows.slice(0, 10).map((r) => {
                           const streak = r.currentStreak ?? 0;
-                          const isOnFire = streak >= FIRE_STREAK;
+                          const showStreak = !!streakMultiplierEnabled; // ✅ hide streak UI when option is off
+                          const isOnFire = showStreak && streak >= FIRE_STREAK; // ✅ ON FIRE depends on streak being enabled too
 
                           return (
                             <div
@@ -1365,19 +1366,63 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                                 />
                               )}
 
-                              {/* rank */}
+                              {/* left: #1 + selfie circle */}
                               <div
                                 style={{
                                   width: LEADER_UI.rankW,
-                                  fontSize: "clamp(1.6rem,2.2vw,2.6rem)",
-                                  fontWeight: 900,
-                                  textShadow: "0 8px 20px rgba(0,0,0,0.7)",
-                                  zIndex: 2,
                                   display: "flex",
                                   alignItems: "center",
+                                  gap: 12,
+                                  zIndex: 2,
                                 }}
                               >
-                                #{r.rank}
+                                <div
+                                  style={{
+                                    fontSize: "clamp(1.6rem,2.2vw,2.6rem)",
+                                    fontWeight: 900,
+                                    textShadow: "0 8px 20px rgba(0,0,0,0.7)",
+                                    lineHeight: 1,
+                                    whiteSpace: "nowrap",
+                                  }}
+                                >
+                                  #{r.rank}.
+                                </div>
+
+                                <div
+                                  style={{
+                                    width: 56,
+                                    height: 56,
+                                    borderRadius: 999,
+                                    overflow: "hidden",
+                                    background: "rgba(255,255,255,0.12)",
+                                    border: "1px solid rgba(255,255,255,0.22)",
+                                    boxShadow: "0 10px 22px rgba(0,0,0,0.30)",
+                                    flex: "0 0 auto",
+                                  }}
+                                >
+                                  {r.selfieUrl ? (
+                                    <img
+                                      src={r.selfieUrl}
+                                      alt={r.name}
+                                      style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                                    />
+                                  ) : (
+                                    <div
+                                      style={{
+                                        width: "100%",
+                                        height: "100%",
+                                        display: "flex",
+                                        alignItems: "center",
+                                        justifyContent: "center",
+                                        color: "rgba(255,255,255,0.85)",
+                                        fontWeight: 900,
+                                        fontSize: 22,
+                                      }}
+                                    >
+                                      {String(r.name || "P").trim().charAt(0).toUpperCase()}
+                                    </div>
+                                  )}
+                                </div>
                               </div>
 
                               {/* name */}
@@ -1396,7 +1441,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                                 {r.name}
                               </div>
 
-                              {/* right-side order: ON FIRE, streak, score */}
+                              {/* right-side: On fire pill (black), streak, score */}
                               <div
                                 style={{
                                   marginLeft: "auto",
@@ -1406,11 +1451,11 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                                   justifyContent: "flex-end",
                                   gap: 18,
                                   whiteSpace: "nowrap",
-                                  minWidth: LEADER_UI.scoreW + LEADER_UI.streakW,
+                                  minWidth: LEADER_UI.scoreW + (showStreak ? LEADER_UI.streakW : 0),
                                   textShadow: "0 10px 30px rgba(0,0,0,0.55)",
                                 }}
                               >
-                                {isOnFire && (
+                                {showStreak && isOnFire && (
                                   <div
                                     className="fi-onfire-badge"
                                     style={{
@@ -1421,8 +1466,8 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                                       padding: "0.35em 0.65em",
                                       borderRadius: 999,
                                       border: "1px solid rgba(255,255,255,0.35)",
-                                      background:
-                                        "radial-gradient(circle at 30% 30%, rgba(255,255,255,0.18), rgba(255,255,255,0.04))",
+                                      background: "rgba(0,0,0,0.78)", // ✅ black pill
+                                      color: "#fff", // ✅ white letters
                                       textShadow: "0 0 2px #000, 0 0 12px rgba(0,0,0,0.75)",
                                       display: "inline-flex",
                                       alignItems: "center",
@@ -1434,15 +1479,17 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                                   </div>
                                 )}
 
-                                <div
-                                  style={{
-                                    fontSize: "clamp(1.8rem,2.4vw,2.8rem)",
-                                    fontWeight: 900,
-                                    lineHeight: 1,
-                                  }}
-                                >
-                                  {streak}x
-                                </div>
+                                {showStreak && (
+                                  <div
+                                    style={{
+                                      fontSize: "clamp(1.8rem,2.4vw,2.8rem)",
+                                      fontWeight: 900,
+                                      lineHeight: 1,
+                                    }}
+                                  >
+                                    {streak}x
+                                  </div>
+                                )}
 
                                 <div
                                   style={{
@@ -1609,9 +1656,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
             0 0 22px rgba(255, 160, 0, 0.25);
         }
 
-        /* ✅ THIS is the important fix:
-           Make the flames video a true full-row background.
-           Also scale X so the flame content doesn't “run out” before the right side. */
+        /* ✅ flames: true full-row background */
         .fi-fire-video {
           position: absolute;
           inset: 0;
