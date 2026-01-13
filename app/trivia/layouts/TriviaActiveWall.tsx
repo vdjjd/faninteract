@@ -52,17 +52,23 @@ const LOGO_CTRL = {
 
 /* ---------------------------------------------------- */
 /* LEADERBOARD UI TUNING                                */
-/* Restored: rank + name + score + streak + ON FIRE     */
+/* (restored: rank + name + score + streak + on fire)   */
 /* ---------------------------------------------------- */
 const LEADER_UI = {
   titleTop: "9%",
   listTop: "18%",
-  maxWidth: 1200,
+  maxWidth: 1400,
   rowGap: 14,
   rowPadX: 22,
-  rowHeight: 86,
-  rankPillMin: 72,
+  rowHeight: 92,
+  rankW: 90,
+  nameW: 560,
+  scoreW: 240,
+  streakW: 260,
 };
+
+const FIRE_STREAK = 3;
+const FIRE_VIDEO_SRC = "/streak-flames.mp4";
 
 /* QUESTION FONT AUTOFIT */
 const QUESTION_MAX_LINES = 3;
@@ -157,8 +163,7 @@ function normalizeQuestions(qsRaw: any[]): {
   if (!list.length) return { list: [], mode: "created_at" };
 
   const hasAllQN = list.every(
-    (q) =>
-      typeof q?.question_number === "number" && Number.isFinite(q.question_number)
+    (q) => typeof q?.question_number === "number" && Number.isFinite(q.question_number)
   );
   const hasAllRN = list.every(
     (q) => typeof q?.round_number === "number" && Number.isFinite(q.round_number)
@@ -167,8 +172,8 @@ function normalizeQuestions(qsRaw: any[]): {
   const mode: QuestionOrderMode = hasAllQN
     ? "question_number"
     : hasAllRN
-    ? "round_number"
-    : "created_at";
+      ? "round_number"
+      : "created_at";
 
   const time = (v: any) => {
     const t = new Date(v || 0).getTime();
@@ -205,7 +210,7 @@ function pickQuestionForCurrent(
 }
 
 /* -------------------------------------------------------------------------- */
-/* 🎮 TRIVIA ACTIVE WALL                                                      */
+/* 🎮 TRIVIA ACTIVE WALL                                                       */
 /* -------------------------------------------------------------------------- */
 
 export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
@@ -217,8 +222,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
   const bg =
     trivia?.background_type === "image"
       ? `url(${trivia.background_value}) center/cover no-repeat`
-      : trivia?.background_value ||
-        "linear-gradient(to bottom right,#1b2735,#090a0f)";
+      : trivia?.background_value || "linear-gradient(to bottom right,#1b2735,#090a0f)";
 
   const brightness = trivia?.background_brightness ?? 100;
 
@@ -282,19 +286,14 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
 
     const trySelect = async (col: string | null) => {
       const cols = col ? `${baseCols},${col}` : baseCols;
-      return supabase
-        .from("trivia_cards")
-        .select(cols)
-        .eq("id", trivia.id)
-        .maybeSingle();
+      return supabase.from("trivia_cards").select(cols).eq("id", trivia.id).maybeSingle();
     };
 
     const isMissingColumnError = (err: any, colName: string) => {
       const code = String(err?.code || "");
       const msg = String(err?.message || "").toLowerCase();
       if (code === "42703") return true;
-      if (msg.includes("does not exist") && msg.includes(colName.toLowerCase()))
-        return true;
+      if (msg.includes("does not exist") && msg.includes(colName.toLowerCase())) return true;
       return false;
     };
 
@@ -308,10 +307,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
       } else {
         res = await trySelect("highlight_the_herd_enabled");
 
-        if (
-          res?.error &&
-          isMissingColumnError(res.error, "highlight_the_herd_enabled")
-        ) {
+        if (res?.error && isMissingColumnError(res.error, "highlight_the_herd_enabled")) {
           res = await trySelect("herd_highlight_enabled");
           if (!res?.error) herdFlagColRef.current = "herd_highlight_enabled";
         } else if (!res?.error) {
@@ -329,9 +325,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
       setCardStatus((data as any).status);
       setCardCountdownActive(!!(data as any).countdown_active);
       setPlayMode((data as any).play_mode || "auto");
-      setProgressiveWrongRemovalEnabled(
-        !!(data as any).progressive_wrong_removal_enabled
-      );
+      setProgressiveWrongRemovalEnabled(!!(data as any).progressive_wrong_removal_enabled);
       setHerdHighlightEnabled(readHerdEnabled(data));
 
       if (typeof (data as any).streak_multiplier_enabled !== "undefined") {
@@ -350,17 +344,13 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
 
   const [view, setView] = useState<WallView>("question");
   const [question, setQuestion] = useState<any>(null);
-  const [currentQuestionNumber, setCurrentQuestionNumber] = useState<number | null>(
-    null
-  );
+  const [currentQuestionNumber, setCurrentQuestionNumber] = useState<number | null>(null);
   const [totalQuestions, setTotalQuestions] = useState<number | null>(null);
   const [questionStartedAt, setQuestionStartedAt] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [sessionStatus, setSessionStatus] = useState<string | null>(null);
   const [wallPhase, setWallPhase] = useState<WallPhase>("question");
-  const [wallPhaseStartedAt, setWallPhaseStartedAt] = useState<string | null>(
-    null
-  );
+  const [wallPhaseStartedAt, setWallPhaseStartedAt] = useState<string | null>(null);
   const [progress, setProgress] = useState(1);
   const [locked, setLocked] = useState(false);
   const [showAnswerOverlay, setShowAnswerOverlay] = useState(false);
@@ -388,12 +378,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
       .channel(`active-wall-title-${trivia.id}`)
       .on(
         "postgres_changes",
-        {
-          event: "UPDATE",
-          schema: "public",
-          table: "trivia_cards",
-          filter: `id=eq.${trivia.id}`,
-        },
+        { event: "UPDATE", schema: "public", table: "trivia_cards", filter: `id=eq.${trivia.id}` },
         (payload: any) => {
           const next = payload?.new;
           if (!next) return;
@@ -637,9 +622,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
       const lineHeightRaw = parseFloat(style.lineHeight || "0");
 
       const lineHeightPx =
-        !Number.isNaN(lineHeightRaw) && lineHeightRaw > 0
-          ? lineHeightRaw
-          : fontSizePx * 1.12;
+        !Number.isNaN(lineHeightRaw) && lineHeightRaw > 0 ? lineHeightRaw : fontSizePx * 1.12;
 
       const maxHeight = lineHeightPx * QUESTION_MAX_LINES;
       const actual = el.scrollHeight;
@@ -917,7 +900,6 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
         .map((p: any) => {
           const guest = p.guest_id ? guestMap.get(p.guest_id) : undefined;
           const safeName = guest?.name || formatDisplayName(p.display_name);
-          const safeSelfie = guest?.selfieUrl || p.photo_url || null;
 
           const currentStreak = typeof p.current_streak === "number" ? p.current_streak : 0;
           const bestStreak = typeof p.best_streak === "number" ? p.best_streak : 0;
@@ -927,7 +909,8 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
             playerId: p.id,
             guestId: p.guest_id,
             name: safeName,
-            selfieUrl: safeSelfie,
+            // keep selfieUrl in the type, but we are NOT using it on the wall
+            selfieUrl: null,
             points: totals.get(p.id) || 0,
             currentStreak,
             bestStreak,
@@ -990,8 +973,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
     enabled: progressiveWrongRemovalEnabled,
     questionId: question?.id ?? null,
     optionsLen: options.length,
-    correctIndex:
-      typeof question?.correct_index === "number" ? question.correct_index : null,
+    correctIndex: typeof question?.correct_index === "number" ? question.correct_index : null,
     wallPhase,
     isRunning: isActiveGame,
     isPaused,
@@ -1013,9 +995,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
   });
 
   const origin =
-    typeof window !== "undefined"
-      ? window.location.origin
-      : "https://faninteract.vercel.app";
+    typeof window !== "undefined" ? window.location.origin : "https://faninteract.vercel.app";
   const qrValue = `${origin}/trivia/${trivia?.id}/join`;
 
   /* ------------------------------------------------------------------ */
@@ -1239,9 +1219,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                             willChange: "transform",
                           }}
                         >
-                          {question?.question_text
-                            ? question.question_text
-                            : "Waiting for game to start"}
+                          {question?.question_text ? question.question_text : "Waiting for game to start"}
                         </div>
                       </div>
 
@@ -1269,9 +1247,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                             position: "relative",
                             overflow: "hidden",
                             transition:
-                              isPaused || isManualMode
-                                ? "none"
-                                : "width 0.05s linear, background 0.2s ease",
+                              isPaused || isManualMode ? "none" : "width 0.05s linear, background 0.2s ease",
                           }}
                         >
                           {!isPaused &&
@@ -1285,11 +1261,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                       {/* ANSWERS */}
                       <AnswerGrid
                         options={options}
-                        correctIndex={
-                          typeof question?.correct_index === "number"
-                            ? question.correct_index
-                            : null
-                        }
+                        correctIndex={typeof question?.correct_index === "number" ? question.correct_index : null}
                         revealAnswer={revealAnswer}
                         wallPhase={wallPhase}
                         removedWrongIndices={removedWrongIndices}
@@ -1316,13 +1288,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                           zIndex: 15,
                         }}
                       >
-                        <div
-                          style={{
-                            textAlign: "center",
-                            textTransform: "uppercase",
-                            letterSpacing: "0.08em",
-                          }}
-                        >
+                        <div style={{ textAlign: "center", textTransform: "uppercase", letterSpacing: "0.08em" }}>
                           <div
                             style={{
                               fontFamily:
@@ -1337,11 +1303,9 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                               borderRadius: 18,
                               background:
                                 "radial-gradient(circle at 50% 50%, rgba(59,130,246,0.65), rgba(15,23,42,0.0))",
-                              boxShadow:
-                                "0 0 40px rgba(59,130,246,0.9), 0 0 90px rgba(59,130,246,0.85)",
+                              boxShadow: "0 0 40px rgba(59,130,246,0.9), 0 0 90px rgba(59,130,246,0.85)",
                               display: "inline-block",
-                              animation:
-                                "fiAnswerGlow 1.8s ease-in-out infinite alternate",
+                              animation: "fiAnswerGlow 1.8s ease-in-out infinite alternate",
                             }}
                           >
                             THE ANSWER IS
@@ -1353,7 +1317,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                 </div>
               )}
 
-              {/* LEADERBOARD VIEW (restored: score + streak + on fire) */}
+              {/* LEADERBOARD VIEW (restored) */}
               {view === "leaderboard" && (
                 <div
                   style={{
@@ -1385,49 +1349,33 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                     style={{
                       position: "absolute",
                       top: LEADER_UI.listTop,
-                      width: "92%",
+                      width: "94%",
                       maxWidth: LEADER_UI.maxWidth,
                     }}
                   >
                     {leaderLoading && (
-                      <div style={{ textAlign: "center", opacity: 0.75 }}>
-                        Loading leaderboard…
-                      </div>
+                      <div style={{ textAlign: "center", opacity: 0.75 }}>Loading leaderboard…</div>
                     )}
 
                     {!leaderLoading && leaderRows.length === 0 && (
-                      <div style={{ textAlign: "center", opacity: 0.75 }}>
-                        No scores yet.
-                      </div>
+                      <div style={{ textAlign: "center", opacity: 0.75 }}>No scores yet.</div>
                     )}
 
                     {!leaderLoading && leaderRows.length > 0 && (
-                      <div
-                        style={{
-                          display: "flex",
-                          flexDirection: "column",
-                          gap: LEADER_UI.rowGap,
-                        }}
-                      >
+                      <div style={{ display: "flex", flexDirection: "column", gap: LEADER_UI.rowGap }}>
                         {leaderRows.slice(0, 10).map((r) => {
-                          const pts = typeof r.points === "number" ? r.points : 0;
-                          const cs =
-                            typeof r.currentStreak === "number" ? r.currentStreak : 0;
-                          const bs =
-                            typeof r.bestStreak === "number" ? r.bestStreak : 0;
-
-                          // "ON FIRE" when streak multiplier is enabled AND they're on a hot streak
-                          const onFire = !!streakMultiplierEnabled && cs >= 3;
+                          const streak = r.currentStreak ?? 0;
+                          const isOnFire = streak >= FIRE_STREAK;
 
                           return (
                             <div
                               key={r.playerId}
+                              className={isOnFire ? "fi-leader-row fi-onfire" : "fi-leader-row"}
                               style={{
                                 height: LEADER_UI.rowHeight,
                                 display: "flex",
                                 alignItems: "center",
-                                justifyContent: "flex-start",
-                                gap: 16,
+                                gap: 18,
                                 borderRadius: 22,
                                 padding: `0 ${LEADER_UI.rowPadX}px`,
                                 background: "rgba(255,255,255,0.07)",
@@ -1437,6 +1385,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                                 overflow: "hidden",
                               }}
                             >
+                              {/* subtle glass layer */}
                               <div
                                 style={{
                                   position: "absolute",
@@ -1448,117 +1397,150 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                                 }}
                               />
 
-                              {/* Rank pill */}
+                              {/* flames video when on fire */}
+                              {isOnFire && (
+                                <video
+                                  className="fi-fire-video"
+                                  src={FIRE_VIDEO_SRC}
+                                  autoPlay
+                                  loop
+                                  muted
+                                  playsInline
+                                />
+                              )}
+
+                              {/* rank */}
                               <div
                                 style={{
-                                  minWidth: LEADER_UI.rankPillMin,
-                                  height: 54,
-                                  borderRadius: 999,
-                                  padding: "0 16px",
-                                  background: "rgba(0,0,0,0.28)",
-                                  border: "1px solid rgba(255,255,255,0.18)",
+                                  width: LEADER_UI.rankW,
+                                  fontSize: "clamp(1.6rem,2.2vw,2.6rem)",
+                                  fontWeight: 900,
+                                  textShadow: "0 8px 20px rgba(0,0,0,0.7)",
+                                  zIndex: 2,
                                   display: "flex",
                                   alignItems: "center",
-                                  justifyContent: "center",
-                                  fontWeight: 900,
-                                  fontSize: "clamp(1.2rem,1.8vw,2rem)",
-                                  textShadow: "0 8px 18px rgba(0,0,0,0.55)",
-                                  zIndex: 2,
                                 }}
                               >
                                 #{r.rank}
                               </div>
 
-                              {/* Name + streak */}
+                              {/* name */}
                               <div
                                 style={{
+                                  width: LEADER_UI.nameW,
+                                  fontSize: "clamp(1.5rem,2.2vw,2.6rem)",
+                                  fontWeight: 900,
+                                  whiteSpace: "nowrap",
+                                  overflow: "hidden",
+                                  textOverflow: "ellipsis",
+                                  textShadow: "0 10px 30px rgba(0,0,0,0.55)",
                                   zIndex: 2,
-                                  minWidth: 0,
-                                  flex: 1,
-                                  display: "flex",
-                                  flexDirection: "column",
                                 }}
                               >
-                                <div
-                                  style={{
-                                    fontSize: "clamp(1.4rem,2.3vw,2.7rem)",
-                                    fontWeight: 900,
-                                    whiteSpace: "nowrap",
-                                    overflow: "hidden",
-                                    textOverflow: "ellipsis",
-                                    textShadow: "0 10px 30px rgba(0,0,0,0.55)",
-                                    lineHeight: 1.05,
-                                  }}
-                                >
-                                  {r.name}
-                                </div>
-
-                                <div
-                                  style={{
-                                    marginTop: 6,
-                                    display: "flex",
-                                    alignItems: "center",
-                                    gap: 10,
-                                    flexWrap: "wrap",
-                                  }}
-                                >
-                                  <div
-                                    style={{
-                                      fontSize: "clamp(0.95rem,1.2vw,1.15rem)",
-                                      fontWeight: 800,
-                                      opacity: 0.95,
-                                      padding: "6px 10px",
-                                      borderRadius: 999,
-                                      background: "rgba(0,0,0,0.22)",
-                                      border: "1px solid rgba(255,255,255,0.14)",
-                                    }}
-                                  >
-                                    Streak: {cs}
-                                    {bs > 0 ? ` (Best ${bs})` : ""}
-                                  </div>
-
-                                  {onFire && (
-                                    <div
-                                      style={{
-                                        fontSize: "clamp(0.95rem,1.2vw,1.15rem)",
-                                        fontWeight: 900,
-                                        letterSpacing: "0.04em",
-                                        padding: "6px 12px",
-                                        borderRadius: 999,
-                                        background:
-                                          "linear-gradient(90deg, rgba(251,146,60,0.85), rgba(239,68,68,0.85))",
-                                        border: "1px solid rgba(255,255,255,0.22)",
-                                        boxShadow: "0 10px 22px rgba(0,0,0,0.25)",
-                                        textTransform: "uppercase",
-                                      }}
-                                    >
-                                      🔥 On Fire
-                                    </div>
-                                  )}
-                                </div>
+                                {r.name}
                               </div>
 
-                              {/* Score */}
+                              {/* score */}
                               <div
                                 style={{
+                                  width: LEADER_UI.scoreW,
+                                  marginLeft: "auto",
+                                  textAlign: "right",
                                   zIndex: 2,
                                   display: "flex",
                                   flexDirection: "column",
                                   alignItems: "flex-end",
                                   justifyContent: "center",
-                                  gap: 6,
                                 }}
                               >
                                 <div
                                   style={{
-                                    fontSize: "clamp(1.2rem,1.9vw,2.2rem)",
-                                    fontWeight: 900,
-                                    textShadow: "0 10px 30px rgba(0,0,0,0.55)",
-                                    whiteSpace: "nowrap",
+                                    fontSize: "clamp(1.1rem,1.4vw,1.35rem)",
+                                    opacity: 0.85,
+                                    letterSpacing: "0.06em",
+                                    textTransform: "uppercase",
+                                    fontWeight: 800,
                                   }}
                                 >
-                                  {pts.toLocaleString()} pts
+                                  Score
                                 </div>
+                                <div
+                                  style={{
+                                    fontSize: "clamp(1.8rem,2.6vw,3rem)",
+                                    fontWeight: 900,
+                                    lineHeight: 1,
+                                    textShadow: "0 10px 30px rgba(0,0,0,0.55)",
+                                  }}
+                                >
+                                  {r.points}
+                                </div>
+                              </div>
+
+                              {/* streak + on fire */}
+                              <div
+                                style={{
+                                  width: LEADER_UI.streakW,
+                                  textAlign: "right",
+                                  zIndex: 2,
+                                  display: "flex",
+                                  flexDirection: "column",
+                                  alignItems: "flex-end",
+                                  justifyContent: "center",
+                                }}
+                              >
+                                <div
+                                  style={{
+                                    fontSize: "clamp(1.1rem,1.4vw,1.35rem)",
+                                    opacity: 0.85,
+                                    letterSpacing: "0.06em",
+                                    textTransform: "uppercase",
+                                    fontWeight: 800,
+                                  }}
+                                >
+                                  Streak
+                                </div>
+
+                                <div
+                                  style={{
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: 12,
+                                  }}
+                                >
+                                  <div
+                                    style={{
+                                      fontSize: "clamp(1.8rem,2.4vw,2.8rem)",
+                                      fontWeight: 900,
+                                      lineHeight: 1,
+                                      textShadow: "0 10px 30px rgba(0,0,0,0.55)",
+                                    }}
+                                  >
+                                    {streak}x
+                                  </div>
+
+                                  {isOnFire && (
+                                    <div
+                                      className="fi-onfire-badge"
+                                      style={{
+                                        fontSize: "clamp(1.0rem,1.35vw,1.35rem)",
+                                        fontWeight: 900,
+                                        letterSpacing: "0.08em",
+                                        textTransform: "uppercase",
+                                        padding: "0.35em 0.65em",
+                                        borderRadius: 999,
+                                        border: "1px solid rgba(255,255,255,0.35)",
+                                        background:
+                                          "radial-gradient(circle at 30% 30%, rgba(255,255,255,0.18), rgba(255,255,255,0.04))",
+                                        textShadow: "0 0 2px #000, 0 0 12px rgba(0,0,0,0.75)",
+                                      }}
+                                    >
+                                      ON FIRE
+                                    </div>
+                                  )}
+                                </div>
+
+                                {/* optional: show multiplier setting status without changing engine behavior */}
+                                {streakMultiplierEnabled ? null : null}
                               </div>
                             </div>
                           );
@@ -1703,6 +1685,36 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
           to {
             transform: translateX(320%);
           }
+        }
+
+        /* ---------- ON FIRE leaderboard effects ---------- */
+        .fi-leader-row.fi-onfire {
+          border: 1px solid rgba(255, 189, 46, 0.55) !important;
+          box-shadow:
+            0 10px 40px rgba(0,0,0,0.18),
+            0 0 22px rgba(255, 160, 0, 0.25);
+        }
+
+        .fi-fire-video {
+          position: absolute;
+          inset: -20% -10% -30% -10%;
+          width: 120%;
+          height: 160%;
+          object-fit: cover;
+          opacity: 0.55;
+          mix-blend-mode: screen;
+          filter: saturate(1.2) contrast(1.05);
+          z-index: 1;
+          pointer-events: none;
+        }
+
+        .fi-onfire-badge {
+          animation: fiPulseFire 0.9s ease-in-out infinite alternate;
+        }
+
+        @keyframes fiPulseFire {
+          0% { transform: translateY(0) scale(1); filter: brightness(1); }
+          100% { transform: translateY(-1px) scale(1.06); filter: brightness(1.15); }
         }
       `}</style>
     </>
