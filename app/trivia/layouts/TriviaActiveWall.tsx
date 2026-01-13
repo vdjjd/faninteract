@@ -721,7 +721,6 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
 
       if (remaining <= 0) {
         setLocked(true);
-        // phase advance (kept as-is)
         await setWallPhaseAuthoritative("overlay", "question");
         if (intervalId != null) {
           window.clearInterval(intervalId);
@@ -1105,6 +1104,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
               transition={{ duration: 0.35, ease: "easeOut" }}
               style={{ width: "100%", height: "100%", position: "relative" }}
             >
+              {/* QUESTION VIEW */}
               {view === "question" && (
                 <div
                   style={{
@@ -1273,6 +1273,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                 </div>
               )}
 
+              {/* LEADERBOARD VIEW */}
               {view === "leaderboard" && (
                 <div
                   style={{
@@ -1340,6 +1341,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                                 overflow: "hidden",
                               }}
                             >
+                              {/* glass layer stays under video */}
                               <div
                                 style={{
                                   position: "absolute",
@@ -1351,10 +1353,19 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                                 }}
                               />
 
+                              {/* ✅ flames video spans the FULL row */}
                               {isOnFire && (
-                                <video className="fi-fire-video" src={FIRE_VIDEO_SRC} autoPlay loop muted playsInline />
+                                <video
+                                  className="fi-fire-video"
+                                  src={FIRE_VIDEO_SRC}
+                                  autoPlay
+                                  loop
+                                  muted
+                                  playsInline
+                                />
                               )}
 
+                              {/* rank */}
                               <div
                                 style={{
                                   width: LEADER_UI.rankW,
@@ -1369,6 +1380,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                                 #{r.rank}
                               </div>
 
+                              {/* name */}
                               <div
                                 style={{
                                   width: LEADER_UI.nameW,
@@ -1384,7 +1396,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                                 {r.name}
                               </div>
 
-                              {/* ✅ RIGHT SIDE — SINGLE LINE — ORDER: ON FIRE, STREAK, SCORE */}
+                              {/* right-side order: ON FIRE, streak, score */}
                               <div
                                 style={{
                                   marginLeft: "auto",
@@ -1453,6 +1465,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
                 </div>
               )}
 
+              {/* PODIUM VIEW */}
               {view === "podium" && (
                 <div style={{ width: "100%", height: "100%", position: "relative" }}>
                   <TriviaPodum trivia={trivia} />
@@ -1461,6 +1474,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
             </motion.div>
           </AnimatePresence>
 
+          {/* QR CODE */}
           {view !== "podium" && (
             <div
               style={{
@@ -1498,6 +1512,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
             </div>
           )}
 
+          {/* QUESTION INDEX */}
           {view === "question" &&
             isActiveGame &&
             currentQuestionNumber != null &&
@@ -1521,6 +1536,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
               </div>
             )}
 
+          {/* LOGO */}
           {view !== "podium" && (
             <div
               style={{
@@ -1585,6 +1601,7 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
           }
         }
 
+        /* ---------- ON FIRE leaderboard effects ---------- */
         .fi-leader-row.fi-onfire {
           border: 1px solid rgba(255, 189, 46, 0.55) !important;
           box-shadow:
@@ -1592,15 +1609,21 @@ export default function TriviaActiveWall({ trivia }: TriviaActiveWallProps) {
             0 0 22px rgba(255, 160, 0, 0.25);
         }
 
+        /* ✅ THIS is the important fix:
+           Make the flames video a true full-row background.
+           Also scale X so the flame content doesn't “run out” before the right side. */
         .fi-fire-video {
           position: absolute;
-          inset: -20% -10% -30% -10%;
-          width: 120%;
-          height: 160%;
+          inset: 0;
+          width: 100%;
+          height: 100%;
           object-fit: cover;
-          opacity: 0.55;
+          object-position: center center;
+          opacity: 0.62;
           mix-blend-mode: screen;
-          filter: saturate(1.2) contrast(1.05);
+          filter: saturate(1.25) contrast(1.08);
+          transform: scaleX(1.45) scaleY(1.15);
+          transform-origin: center;
           z-index: 1;
           pointer-events: none;
         }
