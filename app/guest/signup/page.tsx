@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Image from "next/image";
 import { motion } from "framer-motion";
@@ -43,7 +43,10 @@ function toCssBg(background_type: any, background_value: any): string | null {
   const v = typeof background_value === "string" ? background_value.trim() : "";
   if (!v) return null;
 
-  const t = typeof background_type === "string" ? background_type.trim().toLowerCase() : "";
+  const t =
+    typeof background_type === "string"
+      ? background_type.trim().toLowerCase()
+      : "";
 
   if (t === "image" || looksLikeUrl(v)) return `url(${v})`;
   return v; // gradient or any valid CSS background-image value
@@ -69,7 +72,11 @@ async function fetchHostAndBgFromStandardTable(
 
     if (!error && data) {
       const bgVal = data?.[bgColumn] ?? null;
-      const cssBg = bgVal ? (looksLikeUrl(bgVal) ? `url(${bgVal})` : String(bgVal)) : null;
+      const cssBg = bgVal
+        ? looksLikeUrl(bgVal)
+          ? `url(${bgVal})`
+          : String(bgVal)
+        : null;
       return { host_id: data.host_id ?? null, cssBg };
     }
 
@@ -118,6 +125,21 @@ function calculateAgeFromDob(dobStr: string): number | null {
 
   return age;
 }
+
+type GuestProfileRow = {
+  id: string;
+  device_id: string | null;
+  first_name: string | null;
+  last_name: string | null;
+  email: string | null;
+  phone: string | null;
+  street: string | null;
+  city: string | null;
+  state: string | null;
+  zip: string | null;
+  date_of_birth: string | null;
+  total_visit_count: number | null;
+};
 
 export default function GuestSignupPage() {
   const router = useRouter();
@@ -183,6 +205,11 @@ export default function GuestSignupPage() {
 
   const [agree, setAgree] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+
+  // ✅ Progressive profiling
+  const [existingProfile, setExistingProfile] = useState<GuestProfileRow | null>(null);
+  const [checkingExisting, setCheckingExisting] = useState(true);
+  const [missingFields, setMissingFields] = useState<string[]>([]);
 
   /* ------------------------------------------------- */
   useEffect(() => {
@@ -251,7 +278,7 @@ export default function GuestSignupPage() {
       // Host-level terms
       setHostTerms(host.host_terms_markdown || "");
 
-      // Master / platform terms (FanInteract)
+      // Master / platform terms
       if (host.master_id) {
         const { data: master, error: masterErr } = await supabase
           .from("master_accounts")
@@ -407,39 +434,149 @@ export default function GuestSignupPage() {
   }, [wallId, wheelId, pollId, basketballId, triviaId, hostParam, redirect, supabase]);
 
   /* -------------------------------------------------
-     AUTO-REDIRECT IF GUEST EXISTS
+     REQUIRED FIELD LOGIC
+  ------------------------------------------------- */
+  const requiredKeys = useMemo(() => {
+    if (!hostSettings) return ["first_name"];
+    const keys = ["first_name"];
+    if (hostSettings.require_last_name) keys.push("last_name");
+    if (hostSettings.require_email) keys.push("email");
+    if (hostSettings.require_phone) keys.push("phone");
+    if (hostSettings.require_street) keys.push("street");
+    if (hostSettings.require_city) keys.push("city");
+    if (hostSettings.require_state) keys.push("state");
+    if (hostSettings.require_zip) keys.push("zip");
+    if (hostSettings.require_age) keys.push("date_of_birth");
+    return keys;
+  }, [hostSettings]);
+
+  function computeMissing(profile: GuestProfileRow | null) {
+    const missing: string[] = [];
+    for (const k of requiredKeys) {
+      const val =
+        k === "date_of_birth"
+          ? (profile?.date_of_birth ?? "")
+          : (profile as any)?.[k] ?? "";
+
+      if (!String(val ?? "").trim()) missing.push(k);
+    }
+    return missing;
+  }
+
+  // show only missing required fields for returning guests
+  const isReturning = !!existingProfile?.id;
+  const showField = (key: string) => {
+    // New guest: show all required fields (like before)
+    if (!isReturning) {
+      if (key === "first_name") return true;
+      return requiredKeys.includes(key);
+    }
+    // Returning guest: show only missing fields
+    return missingFields.includes(key);
+  };
+
+  /* -------------------------------------------------
+     LOAD EXISTING GUEST BY device_id
+     - if nothing missing -> redirect
+     - if missing required -> stay + prefill + show only missing
   ------------------------------------------------- */
   useEffect(() => {
-    async function validateGuest() {
+    let cancelled = false;
+
+    async function run() {
       if (typeof window === "undefined") return;
+      if (loadingHost || !hostSettings) return;
+
+      setCheckingExisting(true);
 
       const deviceId = localStorage.getItem("guest_device_id");
-      const cached = localStorage.getItem("guest_profile");
-      if (!deviceId || !cached) return;
-
-      const { data, error } = await supabase
-        .from("guest_profiles")
-        .select("id")
-        .eq("device_id", deviceId)
-        .maybeSingle();
-
-      if (error) console.error("❌ guest_profiles check error:", error);
-
-      if (!data) {
-        localStorage.removeItem("guest_profile");
+      if (!deviceId) {
+        setExistingProfile(null);
+        setMissingFields([]);
+        setCheckingExisting(false);
         return;
       }
 
-      if (redirect) return router.push(redirect);
-      if (wallId) return router.push(`/wall/${wallId}/submit`);
-      if (wheelId) return router.push(`/prizewheel/${wheelId}/submit`);
-      if (pollId) return router.push(`/polls/${pollId}/vote`);
-      if (basketballId) return router.push(`/basketball/${basketballId}/submit`);
-      if (triviaId) return router.push(`/trivia/${triviaId}/join`);
+      const { data, error } = await supabase
+        .from("guest_profiles")
+        .select(
+          "id, device_id, first_name, last_name, email, phone, street, city, state, zip, date_of_birth, total_visit_count"
+        )
+        .eq("device_id", deviceId)
+        .maybeSingle();
+
+      if (cancelled) return;
+
+      if (error) {
+        console.error("❌ guest_profiles check error:", error);
+        setExistingProfile(null);
+        setMissingFields([]);
+        setCheckingExisting(false);
+        return;
+      }
+
+      if (!data) {
+        // No existing profile
+        localStorage.removeItem("guest_profile");
+        setExistingProfile(null);
+        setMissingFields([]);
+        setCheckingExisting(false);
+        return;
+      }
+
+      const profile = data as GuestProfileRow;
+      setExistingProfile(profile);
+
+      // Prefill form with existing values (so if we show any field it's filled)
+      setForm((prev) => ({
+        ...prev,
+        first_name: profile.first_name ?? "",
+        last_name: profile.last_name ?? "",
+        email: profile.email ?? "",
+        phone: profile.phone ?? "",
+        street: profile.street ?? "",
+        city: profile.city ?? "",
+        state: profile.state ?? "",
+        zip: profile.zip ?? "",
+        date_of_birth: profile.date_of_birth ?? "",
+      }));
+
+      const missing = computeMissing(profile);
+      setMissingFields(missing);
+
+      // If nothing missing, behave like before and bounce them through
+      if (missing.length === 0) {
+        // Keep cached profile for downstream pages
+        localStorage.setItem("guest_profile", JSON.stringify(profile));
+
+        if (redirect) return router.push(redirect);
+        if (wallId) return router.push(`/wall/${wallId}/submit`);
+        if (wheelId) return router.push(`/prizewheel/${wheelId}/submit`);
+        if (pollId) return router.push(`/polls/${pollId}/vote`);
+        if (basketballId) return router.push(`/basketball/${basketballId}/submit`);
+        if (triviaId) return router.push(`/trivia/${triviaId}/join`);
+      }
+
+      setCheckingExisting(false);
     }
 
-    validateGuest();
-  }, [redirect, wallId, wheelId, pollId, basketballId, triviaId, router, supabase]);
+    run();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    loadingHost,
+    hostSettings,
+    requiredKeys,
+    redirect,
+    wallId,
+    wheelId,
+    pollId,
+    basketballId,
+    triviaId,
+    router,
+    supabase,
+  ]);
 
   /* -------------------------------------------------
      SUBMIT
@@ -467,10 +604,25 @@ export default function GuestSignupPage() {
         triviaId ? "trivia" :
         "";
 
-      const dob = form.date_of_birth ? form.date_of_birth : null;
+      // ✅ Merge strategy: never overwrite existing values with blank strings
+      const merged: any = { ...(existingProfile ?? {}) };
+
+      for (const key of Object.keys(form) as (keyof typeof form)[]) {
+        const v = (form[key] ?? "").toString().trim();
+        if (v.length > 0) merged[key] = v;
+      }
+
+      const dob = merged.date_of_birth ? String(merged.date_of_birth) : null;
 
       const payload = {
-        ...form,
+        first_name: merged.first_name ?? "",
+        last_name: merged.last_name ?? "",
+        email: merged.email ?? "",
+        phone: merged.phone ?? "",
+        street: merged.street ?? "",
+        city: merged.city ?? "",
+        state: merged.state ?? "",
+        zip: merged.zip ?? "",
         date_of_birth: dob,
         age: dob ? calculateAgeFromDob(dob) : null,
       };
@@ -506,7 +658,7 @@ export default function GuestSignupPage() {
   /* -------------------------------------------------
      LOADING / GUARD
   ------------------------------------------------- */
-  if (loadingHost || !hostSettings) {
+  if (loadingHost || !hostSettings || checkingExisting) {
     return (
       <main className={cn("min-h-screen w-full flex items-center justify-center bg-black text-white")}>
         Loading…
@@ -538,6 +690,10 @@ export default function GuestSignupPage() {
     hostVenueChunks.push(venueTerms);
   }
   const hostVenueTermsMarkdown = hostVenueChunks.join("\n\n---\n\n");
+
+  // ✅ UI text
+  const showReturningNotice = isReturning && missingFields.length > 0;
+  const visitCount = existingProfile?.total_visit_count ?? null;
 
   return (
     <main className={cn("relative flex items-center justify-center min-h-screen w-full text-white")}>
@@ -576,20 +732,34 @@ export default function GuestSignupPage() {
           )}
         </div>
 
-        <motion.h2 className={cn("text-center text-2xl font-semibold text-sky-300 mb-6")}>
-          Join the Fan Zone
+        <motion.h2 className={cn("text-center text-2xl font-semibold text-sky-300 mb-3")}>
+          {showReturningNotice ? "Quick Update" : "Join the Fan Zone"}
         </motion.h2>
 
-        <form onSubmit={handleSubmit} className="space-y-3">
-          <input
-            required
-            placeholder="First Name *"
-            className={cn("w-full p-3 rounded-xl bg-black/40 border border-white/20")}
-            value={form.first_name}
-            onChange={(e) => setForm({ ...form, first_name: e.target.value })}
-          />
+        {showReturningNotice && (
+          <div className={cn("mb-5 p-3 rounded-xl border border-white/10 bg-black/30 text-sm text-gray-200")}>
+            <div className={cn('font-medium', 'text-white')}>Welcome back{existingProfile?.first_name ? `, ${existingProfile.first_name}` : ""}.</div>
+            <div className={cn('text-gray-300', 'mt-1')}>
+              We just need {missingFields.length} more thing{missingFields.length === 1 ? "" : "s"} to finish your profile.
+              {typeof visitCount === "number" && visitCount > 0 ? (
+                <span className="text-gray-400"> (Visits: {visitCount})</span>
+              ) : null}
+            </div>
+          </div>
+        )}
 
-          {hostSettings.require_last_name && (
+        <form onSubmit={handleSubmit} className="space-y-3">
+          {showField("first_name") && (
+            <input
+              required
+              placeholder="First Name *"
+              className={cn("w-full p-3 rounded-xl bg-black/40 border border-white/20")}
+              value={form.first_name}
+              onChange={(e) => setForm({ ...form, first_name: e.target.value })}
+            />
+          )}
+
+          {showField("last_name") && (
             <input
               required
               placeholder="Last Name *"
@@ -599,7 +769,7 @@ export default function GuestSignupPage() {
             />
           )}
 
-          {hostSettings.require_email && (
+          {showField("email") && (
             <input
               required
               type="email"
@@ -610,7 +780,7 @@ export default function GuestSignupPage() {
             />
           )}
 
-          {hostSettings.require_phone && (
+          {showField("phone") && (
             <input
               required
               type="tel"
@@ -621,7 +791,7 @@ export default function GuestSignupPage() {
             />
           )}
 
-          {hostSettings.require_street && (
+          {showField("street") && (
             <input
               required
               placeholder="Street Address *"
@@ -631,7 +801,7 @@ export default function GuestSignupPage() {
             />
           )}
 
-          {hostSettings.require_city && (
+          {showField("city") && (
             <input
               required
               placeholder="City *"
@@ -641,7 +811,7 @@ export default function GuestSignupPage() {
             />
           )}
 
-          {hostSettings.require_state && (
+          {showField("state") && (
             <select
               required
               className={cn("w-full p-3 rounded-xl bg-black/40 border border-white/20")}
@@ -657,7 +827,7 @@ export default function GuestSignupPage() {
             </select>
           )}
 
-          {hostSettings.require_zip && (
+          {showField("zip") && (
             <input
               required
               placeholder="ZIP Code *"
@@ -667,7 +837,7 @@ export default function GuestSignupPage() {
             />
           )}
 
-          {hostSettings.require_age && (
+          {showField("date_of_birth") && (
             <div className="relative">
               <input
                 required
