@@ -164,8 +164,9 @@ export default function GuestSignupPage() {
   const [masterTerms, setMasterTerms] = useState("");
   const [showTermsModal, setShowTermsModal] = useState(false);
 
-  // ⭐ Venue terms from host_terms_sets
+  // ⭐ Venue terms from host_terms_sets (body for active set)
   const [venueTerms, setVenueTerms] = useState("");
+  // ⭐ On/off toggle lives on hosts.venue_terms_enabled
   const [venueTermsEnabled, setVenueTermsEnabled] = useState(false);
 
   const [form, setForm] = useState({
@@ -218,6 +219,7 @@ export default function GuestSignupPage() {
           minimum_age,
           host_terms_markdown,
           active_terms_set_id,
+          venue_terms_enabled,
           loyalty_enabled,
           loyalty_show_badge,
           loyalty_show_visit_count
@@ -265,37 +267,28 @@ export default function GuestSignupPage() {
         setMasterTerms("");
       }
 
-      // Venue terms (active_terms_set_id)
+      // Venue terms body from active_terms_set_id
       if (host.active_terms_set_id) {
         const { data: termsSet, error: termsErr } = await supabase
           .from("host_terms_sets")
-          .select("venue_terms_markdown, venue_terms_enabled")
+          .select("venue_terms_markdown")
           .eq("id", host.active_terms_set_id)
           .maybeSingle();
 
         if (termsErr) {
           console.error("❌ host_terms_sets load error:", termsErr);
           setVenueTerms("");
-          setVenueTermsEnabled(false);
         } else if (termsSet) {
           setVenueTerms(termsSet.venue_terms_markdown || "");
-
-          // ⭐ Treat null/undefined as ON for backwards compatibility
-          const rawEnabled = (termsSet as any).venue_terms_enabled;
-          const enabled =
-            rawEnabled === null || rawEnabled === undefined
-              ? true
-              : toBool(rawEnabled);
-
-          setVenueTermsEnabled(enabled);
         } else {
           setVenueTerms("");
-          setVenueTermsEnabled(false);
         }
       } else {
         setVenueTerms("");
-        setVenueTermsEnabled(false);
       }
+
+      // On/off toggle from hosts.venue_terms_enabled
+      setVenueTermsEnabled(toBool(host.venue_terms_enabled));
     }
 
     async function loadContext() {
@@ -548,7 +541,10 @@ export default function GuestSignupPage() {
 
   return (
     <main className={cn("relative flex items-center justify-center min-h-screen w-full text-white")}>
-      <div className={cn("absolute inset-0 bg-cover bg-center")} style={{ backgroundImage: bgImage }} />
+      <div
+        className={cn("absolute inset-0 bg-cover bg-center")}
+        style={{ backgroundImage: bgImage }}
+      />
       <div className={cn("absolute inset-0 bg-black/60 backdrop-blur-md")} />
 
       <motion.div
@@ -678,7 +674,7 @@ export default function GuestSignupPage() {
                 type="date"
                 max={new Date().toISOString().split("T")[0]}
                 className={cn(
-                  "w-full h/[52px] px-3 rounded-xl",
+                  "w-full h-[52px] px-3 rounded-xl",
                   "bg-black/40 border border-white/20",
                   "text-white appearance-none [color-scheme:dark]"
                 )}
