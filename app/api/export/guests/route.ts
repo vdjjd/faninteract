@@ -37,58 +37,53 @@ export async function GET(req: Request) {
   if (!hostId) return new NextResponse("Missing hostId", { status: 400 });
 
   try {
-    // 1) EVENT GUESTS FROM FUNCTION export_host_guests(p_host_id)
-    const [{ data: guestData, error: guestError }, { data: leadData, error: leadError }] =
-      await Promise.all([
-        supabase.rpc("export_host_guests", {
-          p_host_id: hostId,
-        }),
-        supabase
-          .from("priority_leads")
-          .select(
-            `
-            first_name,
-            last_name,
-            email,
-            phone,
-            city,
-            region,
-            zip,
-            zip_code,
-            venue_name,
-            product_interest,
-            wants_contact,
-            scanned_at,
-            submitted_at,
-            created_at,
-            source,
-            source_type
+    // 1) EVENT GUESTS FROM FUNCTION export_host_guests_v2(p_host_id)
+    const [
+      { data: guestData, error: guestError },
+      { data: leadData, error: leadError },
+    ] = await Promise.all([
+      supabase.rpc("export_host_guests_v2", {
+        p_host_id: hostId,
+      }),
+      supabase
+        .from("priority_leads")
+        .select(
           `
-          )
-          .eq("host_id", hostId)
-          .order("submitted_at", { ascending: true }),
-      ]);
+          first_name,
+          last_name,
+          email,
+          phone,
+          city,
+          region,
+          zip,
+          zip_code,
+          venue_name,
+          product_interest,
+          wants_contact,
+          scanned_at,
+          submitted_at,
+          source,
+          source_type
+        `
+        )
+        .eq("host_id", hostId)
+        .order("submitted_at", { ascending: true }),
+    ]);
 
     if (guestError) {
-      console.error("export_host_guests error:", guestError);
-      return new NextResponse(
-        JSON.stringify({ error: guestError.message }),
-        {
-          status: 500,
-          headers: { "Content-Type": "application/json; charset=utf-8" },
-        }
-      );
+      console.error("export_host_guests_v2 error:", guestError);
+      return new NextResponse(JSON.stringify({ error: guestError.message }), {
+        status: 500,
+        headers: { "Content-Type": "application/json; charset=utf-8" },
+      });
     }
 
     if (leadError) {
       console.error("priority_leads export error:", leadError);
-      return new NextResponse(
-        JSON.stringify({ error: leadError.message }),
-        {
-          status: 500,
-          headers: { "Content-Type": "application/json; charset=utf-8" },
-        }
-      );
+      return new NextResponse(JSON.stringify({ error: leadError.message }), {
+        status: 500,
+        headers: { "Content-Type": "application/json; charset=utf-8" },
+      });
     }
 
     // 2) MAP GUEST ROWS (FROM FUNCTION)
@@ -108,19 +103,25 @@ export async function GET(req: Request) {
       city: r.city ?? "",
       state: r.state ?? "",
       zip: r.zip ?? "",
-      venue: "",
+      venue: "", // not tied to a single venue row here
       product: "",
       wants_contact: "",
+      guest_status: r.guest_status ?? "",
+      visit_number:
+        typeof r.visit_number === "number" ? r.visit_number : "",
     }));
 
     // 3) MAP PRIORITY LEAD ROWS
     const priorityRows = (leadData ?? []).map((l: any) => {
       // “Joined” = when they actually scanned/filled the form
-      const joinedTs = l.scanned_at ?? l.submitted_at ?? l.created_at ?? null;
+      const joinedTs = l.scanned_at ?? l.submitted_at ?? null;
       const { date: joined_date, time: joined_time } = splitDateTime(joinedTs);
-      // “Profile created” – we can treat as created_at for now
-      const { date: profile_created_date, time: profile_created_time } =
-        splitDateTime(l.created_at ?? joinedTs);
+
+      // “Profile created” – use the same timestamp for now
+      const {
+        date: profile_created_date,
+        time: profile_created_time,
+      } = splitDateTime(joinedTs);
 
       return {
         type: "priority",
@@ -146,13 +147,16 @@ export async function GET(req: Request) {
             : l.wants_contact === false
             ? "no"
             : "",
+        // Leads don't participate in loyalty/visit count
+        guest_status: "",
+        visit_number: "",
       };
     });
 
     // 4) COMBINE (YOU CAN FLIP ORDER IF YOU WANT GUESTS FIRST)
     const rows = [...guestRows, ...priorityRows];
 
-    // 5) CSV HEADERS – DATE + TIME SEPARATE, PLUS MARKETING FIELDS
+    // 5) CSV HEADERS – DATE + TIME SEPARATE, PLUS MARKETING & LOYALTY FIELDS
     const headers = [
       "type",
       "first_name",
@@ -163,6 +167,8 @@ export async function GET(req: Request) {
       "profile_created_time",
       "joined_date",
       "joined_time",
+      "guest_status", // 'new' / 'returning' when loyalty is ON
+      "visit_number", // numeric visit count when loyalty is ON
       "event_id",
       "source",
       "feature",
