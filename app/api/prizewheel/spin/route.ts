@@ -1,61 +1,68 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { randomInt, randomUUID } from "crypto";
+import twilio from "twilio";
 
 export const runtime = "nodejs";
 
 type Action = "go" | "stop" | "auto";
 
-type SmsResult =
-  | { attempted: false; sent: false; skipped: string }
-  | { attempted: true; sent: true; sid?: string; to: string }
-  | { attempted: true; sent: false; error: string; to?: string };
+type WheelRow = {
+  id: string;
 
-function cleanStr(v: any) {
-  return typeof v === "string" ? v.trim() : "";
-}
+  spin_state: string | null;
+  spin_session_id: string | null;
+  spin_started_at: string | null;
 
-function renderTemplate(template: string, vars: Record<string, string>) {
-  let out = template;
+  winner_entry_id: string | null;
+  winner_guest_profile_id: string | null;
+  winner_index: number | null;
+  winner_selected_at: string | null;
+  winner_session_id: string | null;
+
+  // ✅ SMS settings (new)
+  sms_winner_enabled?: boolean | null;
+  sms_winner_message?: string | null;
+
+  // optional display
+  title?: string | null;
+};
+
+type WinnerEntryRow = {
+  id: string;
+  wheel_id: string;
+  guest_profile_id: string;
+  status: string;
+  photo_url: string | null;
+  first_name: string | null;
+  last_name: string | null;
+  created_at: string;
+};
+
+function fillTemplate(tpl: string, vars: Record<string, string>) {
+  let out = tpl || "";
   for (const [k, v] of Object.entries(vars)) {
-    out = out.replaceAll(`{${k}}`, v);
+    out = out.replaceAll(`{${k}}`, v ?? "");
   }
   return out;
 }
 
-async function sendTwilioSms(to: string, body: string): Promise<{ sid?: string }> {
-  const accountSid = process.env.TWILIO_ACCOUNT_SID;
-  const authToken = process.env.TWILIO_AUTH_TOKEN;
+function cleanPhone(v: any): string {
+  const s = typeof v === "string" ? v.trim() : "";
+  return s;
+}
+
+async function sendSmsTwilio(to: string, body: string) {
+  const sid = process.env.TWILIO_ACCOUNT_SID;
+  const token = process.env.TWILIO_AUTH_TOKEN;
   const from = process.env.TWILIO_FROM_NUMBER;
 
-  if (!accountSid || !authToken || !from) {
-    throw new Error("missing_twilio_env");
+  if (!sid || !token || !from) {
+    throw new Error("Missing Twilio env vars (TWILIO_ACCOUNT_SID/TWILIO_AUTH_TOKEN/TWILIO_FROM_NUMBER)");
   }
 
-  const url = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`;
-
-  const form = new URLSearchParams();
-  form.set("From", from);
-  form.set("To", to);
-  form.set("Body", body);
-
-  const resp = await fetch(url, {
-    method: "POST",
-    headers: {
-      Authorization: "Basic " + Buffer.from(`${accountSid}:${authToken}`).toString("base64"),
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-    body: form.toString(),
-  });
-
-  const json: any = await resp.json().catch(() => null);
-
-  if (!resp.ok) {
-    const msg = cleanStr(json?.message) || `twilio_error_${resp.status}`;
-    throw new Error(msg);
-  }
-
-  return { sid: json?.sid };
+  const client = twilio(sid, token);
+  await client.messages.create({ to, from, body });
 }
 
 export async function POST(req: Request) {
@@ -81,27 +88,16 @@ export async function POST(req: Request) {
   if (!wheelId) return new NextResponse("Missing wheelId", { status: 400 });
   if (!action) return new NextResponse("Missing action", { status: 400 });
 
-  // Load wheel (includes SMS settings)
-  const { data: wheel, error: wheelErr } = await supabase
+  // Load wheel (so STOP can be idempotent)
+  const { data: wheelData, error: wheelErr } = await supabase
     .from("prize_wheels")
     .select(
-      [
-        "id",
-        "title",
-        "spin_state",
-        "spin_session_id",
-        "winner_entry_id",
-        "winner_guest_profile_id",
-        "winner_index",
-        "winner_selected_at",
-        "winner_session_id",
-        "spin_started_at",
-        "sms_winner_enabled",
-        "sms_winner_message",
-      ].join(",")
+      "id, spin_state, spin_session_id, winner_entry_id, winner_guest_profile_id, winner_index, winner_selected_at, winner_session_id, spin_started_at, sms_winner_enabled, sms_winner_message, title"
     )
     .eq("id", wheelId)
     .single();
+
+  const wheel = wheelData as WheelRow | null;
 
   if (wheelErr || !wheel) {
     return new NextResponse(
@@ -125,7 +121,7 @@ export async function POST(req: Request) {
     return count ?? 0;
   }
 
-  async function fetchRandomApprovedEntry() {
+  async function fetchRandomApprovedEntry(): Promise<WinnerEntryRow> {
     const approvedCount = await countByStatus("approved");
 
     if (approvedCount === 0) {
@@ -139,6 +135,7 @@ export async function POST(req: Request) {
       throw err;
     }
 
+    // Pick a random offset within approved set
     const offset = randomInt(0, approvedCount);
 
     const { data, error } = await supabase
@@ -154,6 +151,7 @@ export async function POST(req: Request) {
 
     if (error) throw error;
 
+    // Rare edge case: row removed between count and fetch
     if (!data) {
       const { data: fallback, error: fbErr } = await supabase
         .from("wheel_entries")
@@ -174,138 +172,57 @@ export async function POST(req: Request) {
         throw err;
       }
 
-      return fallback;
+      return fallback as WinnerEntryRow;
     }
 
-    return data;
+    return data as WinnerEntryRow;
   }
 
   function pickWinnerIndex() {
-    return randomInt(0, 16);
+    return randomInt(0, 16); // tile index 0-15
   }
 
-  async function fetchWinnerPhone(guestProfileId: string): Promise<string> {
+  async function fetchGuestProfileForSms(guestProfileId: string) {
     const { data, error } = await supabase
       .from("guest_profiles")
       .select("phone, first_name, last_name")
       .eq("id", guestProfileId)
-      .single();
-
-    if (error || !data) return "";
-    return cleanStr(data.phone);
-  }
-
-  async function ensureSpinRow(params: {
-    spinId: string;
-    spinSessionId: string;
-    action: "stop" | "auto";
-    winnerEntryId: string;
-    winnerGuestProfileId: string;
-    winnerIndex: number;
-    winnerSelectedAtISO: string;
-  }) {
-    // Upsert prevents duplicates for the same wheel/session
-    const { data, error } = await supabase
-      .from("prize_wheel_spins")
-      .upsert(
-        {
-          id: params.spinId,
-          wheel_id: wheelId,
-          spin_session_id: params.spinSessionId,
-          action: params.action,
-          winner_entry_id: params.winnerEntryId,
-          winner_guest_profile_id: params.winnerGuestProfileId,
-          winner_index: params.winnerIndex,
-          winner_selected_at: params.winnerSelectedAtISO,
-        },
-        { onConflict: "wheel_id,spin_session_id" }
-      )
-      .select("id, sms_sent_at, sms_error")
       .maybeSingle();
 
     if (error) throw error;
     return data || null;
   }
 
-  async function getSpinRow(spinSession: string) {
-    const { data, error } = await supabase
-      .from("prize_wheel_spins")
-      .select("id, sms_sent_at, sms_error, sms_to, sms_sid")
-      .eq("wheel_id", wheelId)
-      .eq("spin_session_id", spinSession)
-      .maybeSingle();
-
-    if (error) return null;
-    return data || null;
-  }
-
-  async function updateSpinSms(spinId: string, patch: any) {
-    await supabase.from("prize_wheel_spins").update(patch).eq("id", spinId);
-  }
-
-  async function maybeSendWinnerSms(args: {
-    spinSessionId: string;
-    spinId: string;
-    winnerEntry: any;
-    winnerIndex: number;
-    winnerSelectedAtISO: string;
-  }): Promise<SmsResult> {
-    // settings gate
-    const enabled = !!wheel.sms_winner_enabled;
-    const template = cleanStr(wheel.sms_winner_message);
-
-    if (!enabled) return { attempted: false, sent: false, skipped: "disabled" };
-    if (!template) return { attempted: false, sent: false, skipped: "empty_message" };
-
-    const guestProfileId = args.winnerEntry?.guest_profile_id;
-    if (!guestProfileId) return { attempted: false, sent: false, skipped: "missing_guest_profile" };
-
-    // already sent?
-    const existing = await getSpinRow(args.spinSessionId);
-    if (existing?.sms_sent_at) {
-      return {
-        attempted: false,
-        sent: false,
-        skipped: "already_sent",
-      };
-    }
-
-    const to = await fetchWinnerPhone(guestProfileId);
-    if (!to) {
-      await updateSpinSms(args.spinId, { sms_error: "missing_phone" });
-      return { attempted: true, sent: false, error: "missing_phone" };
-    }
-
-    const first = cleanStr(args.winnerEntry?.first_name);
-    const last = cleanStr(args.winnerEntry?.last_name);
-    const title = cleanStr(wheel.title) || "Prize Wheel";
-
-    const body = renderTemplate(template, {
-      first_name: first,
-      last_name: last,
-      wheel_title: title,
-    });
-
+  async function maybeSendWinnerSms(winnerEntry: WinnerEntryRow) {
     try {
-      const res = await sendTwilioSms(to, body);
+      if (!wheel.sms_winner_enabled) return;
+      if (!winnerEntry?.guest_profile_id) return;
 
-      await updateSpinSms(args.spinId, {
-        sms_to: to,
-        sms_body: body,
-        sms_sid: res.sid || null,
-        sms_sent_at: new Date().toISOString(),
-        sms_error: null,
+      const gp = await fetchGuestProfileForSms(winnerEntry.guest_profile_id);
+      const phone = cleanPhone(gp?.phone);
+
+      if (!phone) return;
+
+      const tpl =
+        (wheel.sms_winner_message || "").trim() ||
+        "Congrats {first_name}! You won {wheel_title}. Please come to claim your prize.";
+
+      const firstName =
+        (gp?.first_name || winnerEntry.first_name || "").toString().trim();
+      const lastName =
+        (gp?.last_name || winnerEntry.last_name || "").toString().trim();
+
+      const msg = fillTemplate(tpl, {
+        first_name: firstName,
+        last_name: lastName,
+        wheel_title: (wheel.title || "Prize Wheel").toString().trim(),
       });
 
-      return { attempted: true, sent: true, sid: res.sid, to };
-    } catch (e: any) {
-      const msg = cleanStr(e?.message) || "sms_failed";
-      await updateSpinSms(args.spinId, {
-        sms_to: to,
-        sms_body: body,
-        sms_error: msg,
-      });
-      return { attempted: true, sent: false, error: msg, to };
+      // ✅ send (Twilio)
+      await sendSmsTwilio(phone, msg);
+    } catch (e) {
+      // Never fail the spin if SMS fails
+      console.error("SMS winner send failed:", e);
     }
   }
 
@@ -322,6 +239,7 @@ export async function POST(req: Request) {
         spin_session_id: sessionId,
         spin_started_at: new Date().toISOString(),
 
+        // clear any prior winner so UI doesn't reuse it accidentally
         winner_entry_id: null,
         winner_guest_profile_id: null,
         winner_index: null,
@@ -362,37 +280,6 @@ export async function POST(req: Request) {
         .eq("id", wheel.winner_entry_id)
         .maybeSingle();
 
-      // Ensure spin row exists + attempt SMS (without double sending)
-      const spinId = randomUUID();
-      const winnerSelectedAtISO =
-        typeof wheel.winner_selected_at === "string"
-          ? wheel.winner_selected_at
-          : new Date().toISOString();
-
-      const ensured = await ensureSpinRow({
-        spinId,
-        spinSessionId,
-        action: "stop",
-        winnerEntryId: wheel.winner_entry_id,
-        winnerGuestProfileId: String(wheel.winner_guest_profile_id),
-        winnerIndex: Number(wheel.winner_index),
-        winnerSelectedAtISO,
-      });
-
-      const finalSpinId = ensured?.id || spinId;
-
-      const sms = await maybeSendWinnerSms({
-        spinSessionId,
-        spinId: finalSpinId,
-        winnerEntry: winnerRow || {
-          guest_profile_id: wheel.winner_guest_profile_id,
-          first_name: "",
-          last_name: "",
-        },
-        winnerIndex: Number(wheel.winner_index),
-        winnerSelectedAtISO,
-      });
-
       return NextResponse.json({
         wheelId,
         spinSessionId,
@@ -401,12 +288,11 @@ export async function POST(req: Request) {
         winner_index: wheel.winner_index,
         winner_selected_at: wheel.winner_selected_at,
         winner: winnerRow || null,
-        sms,
       });
     }
 
-    // Otherwise: choose winner now
-    let winnerEntry: any;
+    // Otherwise: choose winner now (FAST, no 1000 row issue)
+    let winnerEntry: WinnerEntryRow;
     try {
       winnerEntry = await fetchRandomApprovedEntry();
     } catch (e: any) {
@@ -416,46 +302,26 @@ export async function POST(req: Request) {
     }
 
     const winnerIndex = pickWinnerIndex();
-    const winnerSelectedAtISO = new Date().toISOString();
 
     const { error: updErr } = await supabase
       .from("prize_wheels")
       .update({
         spin_state: "stopping",
         spin_session_id: wheel.spin_session_id || spinSessionId,
-        spin_started_at: wheel.spin_started_at || winnerSelectedAtISO,
+        spin_started_at: wheel.spin_started_at || new Date().toISOString(),
 
         winner_entry_id: winnerEntry.id,
         winner_guest_profile_id: winnerEntry.guest_profile_id,
         winner_index: winnerIndex,
-        winner_selected_at: winnerSelectedAtISO,
+        winner_selected_at: new Date().toISOString(),
         winner_session_id: spinSessionId,
       })
       .eq("id", wheelId);
 
     if (updErr) return new NextResponse(JSON.stringify(updErr), { status: 500 });
 
-    // Create spin row and attempt SMS
-    const spinId = randomUUID();
-    const ensured = await ensureSpinRow({
-      spinId,
-      spinSessionId,
-      action: "stop",
-      winnerEntryId: winnerEntry.id,
-      winnerGuestProfileId: String(winnerEntry.guest_profile_id),
-      winnerIndex,
-      winnerSelectedAtISO,
-    });
-
-    const finalSpinId = ensured?.id || spinId;
-
-    const sms = await maybeSendWinnerSms({
-      spinSessionId,
-      spinId: finalSpinId,
-      winnerEntry,
-      winnerIndex,
-      winnerSelectedAtISO,
-    });
+    // ✅ SMS (best-effort)
+    await maybeSendWinnerSms(winnerEntry);
 
     return NextResponse.json({
       wheelId,
@@ -463,7 +329,7 @@ export async function POST(req: Request) {
       winner_entry_id: winnerEntry.id,
       winner_guest_profile_id: winnerEntry.guest_profile_id,
       winner_index: winnerIndex,
-      winner_selected_at: winnerSelectedAtISO,
+      winner_selected_at: new Date().toISOString(),
       winner: {
         id: winnerEntry.id,
         guest_profile_id: winnerEntry.guest_profile_id,
@@ -472,7 +338,6 @@ export async function POST(req: Request) {
         last_name: winnerEntry.last_name ?? "",
         status: "approved",
       },
-      sms,
     });
   }
 
@@ -480,7 +345,7 @@ export async function POST(req: Request) {
      AUTO: create session + pick winner immediately (authoritative)
   --------------------------------------------------------- */
   if (action === "auto") {
-    let winnerEntry: any;
+    let winnerEntry: WinnerEntryRow;
     try {
       winnerEntry = await fetchRandomApprovedEntry();
     } catch (e: any) {
@@ -491,46 +356,26 @@ export async function POST(req: Request) {
 
     const sessionId = randomUUID();
     const winnerIndex = pickWinnerIndex();
-    const winnerSelectedAtISO = new Date().toISOString();
 
     const { error: updErr } = await supabase
       .from("prize_wheels")
       .update({
         spin_state: "auto",
         spin_session_id: sessionId,
-        spin_started_at: winnerSelectedAtISO,
+        spin_started_at: new Date().toISOString(),
 
         winner_entry_id: winnerEntry.id,
         winner_guest_profile_id: winnerEntry.guest_profile_id,
         winner_index: winnerIndex,
-        winner_selected_at: winnerSelectedAtISO,
+        winner_selected_at: new Date().toISOString(),
         winner_session_id: sessionId,
       })
       .eq("id", wheelId);
 
     if (updErr) return new NextResponse(JSON.stringify(updErr), { status: 500 });
 
-    // Create spin row and attempt SMS
-    const spinId = randomUUID();
-    const ensured = await ensureSpinRow({
-      spinId,
-      spinSessionId: sessionId,
-      action: "auto",
-      winnerEntryId: winnerEntry.id,
-      winnerGuestProfileId: String(winnerEntry.guest_profile_id),
-      winnerIndex,
-      winnerSelectedAtISO,
-    });
-
-    const finalSpinId = ensured?.id || spinId;
-
-    const sms = await maybeSendWinnerSms({
-      spinSessionId: sessionId,
-      spinId: finalSpinId,
-      winnerEntry,
-      winnerIndex,
-      winnerSelectedAtISO,
-    });
+    // ✅ SMS (best-effort)
+    await maybeSendWinnerSms(winnerEntry);
 
     return NextResponse.json({
       wheelId,
@@ -538,7 +383,7 @@ export async function POST(req: Request) {
       winner_entry_id: winnerEntry.id,
       winner_guest_profile_id: winnerEntry.guest_profile_id,
       winner_index: winnerIndex,
-      winner_selected_at: winnerSelectedAtISO,
+      winner_selected_at: new Date().toISOString(),
       winner: {
         id: winnerEntry.id,
         guest_profile_id: winnerEntry.guest_profile_id,
@@ -547,7 +392,6 @@ export async function POST(req: Request) {
         last_name: winnerEntry.last_name ?? "",
         status: "approved",
       },
-      sms,
     });
   }
 

@@ -28,7 +28,8 @@
     "react-easy-crop": "^5.0.6",
     "sonner": "^1.5.0",
     "stripe": "^20.1.2",
-    "three": "^0.181.0"
+    "three": "^0.181.0",
+    "twilio": "^5.11.2"
   },
   "devDependencies": {
     "@types/node": "^20",
