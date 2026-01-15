@@ -900,24 +900,274 @@ export default function TriviaCard({
      PLAY TRIVIA
   ------------------------------------------------------------ */
   async function handlePlayTrivia() {
-    // ... unchanged (your existing code continues)
-    // NOTE: Kept as-is. Your pasted snippet continues below in your real file.
+    if (playLockRef.current) return;
+    if (
+      cardCountdownActive ||
+      cardStatus === "running" ||
+      cardStatus === "paused"
+    )
+      return;
+
+    playLockRef.current = true;
+
+    try {
+      const { count: qCount, error: qCountErr } = await supabase
+        .from("trivia_questions")
+        .select("*", { count: "exact", head: true })
+        .eq("trivia_card_id", trivia.id)
+        .eq("is_active", true);
+
+      if (qCountErr) console.warn("⚠️ trivia_questions count error:", qCountErr);
+
+      if (!qCount || qCount < 1) {
+        alert("This trivia has no ACTIVE questions yet.");
+        return;
+      }
+
+      const { data: session, error: sessionErr } = await supabase
+        .from("trivia_sessions")
+        .select("id,status,created_at")
+        .eq("trivia_card_id", trivia.id)
+        .neq("status", "finished")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (sessionErr || !session) {
+        alert("No players have joined this trivia yet.");
+        console.error("❌ No active session for Play:", sessionErr);
+        return;
+      }
+
+      setActiveSessionId(session.id);
+
+      const { data: players, error: playersErr } = await supabase
+        .from("trivia_players")
+        .select("id,status")
+        .eq("session_id", session.id);
+
+      if (playersErr) console.error("❌ trivia_players check error:", playersErr);
+
+      const hasApproved =
+        (players || []).some((p) => p.status === "approved") || false;
+
+      if (!hasApproved) {
+        alert("You must approve at least one player before starting the game.");
+        return;
+      }
+
+      const countdownStartIso = await getServerIsoNow();
+
+      await supabase
+        .from("trivia_cards")
+        .update({
+          countdown_active: true,
+          countdown_started_at: countdownStartIso,
+          status: "waiting",
+          countdown_seconds: countdownSeconds,
+        })
+        .eq("id", trivia.id);
+
+      setCardCountdownActive(true);
+      setCardStatus("waiting");
+
+      if (playTimeoutRef.current) {
+        window.clearTimeout(playTimeoutRef.current);
+        playTimeoutRef.current = null;
+      }
+
+      const ms = Math.max(1, countdownSeconds) * 1000;
+
+      playTimeoutRef.current = window.setTimeout(async () => {
+        try {
+          await supabase
+            .from("trivia_cards")
+            .update({
+              status: "running",
+              countdown_active: false,
+            })
+            .eq("id", trivia.id);
+
+          const questionStartIso = await getServerIsoNow();
+
+          const { error: sessionUpdateErr } = await supabase
+            .from("trivia_sessions")
+            .update({
+              status: "running",
+              current_question: 1,
+              question_started_at: questionStartIso,
+              wall_phase: "question",
+              wall_phase_started_at: questionStartIso,
+              paused_at: null,
+            })
+            .eq("id", session.id);
+
+          if (sessionUpdateErr) {
+            console.error("❌ trivia_sessions start error:", sessionUpdateErr);
+          }
+
+          setCardCountdownActive(false);
+          setCardStatus("running");
+        } finally {
+          playTimeoutRef.current = null;
+          playLockRef.current = false;
+        }
+      }, ms);
+    } finally {
+      if (!cardCountdownActive && cardStatus !== "waiting") {
+        playLockRef.current = false;
+      }
+    }
   }
 
   /* ------------------------------------------------------------
      STOP TRIVIA
   ------------------------------------------------------------ */
   async function handleStopTrivia() {
-    // ... unchanged (your existing code continues)
+    if (playTimeoutRef.current) {
+      window.clearTimeout(playTimeoutRef.current);
+      playTimeoutRef.current = null;
+    }
+    playLockRef.current = false;
+
+    const { data: session, error: sessionErr } = await supabase
+      .from("trivia_sessions")
+      .select("id,created_at")
+      .eq("trivia_card_id", trivia.id)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (!sessionErr && session?.id) {
+      const { data: players, error: playersErr } = await supabase
+        .from("trivia_players")
+        .select("id")
+        .eq("session_id", session.id);
+
+      if (playersErr) console.error("❌ stop: load trivia_players error:", playersErr);
+
+      if (!playersErr && players && players.length) {
+        const playerIds = players.map((p: any) => p.id).filter(Boolean);
+
+        if (playerIds.length > 0) {
+          const { error: delErr } = await supabase
+            .from("trivia_answers")
+            .delete()
+            .in("player_id", playerIds);
+
+          if (delErr) console.error("❌ stop: delete trivia_answers error:", delErr);
+        }
+
+        const { error: resetPlayersErr } = await supabase
+          .from("trivia_players")
+          .update({ score: 0, current_streak: 0, best_streak: 0 })
+          .eq("session_id", session.id);
+
+        if (resetPlayersErr) {
+          console.error("❌ stop: reset trivia_players score/streak error:", resetPlayersErr);
+        }
+      }
+
+      const { error: sessUpErr } = await supabase
+        .from("trivia_sessions")
+        .update({ status: "stopped", paused_at: null })
+        .eq("id", session.id);
+
+      if (sessUpErr) console.error("❌ stop: update trivia_sessions error:", sessUpErr);
+    }
+
+    const { error: cardErr } = await supabase
+      .from("trivia_cards")
+      .update({
+        status: "inactive",
+        countdown_active: false,
+        countdown_started_at: null,
+      })
+      .eq("id", trivia.id);
+
+    if (cardErr) console.error("❌ stop: update trivia_cards error:", cardErr);
+
+    setCardStatus("inactive");
+    setCardCountdownActive(false);
+    lastLeaderboardRef.current = [];
+    setLeaderboard([]);
   }
 
   /* ------------------------------------------------------------
-     MANUAL ADVANCE
+     MANUAL ADVANCE (button only, no space bar)
+     - Only when playMode === "manual" and cardStatus === "running"
+     - Steps wall_phase: question -> overlay -> reveal -> leaderboard -> question(next)
+       (all values respect DB constraint: question|overlay|reveal|leaderboard|podium)
   ------------------------------------------------------------ */
   const isManualMode = playMode === "manual";
 
   async function handleManualAdvance() {
-    // ... unchanged (your existing code continues)
+    if (!isManualMode) return;
+    if (cardStatus !== "running") return;
+    if (!trivia?.id) return;
+
+    const { data: session, error: sessionErr } = await supabase
+      .from("trivia_sessions")
+      .select("id,status,wall_phase,current_question")
+      .eq("trivia_card_id", trivia.id)
+      .neq("status", "finished")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (sessionErr || !session?.id) {
+      console.warn("⚠️ manual advance: no active session:", sessionErr);
+      return;
+    }
+
+    const currentPhase = (session.wall_phase as string) || "question";
+    const currentQuestion = (session.current_question as number) || 1;
+
+    let nextPhase: "question" | "overlay" | "reveal" | "leaderboard" | "podium" =
+      currentPhase as any;
+    let nextQuestion = currentQuestion;
+
+    // Phase machine:
+    // question -> overlay -> reveal -> leaderboard -> question (next)
+    if (!currentPhase || currentPhase === "question") {
+      nextPhase = "overlay";
+    } else if (currentPhase === "overlay") {
+      nextPhase = "reveal";
+    } else if (currentPhase === "reveal") {
+      nextPhase = "leaderboard";
+    } else if (currentPhase === "leaderboard") {
+      nextPhase = "question";
+      nextQuestion = currentQuestion + 1;
+    } else if (currentPhase === "podium") {
+      // already end-of-game — do nothing
+      return;
+    } else {
+      // Any unknown phase, reset to question
+      nextPhase = "question";
+    }
+
+    const nowIso = await getServerIsoNow();
+
+    const updatePayload: any = {
+      wall_phase: nextPhase,
+      wall_phase_started_at: nowIso,
+      current_question: nextQuestion,
+    };
+
+    // When we move to the next question, also reset question_started_at
+    if (nextPhase === "question" && nextQuestion !== currentQuestion) {
+      updatePayload.question_started_at = nowIso;
+      updatePayload.status = "running";
+    }
+
+    const { error: updateErr } = await supabase
+      .from("trivia_sessions")
+      .update(updatePayload)
+      .eq("id", session.id);
+
+    if (updateErr) {
+      console.error("❌ manual advance: update trivia_sessions error:", updateErr);
+    }
   }
 
   /* ------------------------------------------------------------
@@ -950,12 +1200,7 @@ export default function TriviaCard({
         value={activeTab}
         onValueChange={(val) =>
           setActiveTab(
-            val as
-              | "menu"
-              | "questions"
-              | "leaderboard"
-              | "settings1"
-              | "settings2"
+            val as "menu" | "questions" | "leaderboard" | "settings1" | "settings2"
           )
         }
       >
@@ -975,23 +1220,14 @@ export default function TriviaCard({
             { value: "menu", label: "Home", Icon: Home },
             { value: "questions", label: "Questions", Icon: HelpCircle },
             { value: "leaderboard", label: "Leaderboard", Icon: UserRound },
-            {
-              value: "settings1",
-              label: "Settings",
-              Icon: Settings,
-              suffix: "1",
-            },
-            {
-              value: "settings2",
-              label: "Settings",
-              Icon: Settings,
-              suffix: "2",
-            },
+            // PATCH: Settings tabs show a gear icon + number badge on desktop
+            { value: "settings1", label: "Settings One", Icon: Settings, desktopBadge: "1", mobileSuffix: "1" },
+            { value: "settings2", label: "Settings Two", Icon: Settings, desktopBadge: "2", mobileSuffix: "2" },
           ].map((tab) => (
             <Tabs.Trigger
               key={tab.value}
               value={tab.value}
-              aria-label={`${tab.label}${"suffix" in tab ? ` ${tab.suffix}` : ""}`}
+              aria-label={tab.label}
               onClick={tab.value === "questions" ? loadQuestions : undefined}
               className={cn(
                 "inline-flex items-center justify-center",
@@ -1005,23 +1241,41 @@ export default function TriviaCard({
                 "data-[state=active]:bg-white/5"
               )}
             >
-              {/* Mobile: icons (and settings show gear + number) */}
+              {/* Mobile */}
               <span className={cn("sm:hidden", "inline-flex", "items-center", "gap-1")}>
                 <tab.Icon className={cn("h-4", "w-4")} />
-                {"suffix" in tab ? (
+                {"mobileSuffix" in tab && (tab as any).mobileSuffix ? (
                   <span className={cn("text-[0.7rem]", "font-bold", "leading-none")}>
-                    {tab.suffix}
+                    {(tab as any).mobileSuffix}
                   </span>
                 ) : null}
               </span>
 
-              {/* Desktop: normal tabs show text. Settings show gear + number */}
-              <span className={cn("hidden", "sm:inline-flex", "items-center", "gap-1.5")}>
-                {"suffix" in tab ? (
-                  <>
+              {/* Desktop */}
+              <span className={cn("hidden", "sm:inline")}>
+                {"desktopBadge" in tab && (tab as any).desktopBadge ? (
+                  <span className={cn("inline-flex", "items-center", "gap-1.5")}>
                     <tab.Icon className={cn("h-4", "w-4")} />
-                    <span className={cn("font-bold", "leading-none")}>{tab.suffix}</span>
-                  </>
+                    <span
+                      className={cn(
+                        "inline-flex",
+                        "items-center",
+                        "justify-center",
+                        "h-4",
+                        "min-w-[16px]",
+                        "px-1",
+                        "rounded",
+                        "text-[0.7rem]",
+                        "font-bold",
+                        "leading-none",
+                        "bg-white/10",
+                        "border",
+                        "border-white/20"
+                      )}
+                    >
+                      {(tab as any).desktopBadge}
+                    </span>
+                  </span>
                 ) : (
                   tab.label
                 )}
@@ -1030,26 +1284,615 @@ export default function TriviaCard({
           ))}
         </Tabs.List>
 
-        {/* Everything below stays EXACTLY as you have it. */}
         {/* ---------------- HOME ---------------- */}
         <Tabs.Content value="menu">
-          {/* ... your existing menu tab content ... */}
+          <div className={cn("grid", "grid-cols-3", "gap-2", "mb-4", "items-center")}>
+            <div>
+              <p className={cn("text-sm", "opacity-70")}>Difficulty</p>
+              <p className="font-semibold">{trivia.difficulty}</p>
+            </div>
+            <div className="text-center">
+              <p className={cn("text-lg", "font-semibold")}>{trivia.public_name}</p>
+              {(cardStatus === "paused" || cardStatus === "waiting") && (
+                <p className={cn("text-xs", "opacity-80", "mt-0.5")}>
+                  {cardStatus === "paused" ? "PAUSED" : "Starting soon…"}
+                </p>
+              )}
+            </div>
+            <div className="text-right">
+              <p className={cn("text-sm", "opacity-70")}>Topic</p>
+              <p className="font-semibold">{trivia.topic_prompt || "—"}</p>
+            </div>
+          </div>
+
+          <div className={cn("grid", "grid-cols-3", "gap-3", "mt-4")}>
+            {/* COL 1 */}
+            <div className={cn("flex", "flex-col", "gap-2")}>
+              <button
+                onClick={() => {
+                  if (!canLaunchFromThisDevice) {
+                    alert(
+                      "To launch this wall, please use a laptop or desktop with a second screen connected."
+                    );
+                    return;
+                  }
+                  onLaunch(trivia.id);
+                }}
+                disabled={!canLaunchFromThisDevice}
+                className={cn(
+                  "py-2 rounded-lg font-semibold h-10 flex items-center justify-center",
+                  canLaunchFromThisDevice
+                    ? "bg-blue-600 hover:bg-blue-700"
+                    : "bg-gray-700/70 cursor-not-allowed opacity-60"
+                )}
+              >
+                Launch
+              </button>
+
+              <button
+                onClick={handlePlayTrivia}
+                disabled={cardStatus === "paused"}
+                className={cn(
+                  "bg-green-600 hover:bg-green-700 py-2 rounded-lg font-semibold h-10",
+                  "flex items-center justify-center",
+                  cardStatus === "paused" && "opacity-40 cursor-not-allowed"
+                )}
+              >
+                ▶ Play
+              </button>
+
+              <button
+                onClick={handleStopTrivia}
+                className={cn(
+                  "bg-red-600 hover:bg-red-700 py-2 rounded-lg font-semibold h-10",
+                  "flex items-center justify-center"
+                )}
+              >
+                ⏹ Stop
+              </button>
+
+              <button
+                onClick={handleTogglePauseTrivia}
+                disabled={!canPause || pauseBusy}
+                className={cn(
+                  "py-2 rounded-lg font-semibold h-10 flex items-center justify-center",
+                  cardStatus === "paused"
+                    ? "bg-amber-600 hover:bg-amber-700"
+                    : "bg-yellow-600 hover:bg-yellow-700",
+                  (!canPause || pauseBusy) && "opacity-40 cursor-not-allowed"
+                )}
+              >
+                {cardStatus === "paused" ? "▶ Resume" : "⏸ Pause"}
+              </button>
+            </div>
+
+            {/* COL 2 */}
+            <div className={cn("flex", "flex-col", "gap-2")}>
+              <button
+                onClick={() => onOpenOptions(trivia)}
+                className={cn(
+                  "bg-gray-700 hover:bg-gray-600 py-2 rounded-lg font-semibold h-10",
+                  "flex items-center justify-center"
+                )}
+              >
+                Options
+              </button>
+
+              {/* ✅ icon-only on phones */}
+              <button
+                onClick={() => onRegenerateQuestions?.(trivia)}
+                disabled={!onRegenerateQuestions}
+                className={cn(
+                  "py-2 rounded-lg font-semibold h-10",
+                  "flex items-center justify-center",
+                  "text-xs",
+                  "whitespace-nowrap",
+                  onRegenerateQuestions
+                    ? "bg-orange-500 hover:bg-orange-600 text-black"
+                    : "bg-gray-700/60 cursor-not-allowed opacity-60"
+                )}
+                aria-label="New Questions Or Topic"
+                title="New Questions Or Topic"
+              >
+                <span className={cn("sm:hidden", "inline-flex", "items-center", "justify-center")}>
+                  <HelpCircle className={cn("h-5", "w-5")} />
+                </span>
+                <span className={cn("hidden", "sm:inline")}>New Questions Or Topic</span>
+              </button>
+
+              <button
+                onClick={handleDeleteTrivia}
+                className={cn(
+                  "bg-red-700 hover:bg-red-800 py-2 rounded-lg font-semibold h-10",
+                  "flex items-center justify-center"
+                )}
+              >
+                ❌ Delete
+              </button>
+            </div>
+
+            {/* COL 3 */}
+            <div className={cn("flex", "flex-col", "gap-2")}>
+              <div
+                className={cn(
+                  "bg-gray-800/80 p-3 rounded-lg",
+                  "flex flex-col items-center justify-center",
+                  "backdrop-blur-sm min-h-[72px]"
+                )}
+              >
+                <p className={cn("text-xs", "opacity-75")}>Players</p>
+                <p className={cn("text-lg", "font-bold")}>{participantsCount}</p>
+                <p className={cn("text-[0.7rem]", "opacity-75", "mt-1")}>
+                  Active: <span className="font-semibold">{activePlayersCount}</span>
+                </p>
+              </div>
+
+              <button
+                onClick={() => onOpenModeration?.(trivia)}
+                className={cn(
+                  "py-2 rounded-lg font-semibold w-full h-10",
+                  "flex items-center justify-center text-sm",
+                  pendingCount > 0
+                    ? "bg-yellow-400 hover:bg-yellow-500 text-black"
+                    : "bg-purple-600 hover:bg-purple-700 text-white"
+                )}
+              >
+                {pendingCount > 0 ? `Moderate (${pendingCount} waiting)` : "Moderate Players"}
+              </button>
+
+              {/* ✅ MANUAL ADVANCE BUTTON (under Moderate Players) */}
+              <button
+                type="button"
+                onClick={handleManualAdvance}
+                disabled={!isManualMode || cardStatus !== "running"}
+                className={cn(
+                  "mt-2",
+                  "w-full",
+                  "rounded-lg",
+                  "font-semibold",
+                  "flex",
+                  "flex-col",
+                  "items-center",
+                  "justify-center",
+                  "py-3",
+                  "sm:py-4",
+                  isManualMode && cardStatus === "running"
+                    ? "bg-blue-600 hover:bg-blue-700"
+                    : "bg-gray-700/60 cursor-not-allowed opacity-60"
+                )}
+              >
+                <span className={cn("text-xs", "uppercase", "tracking-wide")}>Next</span>
+                <span
+                  className={cn(
+                    "leading-none",
+                    "text-2xl",
+                    "sm:text-3xl",
+                    "text-orange-400"
+                  )}
+                >
+                  ▶
+                </span>
+              </button>
+            </div>
+          </div>
         </Tabs.Content>
 
+        {/* ---------------- QUESTIONS ---------------- */}
         <Tabs.Content value="questions" className={cn("mt-4", "space-y-3")}>
-          {/* ... your existing questions content ... */}
+          <div className={cn("flex", "items-center", "justify-between")}>
+            <div className={cn("text-xs", "opacity-70")}>
+              Total questions: {questions.length}
+            </div>
+
+            <button
+              type="button"
+              onClick={handleAddAllQuestions}
+              disabled={questions.length === 0}
+              className={cn(
+                "px-3 py-1 rounded-md text-xs font-semibold",
+                "border border-blue-400/60",
+                "bg-blue-500/20 hover:bg-blue-500/30",
+                questions.length === 0 && "opacity-40 cursor-not-allowed"
+              )}
+            >
+              ➕ Add All to Game
+            </button>
+          </div>
+
+          {loadingQuestions && <p className="opacity-70">Loading questions…</p>}
+          {!loadingQuestions && questions.length === 0 && (
+            <p className={cn("opacity-70", "italic")}>No questions found.</p>
+          )}
+
+          {!loadingQuestions && questions.length > 0 && (
+            <>
+              <div className={cn("max-h-80", "overflow-y-auto", "space-y-3", "pr-1")}>
+                {visibleQuestions.map((q) => {
+                  const isActive = !!q.is_active;
+
+                  return (
+                    <div
+                      key={q.id}
+                      className={cn(
+                        "border rounded-lg p-4 bg-gray-900/70 backdrop-blur-sm",
+                        isActive
+                          ? "border-green-500/40"
+                          : "border-red-500/40 opacity-80"
+                      )}
+                    >
+                      <div className={cn("flex", "items-start", "justify-between", "gap-2", "mb-2")}>
+                        <div>
+                          <p className={cn("font-semibold")}>
+                            R{q.round_number}. {q.question_text}
+                          </p>
+                          <p
+                            className={cn(
+                              "text-[0.7rem] mt-1",
+                              isActive ? "text-green-300/80" : "text-red-300/80"
+                            )}
+                          >
+                            {isActive ? "Included in game" : "Not in game"}
+                          </p>
+                        </div>
+
+                        <div className={cn("flex", "flex-col", "gap-1")}>
+                          <button
+                            type="button"
+                            onClick={() => handleSetQuestionActive(q.id, true)}
+                            disabled={isActive}
+                            className={cn(
+                              "w-7 h-7 flex items-center justify-center rounded-md text-xs font-bold",
+                              isActive
+                                ? "bg-gray-600/50 text-gray-300 cursor-not-allowed"
+                                : "bg-green-600 hover:bg-green-700 text-white"
+                            )}
+                            title="Add this question to the game"
+                          >
+                            +
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => handleSetQuestionActive(q.id, false)}
+                            disabled={!isActive}
+                            className={cn(
+                              "w-7 h-7 flex items-center justify-center rounded-md text-xs font-bold",
+                              !isActive
+                                ? "bg-gray-600/50 text-gray-300 cursor-not-allowed"
+                                : "bg-red-600 hover:bg-red-700 text-white"
+                            )}
+                            title="Remove this question from the game"
+                          >
+                            −
+                          </button>
+                        </div>
+                      </div>
+
+                      <ul className={cn("grid", "grid-cols-2", "gap-2")}>
+                        {q.options.map((opt: string, i: number) => (
+                          <li
+                            key={i}
+                            className={cn(
+                              "p-2 rounded-md text-sm",
+                              i === q.correct_index
+                                ? "bg-green-600/30 border border-green-500/40"
+                                : "bg-black/30"
+                            )}
+                          >
+                            {String.fromCharCode(65 + i)}. {opt}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {questions.length > PAGE_SIZE && (
+                <div className={cn("flex", "items-center", "justify-between", "mt-2", "text-xs")}>
+                  <button
+                    type="button"
+                    onClick={() => setCurrentPage((p) => Math.max(0, p - 1))}
+                    disabled={safePage === 0}
+                    className={cn(
+                      "px-2 py-1 rounded-md border border-white/10",
+                      safePage === 0 && "opacity-40 cursor-not-allowed",
+                      safePage !== 0 && "hover:bg-white/5"
+                    )}
+                  >
+                    ◀ Prev 5
+                  </button>
+
+                  <span className="opacity-70">
+                    Page {safePage + 1} of {totalPages}
+                  </span>
+
+                  <button
+                    type="button"
+                    onClick={() => setCurrentPage((p) => Math.min(totalPages - 1, p + 1))}
+                    disabled={safePage >= totalPages - 1}
+                    className={cn(
+                      "px-2 py-1 rounded-md border border-white/10",
+                      safePage >= totalPages - 1 && "opacity-40 cursor-not-allowed",
+                      safePage < totalPages - 1 && "hover:bg-white/5"
+                    )}
+                  >
+                    Next 5 ▶
+                  </button>
+                </div>
+              )}
+            </>
+          )}
         </Tabs.Content>
 
+        {/* ---------------- LEADERBOARD ---------------- */}
         <Tabs.Content value="leaderboard" className={cn("mt-4", "space-y-3")}>
-          {/* ... your existing leaderboard content ... */}
+          {leaderboardLoading && (
+            <p className={cn("text-xs", "opacity-70")}>Loading leaderboard…</p>
+          )}
+
+          {!leaderboardLoading && leaderboard.length === 0 && (
+            <p className={cn("text-sm", "opacity-75", "italic")}>
+              No scores yet. Leaderboard will appear once players start answering questions.
+            </p>
+          )}
+
+          {!leaderboardLoading && leaderboard.length > 0 && (
+            <div className="space-y-2">
+              {leaderboard.map((row, idx) => (
+                <div
+                  key={row.playerId}
+                  className={cn(
+                    "flex items-center justify-between rounded-lg bg-gray-900/70",
+                    "border border-white/10 px-3 py-2"
+                  )}
+                >
+                  <div className={cn("flex items-center gap-3")}>
+                    <div
+                      className={cn(
+                        "w-8 h-8 rounded-full bg-blue-500/40",
+                        "flex items-center justify-center font-bold text-xs"
+                      )}
+                    >
+                      {idx + 1}
+                    </div>
+
+                    <div className={cn("text-sm", "font-semibold")}>{row.label}</div>
+                  </div>
+
+                  <div className={cn("text-lg", "font-bold")}>{row.totalPoints}</div>
+                </div>
+              ))}
+            </div>
+          )}
         </Tabs.Content>
 
+        {/* ---------------- SETTINGS ONE ---------------- */}
         <Tabs.Content value="settings1" className={cn("mt-4")}>
-          {/* ... your existing settings1 content ... */}
+          <div className={cn("space-y-5")}>
+            <div className={cn("flex items-center justify-between gap-4")}>
+              <div>
+                <p className={cn("text-sm", "font-semibold")}>Question Timer</p>
+                <p className={cn("text-xs", "opacity-70")}>
+                  How many seconds players have to answer each question on the wall.
+                </p>
+              </div>
+
+              <select
+                value={timerSeconds}
+                onChange={handleTimerChange}
+                className={cn(
+                  "bg-gray-800 border border-white/20 rounded-md",
+                  "px-3 py-1.5 text-sm outline-none focus:border-blue-400"
+                )}
+              >
+                {TIMER_OPTIONS.map((opt) => (
+                  <option key={opt} value={opt}>
+                    {opt} seconds
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className={cn("flex items-center justify-between gap-4")}>
+              <div>
+                <p className={cn("text-sm", "font-semibold")}>Lobby Countdown</p>
+                <p className={cn("text-xs", "opacity-70")}>
+                  How long the pre-game countdown runs before the first question.
+                </p>
+              </div>
+
+              <select
+                value={countdownSeconds}
+                onChange={handleCountdownSecondsChange}
+                className={cn(
+                  "bg-gray-800 border border-white/20 rounded-md",
+                  "px-3 py-1.5 text-sm outline-none focus:border-blue-400"
+                )}
+              >
+                {COUNTDOWN_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className={cn("flex items-center justify-between gap-4")}>
+              <div>
+                <p className={cn("text-sm", "font-semibold")}>Play Mode</p>
+                <p className={cn("text-xs", "opacity-70")}>
+                  Auto-advance or manual control between questions.
+                </p>
+              </div>
+
+              <select
+                value={playMode}
+                onChange={handlePlayModeChange}
+                className={cn(
+                  "bg-gray-800 border border-white/20 rounded-md",
+                  "px-3 py-1.5 text-sm outline-none focus:border-blue-400"
+                )}
+              >
+                <option value="auto">Auto (host taps Play once)</option>
+                <option value="manual">Manual (host advances each question)</option>
+              </select>
+            </div>
+
+            <div className={cn("flex items-center justify-between gap-4")}>
+              <div>
+                <p className={cn("text-sm", "font-semibold")}>Scoring Mode</p>
+                <p className={cn("text-xs", "opacity-70")}>
+                  Flat always awards max points. Speed rewards faster answers.
+                </p>
+              </div>
+
+              <select
+                value={scoringMode}
+                onChange={handleScoringModeChange}
+                className={cn(
+                  "bg-gray-800 border border-white/20 rounded-md",
+                  "px-3 py-1.5 text-sm outline-none focus:border-blue-400"
+                )}
+              >
+                <option value="flat">Flat (always max points)</option>
+                <option value="speed">Speed-based (faster = more)</option>
+              </select>
+            </div>
+
+            <div className={cn("flex items-center justify-between gap-4")}>
+              <div>
+                <p className={cn("text-sm", "font-semibold")}>Require Selfie</p>
+                <p className={cn("text-xs", "opacity-70")}>
+                  Force players to upload a selfie before joining the game.
+                </p>
+              </div>
+
+              <select
+                value={requireSelfie ? "on" : "off"}
+                onChange={handleRequireSelfieChange}
+                className={cn(
+                  "bg-gray-800 border border-white/20 rounded-md",
+                  "px-3 py-1.5 text-sm outline-none focus:border-blue-400"
+                )}
+              >
+                <option value="on">On</option>
+                <option value="off">Off</option>
+              </select>
+            </div>
+
+            <div className={cn("flex items-center justify-between gap-4")}>
+              <div>
+                <p className={cn("text-sm", "font-semibold")}>Show Ads / Sponsor Bar</p>
+                <p className={cn("text-xs", "opacity-70")}>
+                  Turn on sponsor/ads integrations (where supported).
+                </p>
+              </div>
+
+              <select
+                value={adsEnabled ? "on" : "off"}
+                onChange={handleAdsEnabledChange}
+                className={cn(
+                  "bg-gray-800 border border-white/20 rounded-md",
+                  "px-3 py-1.5 text-sm outline-none focus:border-blue-400"
+                )}
+              >
+                <option value="on">On</option>
+                <option value="off">Off</option>
+              </select>
+            </div>
+
+            {savingSettings && <p className={cn("text-xs", "opacity-70")}>Saving settings…</p>}
+          </div>
         </Tabs.Content>
 
+        {/* ---------------- SETTINGS TWO ---------------- */}
         <Tabs.Content value="settings2" className={cn("mt-4", "space-y-4")}>
-          {/* ... your existing settings2 content ... */}
+          <div className={cn("flex items-center justify-between gap-4")}>
+            <div>
+              <p className={cn("text-sm", "font-semibold")}>Points Type</p>
+              <p className={cn("text-xs", "opacity-70")}>
+                Cosmetic points scale: 100s, 1,000s, or 10,000s.
+              </p>
+            </div>
+            <select
+              value={pointsType}
+              onChange={handlePointsTypeChange}
+              className={cn(
+                "bg-gray-800 border border-white/20 rounded-md",
+                "px-3 py-1.5 text-sm outline-none focus:border-blue-400"
+              )}
+            >
+              <option value="100s">100&apos;s</option>
+              <option value="1000s">1,000&apos;s</option>
+              <option value="10000s">10,000&apos;s</option>
+            </select>
+          </div>
+
+          <div className={cn("flex items-center justify-between gap-4")}>
+            <div>
+              <p className={cn("text-sm", "font-semibold")}>
+                Progressive Wrong-Answer Removal
+              </p>
+              <p className={cn("text-xs", "opacity-70")}>
+                At 50% elapsed time, one wrong answer is removed. At 75%, another wrong
+                answer is removed.
+              </p>
+            </div>
+            <select
+              value={progressiveWrongRemovalEnabled ? "on" : "off"}
+              onChange={handleProgressiveWrongRemovalChange}
+              className={cn(
+                "bg-gray-800 border border-white/20 rounded-md",
+                "px-3 py-1.5 text-sm outline-none focus:border-blue-400"
+              )}
+            >
+              <option value="on">On</option>
+              <option value="off">Off</option>
+            </select>
+          </div>
+
+          <div className={cn("flex items-center justify-between gap-4")}>
+            <div>
+              <p className={cn("text-sm", "font-semibold")}>Highlight The Herd</p>
+              <p className={cn("text-xs", "opacity-70")}>
+                Highlights the most-chosen answer on the wall during the question.
+              </p>
+            </div>
+            <select
+              value={highlightTheHerdEnabled ? "on" : "off"}
+              onChange={handleHighlightTheHerdChange}
+              className={cn(
+                "bg-gray-800 border border-white/20 rounded-md",
+                "px-3 py-1.5 text-sm outline-none focus:border-blue-400"
+              )}
+            >
+              <option value="on">On</option>
+              <option value="off">Off</option>
+            </select>
+          </div>
+
+          <div className={cn("flex items-center justify-between gap-4")}>
+            <div>
+              <p className={cn("text-sm", "font-semibold")}>Streak Multiplier</p>
+              <p className={cn("text-xs", "opacity-70")}>
+                Rewards players with extra points as they build longer correct-answer streaks.
+              </p>
+            </div>
+            <select
+              value={streakMultiplierEnabled ? "on" : "off"}
+              onChange={handleStreakMultiplierChange}
+              className={cn(
+                "bg-gray-800 border border-white/20 rounded-md",
+                "px-3 py-1.5 text-sm outline-none focus:border-blue-400"
+              )}
+            >
+              <option value="on">On</option>
+              <option value="off">Off</option>
+            </select>
+          </div>
+
+          {savingSettings && <p className={cn("text-xs", "opacity-70")}>Saving settings…</p>}
         </Tabs.Content>
       </Tabs.Root>
     </div>
