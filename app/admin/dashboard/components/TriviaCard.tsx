@@ -210,7 +210,7 @@ export default function TriviaCard({
   }, []);
 
   /* ------------------------------------------------------------
-     MANUAL ADD / CSV IMPORT (NEW)
+     MANUAL ADD / CSV IMPORT
   ------------------------------------------------------------ */
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [addMode, setAddMode] = useState<"single" | "csv">("single");
@@ -220,6 +220,16 @@ export default function TriviaCard({
     (String(trivia?.topic_prompt || "").trim() ||
       String(trivia?.public_name || "").trim() ||
       "General") as string;
+
+  // NEW helper for Option B: default-fill difficulty/category
+  const normalizeDifficulty = (raw: any) => {
+    const s = String(raw ?? "").trim();
+    return s || defaultDifficulty;
+  };
+  const normalizeCategory = (raw: any) => {
+    const s = String(raw ?? "").trim();
+    return s || defaultCategory;
+  };
 
   const [newRound, setNewRound] = useState<number>(1);
   const [newQuestionText, setNewQuestionText] = useState<string>("");
@@ -248,12 +258,8 @@ export default function TriviaCard({
     setNewOptC("");
     setNewOptD("");
     setNewCorrectIndex(0);
-    setNewDifficulty((String(trivia?.difficulty || "").trim() || "medium") as string);
-    setNewCategory(
-      (String(trivia?.topic_prompt || "").trim() ||
-        String(trivia?.public_name || "").trim() ||
-        "General") as string
-    );
+    setNewDifficulty(defaultDifficulty);
+    setNewCategory(defaultCategory);
     setNewIsActive(true);
     setAddError(null);
     setAddOkMsg(null);
@@ -275,8 +281,11 @@ export default function TriviaCard({
     const b = String(newOptB || "").trim();
     const c = String(newOptC || "").trim();
     const d = String(newOptD || "").trim();
-    const difficulty = String(newDifficulty || "").trim();
-    const category = String(newCategory || "").trim();
+
+    // Option B: default-fill if blank
+    const difficulty = normalizeDifficulty(newDifficulty);
+    const category = normalizeCategory(newCategory);
+
     const round = Number(newRound);
 
     setAddError(null);
@@ -288,9 +297,8 @@ export default function TriviaCard({
     if (!Number.isFinite(newCorrectIndex) || newCorrectIndex < 0 || newCorrectIndex > 3) {
       return setAddError("Correct answer must be A, B, C, or D.");
     }
-    if (!difficulty) return setAddError("Difficulty is required (table requires it).");
-    if (!category) return setAddError("Category is required (table requires it).");
 
+    // No longer error on blank difficulty/category: they are default-filled above
     setAddBusy(true);
     try {
       const payload = {
@@ -312,15 +320,19 @@ export default function TriviaCard({
       }
 
       setAddOkMsg("Saved!");
-      // reload and keep you on Questions tab view
       await loadQuestions();
-      // reset form for quick entry
+
+      // reset for quick entry
       setNewQuestionText("");
       setNewOptA("");
       setNewOptB("");
       setNewOptC("");
       setNewOptD("");
       setNewCorrectIndex(0);
+
+      // keep defaults populated (Option B)
+      setNewDifficulty(difficulty);
+      setNewCategory(category);
     } finally {
       setAddBusy(false);
     }
@@ -346,7 +358,7 @@ export default function TriviaCard({
       header.some((h) => h.includes("question")) || header.some((h) => h.includes("option"));
     if (looksLikeHeader) startIndex = 1;
 
-    // Expected columns (9):
+    // Expected columns:
     // round_number, question_text, optionA, optionB, optionC, optionD, correct_index, difficulty, category, is_active(optional)
     const toInsert: any[] = [];
     const errors: string[] = [];
@@ -360,14 +372,17 @@ export default function TriviaCard({
       const c = String(r[4] || "").trim();
       const d = String(r[5] || "").trim();
       const correctRaw = r[6];
-      const difficulty = String(r[7] || defaultDifficulty).trim();
-      const category = String(r[8] || defaultCategory).trim();
+
+      // Option B: default-fill if missing OR blank
+      const difficulty = normalizeDifficulty(r[7]);
+      const category = normalizeCategory(r[8]);
+
       const isActive = r.length >= 10 ? toBoolLoose(r[9], true) : true;
 
       const round = Number(roundRaw);
       const correctIndex = Number(correctRaw);
 
-      const rowNum = looksLikeHeader ? i + 1 : i + 1; // 1-based for humans
+      const rowNum = i + 1; // 1-based for humans
 
       if (!Number.isFinite(round) || round < 1) {
         errors.push(`Row ${rowNum}: round_number must be >= 1`);
@@ -385,14 +400,8 @@ export default function TriviaCard({
         errors.push(`Row ${rowNum}: correct_index must be 0–3`);
         continue;
       }
-      if (!difficulty) {
-        errors.push(`Row ${rowNum}: difficulty is required`);
-        continue;
-      }
-      if (!category) {
-        errors.push(`Row ${rowNum}: category is required`);
-        continue;
-      }
+
+      // No longer error on missing/blank difficulty/category; they are default-filled above
 
       toInsert.push({
         trivia_card_id: trivia.id,
@@ -410,7 +419,7 @@ export default function TriviaCard({
       setCsvError(
         errors.slice(0, 8).join("\n") + (errors.length > 8 ? `\n…and ${errors.length - 8} more` : "")
       );
-      // still allow import if there are valid rows? We'll only import if some valid rows exist.
+      // still allow import if there are valid rows
     }
 
     if (toInsert.length === 0) {
@@ -594,12 +603,8 @@ export default function TriviaCard({
     setCardCountdownActive(!!trivia?.countdown_active);
 
     // keep add defaults synced too
-    setNewDifficulty((String(trivia?.difficulty || "").trim() || "medium") as string);
-    setNewCategory(
-      (String(trivia?.topic_prompt || "").trim() ||
-        String(trivia?.public_name || "").trim() ||
-        "General") as string
-    );
+    setNewDifficulty(defaultDifficulty);
+    setNewCategory(defaultCategory);
   }, [
     trivia?.id,
     trivia?.timer_seconds,
@@ -806,7 +811,7 @@ export default function TriviaCard({
   }
 
   /* ------------------------------------------------------------
-     CLEAR ALL QUESTIONS (NEW)
+     CLEAR ALL QUESTIONS
   ------------------------------------------------------------ */
   async function handleClearAllQuestions() {
     if (!trivia?.id) return;
@@ -869,8 +874,6 @@ export default function TriviaCard({
       }
 
       // 2) delete answers for those questions (if your DB doesn't cascade)
-      // NOTE: if question_id isn't a column in trivia_answers in your schema, this will no-op or error.
-      // Your code references question_id elsewhere, so this should match.
       const ANSWER_CHUNK = 1000;
       for (let i = 0; i < qids.length; i += ANSWER_CHUNK) {
         const chunk = qids.slice(i, i + ANSWER_CHUNK);
@@ -1468,9 +1471,6 @@ export default function TriviaCard({
 
   /* ------------------------------------------------------------
      MANUAL ADVANCE (button only, no space bar)
-     - Only when playMode === "manual" and cardStatus === "running"
-     - Steps wall_phase: question -> overlay -> reveal -> leaderboard -> question(next)
-       (all values respect DB constraint: question|overlay|reveal|leaderboard|podium)
   ------------------------------------------------------------ */
   const isManualMode = playMode === "manual";
 
@@ -1499,8 +1499,6 @@ export default function TriviaCard({
     let nextPhase: "question" | "overlay" | "reveal" | "leaderboard" | "podium" = currentPhase as any;
     let nextQuestion = currentQuestion;
 
-    // Phase machine:
-    // question -> overlay -> reveal -> leaderboard -> question (next)
     if (!currentPhase || currentPhase === "question") {
       nextPhase = "overlay";
     } else if (currentPhase === "overlay") {
@@ -1511,10 +1509,8 @@ export default function TriviaCard({
       nextPhase = "question";
       nextQuestion = currentQuestion + 1;
     } else if (currentPhase === "podium") {
-      // already end-of-game — do nothing
       return;
     } else {
-      // Any unknown phase, reset to question
       nextPhase = "question";
     }
 
@@ -1526,7 +1522,6 @@ export default function TriviaCard({
       current_question: nextQuestion,
     };
 
-    // When we move to the next question, also reset question_started_at
     if (nextPhase === "question" && nextQuestion !== currentQuestion) {
       updatePayload.question_started_at = nowIso;
       updatePayload.status = "running";
@@ -1561,7 +1556,7 @@ export default function TriviaCard({
       )}
       style={cardBgStyle}
     >
-      {/* ---------------- TOAST (NEW) ---------------- */}
+      {/* ---------------- TOAST ---------------- */}
       {toastOpen && (
         <div
           className={cn(
@@ -1594,7 +1589,7 @@ export default function TriviaCard({
         </div>
       )}
 
-      {/* ---------------- ADD / IMPORT MODAL (NEW) ---------------- */}
+      {/* ---------------- ADD / IMPORT MODAL ---------------- */}
       {addModalOpen && (
         <div
           className={cn(
@@ -1603,7 +1598,6 @@ export default function TriviaCard({
             "flex items-center justify-center p-4"
           )}
           onMouseDown={(e) => {
-            // click outside closes
             if (e.target === e.currentTarget) {
               setAddModalOpen(false);
               setAddError(null);
@@ -1806,7 +1800,7 @@ export default function TriviaCard({
 
                 <div className={cn("grid grid-cols-1 sm:grid-cols-2 gap-3")}>
                   <div>
-                    <label className={cn("text-xs opacity-70")}>Difficulty (required)</label>
+                    <label className={cn("text-xs opacity-70")}>Difficulty (default-fills)</label>
                     <input
                       value={newDifficulty}
                       onChange={(e) => setNewDifficulty(e.target.value)}
@@ -1814,11 +1808,14 @@ export default function TriviaCard({
                         "mt-1 w-full rounded-md bg-gray-900 border border-white/10",
                         "px-3 py-2 text-sm outline-none focus:border-blue-400"
                       )}
-                      placeholder="easy / medium / hard (whatever you store)"
+                      placeholder={defaultDifficulty}
                     />
+                    <p className={cn("text-[0.7rem] opacity-60 mt-1")}>
+                      If left blank, it will save as: <span className="font-mono">{defaultDifficulty}</span>
+                    </p>
                   </div>
                   <div>
-                    <label className={cn("text-xs opacity-70")}>Category (required)</label>
+                    <label className={cn("text-xs opacity-70")}>Category (default-fills)</label>
                     <input
                       value={newCategory}
                       onChange={(e) => setNewCategory(e.target.value)}
@@ -1826,8 +1823,11 @@ export default function TriviaCard({
                         "mt-1 w-full rounded-md bg-gray-900 border border-white/10",
                         "px-3 py-2 text-sm outline-none focus:border-blue-400"
                       )}
-                      placeholder="Sports / Music / Pop Culture..."
+                      placeholder={defaultCategory}
                     />
+                    <p className={cn("text-[0.7rem] opacity-60 mt-1")}>
+                      If left blank, it will save as: <span className="font-mono">{defaultCategory}</span>
+                    </p>
                   </div>
                 </div>
 
@@ -1893,6 +1893,7 @@ export default function TriviaCard({
                     <span className={cn("opacity-70")}>
                       • correct_index is 0–3 (A=0, B=1, C=2, D=3)
                       <br />• is_active can be true/false/1/0 (optional; defaults true)
+                      <br />• difficulty/category: if missing or blank, they auto-fill from this trivia card defaults
                     </span>
                   </p>
                 </div>
@@ -1920,7 +1921,6 @@ export default function TriviaCard({
                         const text = await file.text();
                         await insertCsvQuestionsFromText(text);
 
-                        // allow re-selecting same file later
                         e.currentTarget.value = "";
                       }}
                     />
@@ -1929,7 +1929,6 @@ export default function TriviaCard({
                   <button
                     type="button"
                     onClick={async () => {
-                      // small helper: paste CSV via prompt
                       const raw = window.prompt(
                         "Paste CSV rows here.\n\nFormat:\nround_number,question_text,optionA,optionB,optionC,optionD,correct_index,difficulty,category,is_active(optional)"
                       );
@@ -1972,6 +1971,7 @@ export default function TriviaCard({
         </div>
       )}
 
+      {/* ---------------- TABS ---------------- */}
       <Tabs.Root
         value={activeTab}
         onValueChange={(val) => setActiveTab(val as "menu" | "questions" | "leaderboard" | "settings1" | "settings2")}
@@ -1992,7 +1992,6 @@ export default function TriviaCard({
             { value: "menu", label: "Home", Icon: Home },
             { value: "questions", label: "Questions", Icon: HelpCircle },
             { value: "leaderboard", label: "Leaderboard", Icon: UserRound },
-            // PATCH: Settings tabs show a gear icon + number badge on desktop
             { value: "settings1", label: "Settings One", Icon: Settings, desktopBadge: "1", mobileSuffix: "1" },
             { value: "settings2", label: "Settings Two", Icon: Settings, desktopBadge: "2", mobileSuffix: "2" },
           ].map((tab) => (
@@ -2013,7 +2012,6 @@ export default function TriviaCard({
                 "data-[state=active]:bg-white/5"
               )}
             >
-              {/* Mobile */}
               <span className={cn("sm:hidden", "inline-flex", "items-center", "gap-1")}>
                 <tab.Icon className={cn("h-4", "w-4")} />
                 {"mobileSuffix" in tab && (tab as any).mobileSuffix ? (
@@ -2021,7 +2019,6 @@ export default function TriviaCard({
                 ) : null}
               </span>
 
-              {/* Desktop */}
               <span className={cn("hidden", "sm:inline")}>
                 {"desktopBadge" in tab && (tab as any).desktopBadge ? (
                   <span className={cn("inline-flex", "items-center", "gap-1.5")}>
@@ -2064,7 +2061,9 @@ export default function TriviaCard({
             <div className="text-center">
               <p className={cn("text-lg", "font-semibold")}>{trivia.public_name}</p>
               {(cardStatus === "paused" || cardStatus === "waiting") && (
-                <p className={cn("text-xs", "opacity-80", "mt-0.5")}>{cardStatus === "paused" ? "PAUSED" : "Starting soon…"}</p>
+                <p className={cn("text-xs", "opacity-80", "mt-0.5")}>
+                  {cardStatus === "paused" ? "PAUSED" : "Starting soon…"}
+                </p>
               )}
             </div>
             <div className="text-right">
@@ -2107,7 +2106,10 @@ export default function TriviaCard({
 
               <button
                 onClick={handleStopTrivia}
-                className={cn("bg-red-600 hover:bg-red-700 py-2 rounded-lg font-semibold h-10", "flex items-center justify-center")}
+                className={cn(
+                  "bg-red-600 hover:bg-red-700 py-2 rounded-lg font-semibold h-10",
+                  "flex items-center justify-center"
+                )}
               >
                 ⏹ Stop
               </button>
@@ -2129,12 +2131,14 @@ export default function TriviaCard({
             <div className={cn("flex", "flex-col", "gap-2")}>
               <button
                 onClick={() => onOpenOptions(trivia)}
-                className={cn("bg-gray-700 hover:bg-gray-600 py-2 rounded-lg font-semibold h-10", "flex items-center justify-center")}
+                className={cn(
+                  "bg-gray-700 hover:bg-gray-600 py-2 rounded-lg font-semibold h-10",
+                  "flex items-center justify-center"
+                )}
               >
                 Options
               </button>
 
-              {/* ✅ icon-only on phones */}
               <button
                 onClick={() => onRegenerateQuestions?.(trivia)}
                 disabled={!onRegenerateQuestions}
@@ -2156,7 +2160,10 @@ export default function TriviaCard({
 
               <button
                 onClick={handleDeleteTrivia}
-                className={cn("bg-red-700 hover:bg-red-800 py-2 rounded-lg font-semibold h-10", "flex items-center justify-center")}
+                className={cn(
+                  "bg-red-700 hover:bg-red-800 py-2 rounded-lg font-semibold h-10",
+                  "flex items-center justify-center"
+                )}
               >
                 ❌ Delete
               </button>
@@ -2189,7 +2196,6 @@ export default function TriviaCard({
                 {pendingCount > 0 ? `Moderate (${pendingCount} waiting)` : "Moderate Players"}
               </button>
 
-              {/* ✅ MANUAL ADVANCE BUTTON (under Moderate Players) */}
               <button
                 type="button"
                 onClick={handleManualAdvance}
@@ -2223,7 +2229,6 @@ export default function TriviaCard({
             <div className={cn("text-xs", "opacity-70")}>Total questions: {questions.length}</div>
 
             <div className={cn("flex items-center gap-2 flex-wrap")}>
-              {/* NEW: Add / Import */}
               <button
                 type="button"
                 onClick={openAddModal}
@@ -2246,7 +2251,6 @@ export default function TriviaCard({
                 ➕ Add All to Game
               </button>
 
-              {/* NEW: Clear All Questions */}
               <button
                 type="button"
                 onClick={handleClearAllQuestions}
