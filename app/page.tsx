@@ -37,9 +37,25 @@ export default function LandingPage() {
         )}
       />
 
-      {/* HERO CONTENT */}
-      <div className="relative z-10 flex flex-col items-center gap-4 w-full">
+      {/* Optional top-right nav */}
+      <div className={cn('absolute', 'top-4', 'right-4', 'z-20')}>
+        <Link
+          href="/about"
+          className={cn(
+            "text-sm font-semibold",
+            "text-sky-300/90 hover:text-sky-200",
+            "px-3 py-2 rounded-xl",
+            "border border-sky-400/20 hover:border-sky-300/40",
+            "bg-white/0 hover:bg-white/5",
+            "transition-all duration-200"
+          )}
+        >
+          About Us
+        </Link>
+      </div>
 
+      {/* HERO CONTENT */}
+      <div className={cn('relative', 'z-10', 'flex', 'flex-col', 'items-center', 'gap-4', 'w-full')}>
         {/* LOGO (fully responsive) */}
         <motion.div
           animate={{ scale: [1, 1.06, 1] }}
@@ -61,7 +77,7 @@ export default function LandingPage() {
             <img
               src="/faninteractlogo-landing.png"
               alt="FanInteract Logo"
-              className="w-full h-auto"
+              className={cn('w-full', 'h-auto')}
             />
           </div>
         </motion.div>
@@ -72,7 +88,6 @@ export default function LandingPage() {
             "font-extrabold tracking-tight",
             "bg-clip-text text-transparent bg-gradient-to-r from-sky-400 via-blue-500 to-indigo-400",
             "drop-shadow-[0_0_30px_rgba(56,189,248,0.25)]",
-
             "text-3xl",       // mobile
             "sm:text-4xl",    // tablets
             "md:text-6xl",    // desktop monitors
@@ -87,7 +102,6 @@ export default function LandingPage() {
           className={cn(
             "text-gray-300 leading-relaxed mx-auto",
             "max-w-[90%]",
-
             "text-base",      // mobile
             "sm:text-lg",
             "md:text-2xl"     // desktop monitors
@@ -130,6 +144,20 @@ export default function LandingPage() {
           >
             Login
           </Link>
+
+          {/* Optional third button */}
+          <Link
+            href="/about"
+            className={cn(
+              "px-8 py-4",
+              "border border-white/15 text-white/80",
+              "hover:bg-white/5 hover:text-white",
+              "rounded-2xl font-semibold",
+              "transition-all duration-300"
+            )}
+          >
+            About Us
+          </Link>
         </div>
       </div>
 
@@ -141,15 +169,31 @@ export default function LandingPage() {
       {/* FOOTER */}
       <footer
         className={cn(
-          "absolute bottom-0 left-0 w-full py-6 text-center",
+          "absolute bottom-0 left-0 w-full py-6",
           "bg-[#0b111d]/80 backdrop-blur-sm",
           "border-t border-blue-900/40",
           "z-20"
         )}
       >
-        <p className="text-gray-500 text-sm">
-          © {new Date().getFullYear()} FanInteract. All rights reserved.
-        </p>
+        <div className={cn('flex', 'flex-col', 'items-center', 'justify-center', 'gap-2', 'text-center')}>
+          <div className={cn('flex', 'items-center', 'justify-center', 'gap-4', 'text-sm')}>
+            <Link href="/about" className={cn('text-sky-300/80', 'hover:text-sky-200', 'transition-colors')}>
+              About Us
+            </Link>
+            <span className="text-gray-600">•</span>
+            <Link href="/privacy" className={cn('text-sky-300/80', 'hover:text-sky-200', 'transition-colors')}>
+              Privacy
+            </Link>
+            <span className="text-gray-600">•</span>
+            <Link href="/terms" className={cn('text-sky-300/80', 'hover:text-sky-200', 'transition-colors')}>
+              Terms
+            </Link>
+          </div>
+
+          <p className={cn('text-gray-500', 'text-sm')}>
+            © {new Date().getFullYear()} FanInteract. All rights reserved.
+          </p>
+        </div>
       </footer>
     </main>
   );
