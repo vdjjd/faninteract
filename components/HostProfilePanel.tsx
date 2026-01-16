@@ -13,6 +13,7 @@ import {
   Upload,
   Trash2,
   AlertTriangle,
+  HelpCircle,
 } from "lucide-react";
 
 import ChangeEmailModal from "@/components/ChangeEmailModal";
@@ -70,6 +71,12 @@ export default function HostProfilePanel({ host, setHost }: HostProfilePanelProp
   async function handleLogout() {
     await supabase.auth.signOut();
     window.location.href = "/";
+  }
+
+  // ✅ NEW: Help button handler
+  function handleHelp() {
+    // change this path if your help home lives somewhere else
+    window.location.href = "/help";
   }
 
   /* ---------------------- EXPORT GUEST / LEAD DATA ---------------------- */
@@ -572,7 +579,6 @@ export default function HostProfilePanel({ host, setHost }: HostProfilePanelProp
                 </span>
               </div>
 
-              {/* ✅ MOVED BLOCK ABOVE LOGO LIBRARY */}
               <div className={cn("text-center", "mt-2")}>
                 <p className={cn("font-semibold", "text-lg", "text-white")}>
                   {host?.first_name && host?.last_name
@@ -867,6 +873,17 @@ export default function HostProfilePanel({ host, setHost }: HostProfilePanelProp
             >
               <LogOut className={cn("w-5", "h-5")} /> Security
             </div>
+
+            {/* ✅ NEW HELP BUTTON ABOVE LOGOUT */}
+            <Button
+              variant="outline"
+              className={cn("w-full", "mt-2", "flex", "items-center", "justify-center", "gap-2")}
+              onClick={handleHelp}
+            >
+              <HelpCircle className={cn("w-4", "h-4")} />
+              Help
+            </Button>
+
             <Button variant="destructive" className="w-full" onClick={handleLogout}>
               Logout
             </Button>
