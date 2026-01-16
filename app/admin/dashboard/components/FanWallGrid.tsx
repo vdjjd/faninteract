@@ -14,13 +14,14 @@ interface FanWallGridProps {
   onOpenOptions: (wall: any) => void;
 }
 
+type CardTab = 'controls' | 'export';
+
 export default function FanWallGrid({
   walls,
   host,
   refreshFanWalls,
   onOpenOptions,
 }: FanWallGridProps) {
-
   const rt = useRealtimeChannel();
 
   const [localWalls, setLocalWalls] = useState<any[]>(walls || []);
@@ -32,6 +33,9 @@ export default function FanWallGrid({
 
   // 🔹 Track mobile vs desktop so Launch can be disabled on phones
   const [isMobile, setIsMobile] = useState(false);
+
+  // Per-wall tab state (Controls | Export)
+  const [activeTabs, setActiveTabs] = useState<Record<string, CardTab>>({});
 
   useEffect(() => {
     const check = () => {
@@ -59,20 +63,18 @@ export default function FanWallGrid({
         id: String(payload.id).trim(),
       });
     } catch (err) {
-      console.error("Broadcast error:", err);
+      console.error('Broadcast error:', err);
     }
   }
 
   function updateLocalWall(id: string, updates: any) {
-    setLocalWalls(prev =>
-      prev.map(w => (w.id === id ? { ...w, ...updates } : w))
-    );
+    setLocalWalls(prev => prev.map(w => (w.id === id ? { ...w, ...updates } : w)));
   }
 
   function parseCountdownDuration(label: string) {
     const num = parseInt(label);
-    if (label.includes("Second")) return num * 1000;
-    if (label.includes("Minute")) return num * 60 * 1000;
+    if (label.includes('Second')) return num * 1000;
+    if (label.includes('Minute')) return num * 60 * 1000;
     return 0;
   }
 
@@ -87,23 +89,16 @@ export default function FanWallGrid({
   /*  PLAY                                                  */
   /* ------------------------------------------------------ */
   async function handleStart(id: string) {
-    updateLocalWall(id, { status: "live", countdown_active: false });
+    updateLocalWall(id, { status: 'live', countdown_active: false });
 
-    const { data: current } = await supabase
-      .from("fan_walls")
-      .select("countdown")
-      .eq("id", id)
-      .single();
+    const { data: current } = await supabase.from('fan_walls').select('countdown').eq('id', id).single();
 
     const countdown = current?.countdown;
 
-    if (countdown && countdown !== "none") {
-      await supabase
-        .from("fan_walls")
-        .update({ countdown_active: true })
-        .eq("id", id);
+    if (countdown && countdown !== 'none') {
+      await supabase.from('fan_walls').update({ countdown_active: true }).eq('id', id);
 
-      await broadcast("wall_updated", {
+      await broadcast('wall_updated', {
         id,
         countdown_active: true,
       });
@@ -111,14 +106,11 @@ export default function FanWallGrid({
       const ms = parseCountdownDuration(countdown);
 
       setTimeout(async () => {
-        await supabase
-          .from("fan_walls")
-          .update({ status: "live", countdown_active: false })
-          .eq("id", id);
+        await supabase.from('fan_walls').update({ status: 'live', countdown_active: false }).eq('id', id);
 
-        await broadcast("countdown_finished", {
+        await broadcast('countdown_finished', {
           id,
-          status: "live",
+          status: 'live',
         });
 
         delayedRefresh();
@@ -127,14 +119,11 @@ export default function FanWallGrid({
       return;
     }
 
-    await supabase
-      .from("fan_walls")
-      .update({ status: "live", countdown_active: false })
-      .eq("id", id);
+    await supabase.from('fan_walls').update({ status: 'live', countdown_active: false }).eq('id', id);
 
-    await broadcast("wall_status_changed", {
+    await broadcast('wall_status_changed', {
       id,
-      status: "live",
+      status: 'live',
     });
 
     delayedRefresh();
@@ -144,16 +133,13 @@ export default function FanWallGrid({
   /*  STOP                                                  */
   /* ------------------------------------------------------ */
   async function handleStop(id: string) {
-    updateLocalWall(id, { status: "inactive", countdown_active: false });
+    updateLocalWall(id, { status: 'inactive', countdown_active: false });
 
-    await supabase
-      .from("fan_walls")
-      .update({ status: "inactive", countdown_active: false })
-      .eq("id", id);
+    await supabase.from('fan_walls').update({ status: 'inactive', countdown_active: false }).eq('id', id);
 
-    await broadcast("wall_status_changed", {
+    await broadcast('wall_status_changed', {
       id,
-      status: "inactive",
+      status: 'inactive',
     });
 
     delayedRefresh();
@@ -174,9 +160,9 @@ export default function FanWallGrid({
     setLocalWalls(prev => prev.filter(w => w.id !== id));
     await deleteFanWall(id);
 
-    await broadcast("wall_status_changed", {
+    await broadcast('wall_status_changed', {
       id,
-      status: "deleted",
+      status: 'deleted',
     });
 
     delayedRefresh();
@@ -187,12 +173,16 @@ export default function FanWallGrid({
   /* ------------------------------------------------------ */
   function handleLaunch(id: string) {
     const url = `${window.location.origin}/wall/${id}`;
-    const popup = window.open(
-      url,
-      "_blank",
-      "width=1280,height=800,resizable=yes,scrollbars=yes"
-    );
+    const popup = window.open(url, '_blank', 'width=1280,height=800,resizable=yes,scrollbars=yes');
     popup?.focus();
+  }
+
+  /* ------------------------------------------------------ */
+  /*  EXPORT GUESTBOOK (PRINT TO PDF)                       */
+  /* ------------------------------------------------------ */
+  function handleExportGuestbook(wallId: string) {
+    const url = `${window.location.origin}/api/export/fanwall/guestbook?wallId=${encodeURIComponent(wallId)}`;
+    window.open(url, '_blank', 'noopener,noreferrer');
   }
 
   /* ------------------------------------------------------ */
@@ -200,10 +190,7 @@ export default function FanWallGrid({
   /* ------------------------------------------------------ */
   useEffect(() => {
     async function fetchPending() {
-      const { data } = await supabase
-        .from("guest_posts")
-        .select("fan_wall_id")
-        .eq("status", "pending");
+      const { data } = await supabase.from('guest_posts').select('fan_wall_id').eq('status', 'pending');
 
       const counts: Record<string, number> = {};
       data?.forEach(p => {
@@ -216,12 +203,8 @@ export default function FanWallGrid({
     fetchPending();
 
     const sub = supabase
-      .channel("pending-posts")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "guest_posts" },
-        fetchPending
-      )
+      .channel('pending-posts')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'guest_posts' }, fetchPending)
       .subscribe();
 
     return () => {
@@ -234,142 +217,202 @@ export default function FanWallGrid({
     setShowModeration(true);
   }
 
+  function getCardTab(wallId: string): CardTab {
+    return activeTabs[wallId] || 'controls';
+  }
+
+  function setCardTab(wallId: string, tab: CardTab) {
+    setActiveTabs(prev => ({ ...prev, [wallId]: tab }));
+  }
+
   /* ------------------------------------------------------ */
   /*  RENDER                                                */
   /* ------------------------------------------------------ */
   return (
-    <div className={cn("mt-10 w-full max-w-6xl")}>
+    <div className={cn('mt-10 w-full max-w-6xl')}>
       <h2 className={cn('text-xl font-semibold mb-3')}>🎤 Fan Zone Walls</h2>
 
       {/* Empty state */}
       {(!localWalls || localWalls.length === 0) && (
-        <p className={cn("text-sm text-white/60 italic mt-1")}>
-          No Fan Walls created yet.
-        </p>
+        <p className={cn('text-sm text-white/60 italic mt-1')}>No Fan Walls created yet.</p>
       )}
 
       {/* GRID */}
       {localWalls && localWalls.length > 0 && (
         <div className={cn('grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5')}>
-          {localWalls.map(wall => (
-            <div
-              key={wall.id}
-              className={cn(
-                "rounded-xl p-4 text-center shadow-lg bg-cover bg-center flex flex-col justify-between transition-all duration-300",
-                wall.status === "live"
-                  ? "ring-4 ring-lime-400 shadow-lime-500/50"
-                  : wall.countdown_active
-                  ? "ring-4 ring-yellow-400 shadow-yellow-500/50"
-                  : "ring-0"
-              )}
-              style={{
-                backgroundImage:
-                  wall.background_type === "image"
-                    ? `url(${wall.background_value})`
-                    : wall.background_value,
-              }}
-            >
-              <div>
-                <h3 className={cn('font-bold text-lg mb-1')}>
-                  {wall.host_title || wall.title || "Untitled Wall"}
-                </h3>
+          {localWalls.map(wall => {
+            const tab = getCardTab(wall.id);
 
-                <p className={cn('text-sm mb-2')}>
-                  <strong>Status:</strong>{" "}
-                  <span
-                    className={
-                      wall.status === "live"
-                        ? "text-lime-400"
-                        : wall.countdown_active
-                        ? "text-yellow-400"
-                        : "text-orange-400"
-                    }
-                  >
-                    {wall.status === "live"
-                      ? "LIVE"
-                      : wall.countdown_active
-                      ? "COUNTDOWN ACTIVE"
-                      : "INACTIVE"}
-                  </span>
-                </p>
+            return (
+              <div
+                key={wall.id}
+                className={cn(
+                  'rounded-xl p-4 text-center shadow-lg bg-cover bg-center flex flex-col justify-between transition-all duration-300',
+                  wall.status === 'live'
+                    ? 'ring-4 ring-lime-400 shadow-lime-500/50'
+                    : wall.countdown_active
+                    ? 'ring-4 ring-yellow-400 shadow-yellow-500/50'
+                    : 'ring-0'
+                )}
+                style={{
+                  backgroundImage:
+                    wall.background_type === 'image'
+                      ? `url(${wall.background_value})`
+                      : wall.background_value,
+                }}
+              >
+                <div>
+                  <h3 className={cn('font-bold text-lg mb-1')}>
+                    {wall.host_title || wall.title || 'Untitled Wall'}
+                  </h3>
 
-                <div className={cn('flex justify-center mb-3')}>
-                  <button
-                    onClick={() => openModerationModal(wall.id)}
-                    className={cn(
-                      "px-3 py-1 rounded-md text-sm font-semibold flex items-center gap-1 shadow-md transition",
-                      pendingCounts[wall.id] > 0
-                        ? "bg-yellow-500 hover:bg-yellow-600 text-black"
-                        : "bg-gray-600 hover:bg-gray-700 text-white/80"
-                    )}
-                  >
-                    🕓 Pending
+                  <p className={cn('text-sm mb-2')}>
+                    <strong>Status:</strong>{' '}
                     <span
+                      className={
+                        wall.status === 'live'
+                          ? 'text-lime-400'
+                          : wall.countdown_active
+                          ? 'text-yellow-400'
+                          : 'text-orange-400'
+                      }
+                    >
+                      {wall.status === 'live'
+                        ? 'LIVE'
+                        : wall.countdown_active
+                        ? 'COUNTDOWN ACTIVE'
+                        : 'INACTIVE'}
+                    </span>
+                  </p>
+
+                  {/* Tabs: Controls | Export */}
+                  <div className={cn('flex items-center justify-center gap-2 mb-3')}>
+                    <button
+                      type="button"
+                      onClick={() => setCardTab(wall.id, 'controls')}
                       className={cn(
-                        "px-1.5 py-0.5 rounded-md text-xs font-bold",
-                        pendingCounts[wall.id] > 0
-                          ? "bg-black/70 text-white"
-                          : "bg-white/20 text-gray-300"
+                        'px-3 py-1 rounded-md text-xs font-bold shadow-md transition',
+                        tab === 'controls' ? 'bg-white/20 text-white' : 'bg-black/30 text-white/70 hover:bg-white/10'
                       )}
                     >
-                      {pendingCounts[wall.id] || 0}
-                    </span>
-                  </button>
+                      Controls
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setCardTab(wall.id, 'export')}
+                      className={cn(
+                        'px-3 py-1 rounded-md text-xs font-bold shadow-md transition',
+                        tab === 'export' ? 'bg-white/20 text-white' : 'bg-black/30 text-white/70 hover:bg-white/10'
+                      )}
+                    >
+                      Export
+                    </button>
+                  </div>
+
+                  {/* Pending button stays in header area (good visibility) */}
+                  <div className={cn('flex justify-center mb-3')}>
+                    <button
+                      onClick={() => openModerationModal(wall.id)}
+                      className={cn(
+                        'px-3 py-1 rounded-md text-sm font-semibold flex items-center gap-1 shadow-md transition',
+                        pendingCounts[wall.id] > 0
+                          ? 'bg-yellow-500 hover:bg-yellow-600 text-black'
+                          : 'bg-gray-600 hover:bg-gray-700 text-white/80'
+                      )}
+                    >
+                      🕓 Pending
+                      <span
+                        className={cn(
+                          'px-1.5 py-0.5 rounded-md text-xs font-bold',
+                          pendingCounts[wall.id] > 0 ? 'bg-black/70 text-white' : 'bg-white/20 text-gray-300'
+                        )}
+                      >
+                        {pendingCounts[wall.id] || 0}
+                      </span>
+                    </button>
+                  </div>
                 </div>
+
+                {/* TAB CONTENT */}
+                {tab === 'controls' ? (
+                  <div className={cn('flex flex-wrap justify-center gap-2 mt-auto pt-2 border-t border-white/10')}>
+                    {/* 🚀 Launch (disabled on mobile) */}
+                    <button
+                      type="button"
+                      onClick={isMobile ? undefined : () => handleLaunch(wall.id)}
+                      disabled={isMobile}
+                      className={cn(
+                        'px-2 py-1 rounded text-sm font-semibold',
+                        'bg-blue-600 hover:bg-blue-700',
+                        isMobile && 'opacity-40 cursor-not-allowed hover:bg-blue-600'
+                      )}
+                    >
+                      🚀 Launch
+                    </button>
+
+                    <button
+                      onClick={() => handleStart(wall.id)}
+                      className={cn('bg-green-600 hover:bg-green-700 px-2 py-1 rounded text-sm font-semibold')}
+                    >
+                      ▶️ Play
+                    </button>
+
+                    <button
+                      onClick={() => handleStop(wall.id)}
+                      className={cn('bg-red-600 hover:bg-red-700 px-2 py-1 rounded text-sm font-semibold')}
+                    >
+                      ⏹ Stop
+                    </button>
+
+                    <button
+                      onClick={() => handleClear(wall.id)}
+                      className={cn('bg-cyan-500 hover:bg-cyan-600 px-2 py-1 rounded text-sm font-semibold')}
+                    >
+                      🧹 Clear
+                    </button>
+
+                    <button
+                      onClick={() => onOpenOptions(wall)}
+                      className={cn('bg-indigo-500 hover:bg-indigo-600 px-2 py-1 rounded text-sm font-semibold')}
+                    >
+                      ⚙ Options
+                    </button>
+
+                    <button
+                      onClick={() => handleDelete(wall.id)}
+                      className={cn('bg-red-700 hover:bg-red-800 px-2 py-1 rounded text-sm font-semibold')}
+                    >
+                      ❌ Delete
+                    </button>
+                  </div>
+                ) : (
+                  <div className={cn('mt-auto pt-2 border-t border-white/10')}>
+                    <div className={cn('text-xs text-white/80 mb-2')}>
+                      Export a printable guestbook where each approved post is a full page (photo + message + monogram).
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => handleExportGuestbook(wall.id)}
+                      className={cn(
+                        'w-full',
+                        'bg-white/90 hover:bg-white',
+                        'text-black',
+                        'px-3 py-2 rounded-md text-sm font-bold shadow-md'
+                      )}
+                    >
+                      📄 Export Guestbook (Print to PDF)
+                    </button>
+
+                    <div className={cn('text-[0.7rem] text-white/70 mt-2')}>
+                      Tip: In the new tab, press <span className={cn('font-bold')}>Ctrl+P</span> (or <span className={cn('font-bold')}>Cmd+P</span>) → “Save as PDF”.
+                    </div>
+                  </div>
+                )}
               </div>
-
-              <div className={cn('flex flex-wrap justify-center gap-2 mt-auto pt-2 border-t border-white/10')}>
-                {/* 🚀 Launch (disabled on mobile) */}
-                <button
-                  type="button"
-                  onClick={isMobile ? undefined : () => handleLaunch(wall.id)}
-                  disabled={isMobile}
-                  className={cn(
-                    'px-2 py-1 rounded text-sm font-semibold',
-                    'bg-blue-600 hover:bg-blue-700',
-                    isMobile && 'opacity-40 cursor-not-allowed hover:bg-blue-600'
-                  )}
-                >
-                  🚀 Launch
-                </button>
-
-                <button
-                  onClick={() => handleStart(wall.id)}
-                  className={cn('bg-green-600 hover:bg-green-700 px-2 py-1 rounded text-sm font-semibold')}
-                >
-                  ▶️ Play
-                </button>
-
-                <button
-                  onClick={() => handleStop(wall.id)}
-                  className={cn('bg-red-600 hover:bg-red-700 px-2 py-1 rounded text-sm font-semibold')}
-                >
-                  ⏹ Stop
-                </button>
-
-                <button
-                  onClick={() => handleClear(wall.id)}
-                  className={cn('bg-cyan-500 hover:bg-cyan-600 px-2 py-1 rounded text-sm font-semibold')}
-                >
-                  🧹 Clear
-                </button>
-
-                <button
-                  onClick={() => onOpenOptions(wall)}
-                  className={cn('bg-indigo-500 hover:bg-indigo-600 px-2 py-1 rounded text-sm font-semibold')}
-                >
-                  ⚙ Options
-                </button>
-
-                <button
-                  onClick={() => handleDelete(wall.id)}
-                  className={cn('bg-red-700 hover:bg-red-800 px-2 py-1 rounded text-sm font-semibold')}
-                >
-                  ❌ Delete
-                </button>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
