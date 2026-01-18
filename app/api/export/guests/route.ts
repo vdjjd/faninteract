@@ -15,22 +15,13 @@ function splitDateTime(ts: string | null | undefined) {
   const hh = String(d.getHours()).padStart(2, "0");
   const mi = String(d.getMinutes()).padStart(2, "0");
 
-  return {
-    date: `${yyyy}-${mm}-${dd}`,
-    time: `${hh}:${mi}`,
-  };
+  return { date: `${yyyy}-${mm}-${dd}`, time: `${hh}:${mi}` };
 }
 
-/** Normalize a date (YYYY-MM-DD) coming from Postgres date or JS Date/ISO. */
+/** Normalize Postgres date or ISO string to YYYY-MM-DD */
 function normalizeDate(v: any): string {
   if (!v) return "";
-  // Postgres date typically comes back as "YYYY-MM-DD"
-  if (typeof v === "string") {
-    // If it's an ISO timestamp, keep just the date portion
-    if (v.includes("T")) return v.split("T")[0] ?? "";
-    return v;
-  }
-  // If it's a Date object for some reason
+  if (typeof v === "string") return v.includes("T") ? v.split("T")[0] ?? "" : v;
   if (v instanceof Date && !Number.isNaN(v.getTime())) {
     const yyyy = v.getFullYear();
     const mm = String(v.getMonth() + 1).padStart(2, "0");
@@ -38,6 +29,13 @@ function normalizeDate(v: any): string {
     return `${yyyy}-${mm}-${dd}`;
   }
   return String(v ?? "");
+}
+
+function toAgeValue(v: any): string | number {
+  if (typeof v === "number") return v;
+  if (typeof v === "string" && v.trim() !== "" && !Number.isNaN(Number(v)))
+    return Number(v);
+  return "";
 }
 
 export async function GET(req: Request) {
@@ -56,14 +54,11 @@ export async function GET(req: Request) {
   if (!hostId) return new NextResponse("Missing hostId", { status: 400 });
 
   try {
-    // 1) EVENT GUESTS FROM FUNCTION export_host_guests_v2(p_host_id)
     const [
       { data: guestData, error: guestError },
       { data: leadData, error: leadError },
     ] = await Promise.all([
-      supabase.rpc("export_host_guests_v2", {
-        p_host_id: hostId,
-      }),
+      supabase.rpc("export_host_guests_v2", { p_host_id: hostId }),
       supabase
         .from("priority_leads")
         .select(
@@ -105,87 +100,48 @@ export async function GET(req: Request) {
       });
     }
 
-    // 1.5) ENRICH GUESTS WITH AGE/DOB FROM guest_profiles
-    // We try to match profiles by any id the RPC might return, or by device_id.
     const rawGuests = (guestData ?? []) as any[];
 
-    const profileIdSet = new Set<string>();
-    const deviceIdSet = new Set<string>();
+    // Collect device_ids from RPC rows
+    const deviceIds = Array.from(
+      new Set(
+        rawGuests
+          .map((r) => r.device_id)
+          .filter((x): x is string => typeof x === "string" && x.length > 0)
+      )
+    );
 
-    for (const r of rawGuests) {
-      const possibleProfileId =
-        r.guest_profile_id ?? r.profile_id ?? r.guest_id ?? r.profileId ?? r.id;
-      const possibleDeviceId = r.device_id ?? r.deviceId;
+    // Lookup guest_profiles rows by device_id (THIS is the reliable join)
+    const profileByDevice = new Map<string, { age: any; date_of_birth: any }>();
 
-      if (typeof possibleProfileId === "string" && possibleProfileId.length) {
-        profileIdSet.add(possibleProfileId);
-      }
-      if (typeof possibleDeviceId === "string" && possibleDeviceId.length) {
-        deviceIdSet.add(possibleDeviceId);
-      }
-    }
-
-    const profileIds = Array.from(profileIdSet);
-    const deviceIds = Array.from(deviceIdSet);
-
-    // Pull profiles for this host. We only query if we have keys.
-    // (Supabase .in() is fine here; if you ever have thousands, we can chunk.)
-    let profiles: any[] = [];
-    if (profileIds.length || deviceIds.length) {
-      // Build OR filters safely.
-      // Note: .or() string syntax is: "col.in.(a,b),othercol.in.(c,d)"
-      const orParts: string[] = [];
-      if (profileIds.length) {
-        const idsCsv = profileIds.map((x) => `"${x}"`).join(",");
-        orParts.push(`id.in.(${idsCsv})`);
-      }
-      if (deviceIds.length) {
-        const devCsv = deviceIds.map((x) => `"${x}"`).join(",");
-        orParts.push(`device_id.in.(${devCsv})`);
-      }
-
-      const { data: profileData, error: profileError } = await supabase
+    if (deviceIds.length > 0) {
+      // If you have thousands, we can chunk. For normal use, this is fine.
+      const { data: profiles, error: profileErr } = await supabase
         .from("guest_profiles")
-        .select("id, device_id, age, date_of_birth")
-        .eq("host_id", hostId)
-        .or(orParts.join(","));
+        .select("device_id, age, date_of_birth")
+        .in("device_id", deviceIds);
 
-      if (profileError) {
-        console.error("guest_profiles lookup error:", profileError);
-        // Don’t fail export — just continue without enrichment
-        profiles = [];
+      if (profileErr) {
+        console.error("guest_profiles device_id lookup error:", profileErr);
       } else {
-        profiles = profileData ?? [];
+        for (const p of profiles ?? []) {
+          if (p?.device_id) {
+            profileByDevice.set(String(p.device_id), {
+              age: p.age,
+              date_of_birth: p.date_of_birth,
+            });
+          }
+        }
       }
     }
 
-    const profileById = new Map<string, any>();
-    const profileByDevice = new Map<string, any>();
-    for (const p of profiles) {
-      if (p?.id) profileById.set(String(p.id), p);
-      if (p?.device_id) profileByDevice.set(String(p.device_id), p);
-    }
-
-    // 2) MAP GUEST ROWS (FROM FUNCTION) + AGE/DOB ENRICHMENT
+    // Map guest rows + merge age/dob from guest_profiles
     const guestRows = rawGuests.map((r: any) => {
-      const possibleProfileId =
-        r.guest_profile_id ?? r.profile_id ?? r.guest_id ?? r.profileId ?? r.id;
-      const possibleDeviceId = r.device_id ?? r.deviceId;
-
-      const prof =
-        (typeof possibleProfileId === "string"
-          ? profileById.get(possibleProfileId)
-          : undefined) ||
-        (typeof possibleDeviceId === "string"
-          ? profileByDevice.get(possibleDeviceId)
-          : undefined);
+      const prof = typeof r.device_id === "string" ? profileByDevice.get(r.device_id) : undefined;
 
       const age =
-        typeof r.age === "number"
-          ? r.age
-          : typeof prof?.age === "number"
-          ? prof.age
-          : "";
+        // If the RPC ever starts returning age, use it first
+        toAgeValue(r.age) !== "" ? toAgeValue(r.age) : toAgeValue(prof?.age);
 
       const date_of_birth =
         r.date_of_birth != null
@@ -207,27 +163,24 @@ export async function GET(req: Request) {
         profile_created_time: r.profile_created_time ?? "",
         joined_date: r.joined_date ?? "",
         joined_time: r.joined_time ?? "",
+        guest_status: r.guest_status ?? "",
+        visit_number: typeof r.visit_number === "number" ? r.visit_number : "",
         event_id: r.event_id ?? "",
         source: r.source ?? "",
         feature: r.feature ?? "",
         city: r.city ?? "",
         state: r.state ?? "",
         zip: r.zip ?? "",
-        venue: "", // not tied to a single venue row here
+        venue: "",
         product: "",
         wants_contact: "",
-        guest_status: r.guest_status ?? "",
-        visit_number: typeof r.visit_number === "number" ? r.visit_number : "",
       };
     });
 
-    // 3) MAP PRIORITY LEAD ROWS
+    // Priority leads (no age/dob)
     const priorityRows = (leadData ?? []).map((l: any) => {
-      // “Joined” = when they actually scanned/filled the form
       const joinedTs = l.scanned_at ?? l.submitted_at ?? null;
       const { date: joined_date, time: joined_time } = splitDateTime(joinedTs);
-
-      // “Profile created” – use the same timestamp for now
       const { date: profile_created_date, time: profile_created_time } =
         splitDateTime(joinedTs);
 
@@ -244,7 +197,9 @@ export async function GET(req: Request) {
         profile_created_time,
         joined_date,
         joined_time,
-        event_id: "", // no trivia event id here, it's an ad slide lead
+        guest_status: "",
+        visit_number: "",
+        event_id: "",
         source: l.source ?? l.source_type ?? "",
         feature: "priority_lead",
         city: l.city ?? "",
@@ -253,21 +208,12 @@ export async function GET(req: Request) {
         venue: l.venue_name ?? "",
         product: l.product_interest ?? "",
         wants_contact:
-          l.wants_contact === true
-            ? "yes"
-            : l.wants_contact === false
-            ? "no"
-            : "",
-        // Leads don't participate in loyalty/visit count
-        guest_status: "",
-        visit_number: "",
+          l.wants_contact === true ? "yes" : l.wants_contact === false ? "no" : "",
       };
     });
 
-    // 4) COMBINE
     const rows = [...guestRows, ...priorityRows];
 
-    // 5) CSV HEADERS – ADD AGE + DOB
     const headers = [
       "type",
       "first_name",
@@ -280,8 +226,8 @@ export async function GET(req: Request) {
       "profile_created_time",
       "joined_date",
       "joined_time",
-      "guest_status", // 'new' / 'returning' when loyalty is ON
-      "visit_number", // numeric visit count when loyalty is ON
+      "guest_status",
+      "visit_number",
       "event_id",
       "source",
       "feature",
@@ -295,7 +241,6 @@ export async function GET(req: Request) {
 
     const escapeCsv = (v: any) => `"${String(v ?? "").replace(/"/g, '""')}"`;
 
-    // BOM helps Excel open UTF-8 correctly
     const bom = "\ufeff";
     const csv =
       bom +
