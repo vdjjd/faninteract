@@ -38,6 +38,17 @@ function toAgeValue(v: any): string | number {
   return "";
 }
 
+function normEmail(v: any): string {
+  if (typeof v !== "string") return "";
+  return v.trim().toLowerCase();
+}
+
+function normPhone(v: any): string {
+  if (typeof v !== "string") return "";
+  // keep digits only
+  return v.replace(/\D/g, "");
+}
+
 export async function GET(req: Request) {
   const supabaseUrl =
     process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -57,6 +68,7 @@ export async function GET(req: Request) {
     const [
       { data: guestData, error: guestError },
       { data: leadData, error: leadError },
+      { data: profilesData, error: profilesError },
     ] = await Promise.all([
       supabase.rpc("export_host_guests_v2", { p_host_id: hostId }),
       supabase
@@ -82,6 +94,11 @@ export async function GET(req: Request) {
         )
         .eq("host_id", hostId)
         .order("submitted_at", { ascending: true }),
+      // Pull ALL profiles for this host and map locally (most reliable)
+      supabase
+        .from("guest_profiles")
+        .select("device_id, email, phone, age, date_of_birth")
+        .eq("host_id", hostId),
     ]);
 
     if (guestError) {
@@ -100,51 +117,39 @@ export async function GET(req: Request) {
       });
     }
 
-    const rawGuests = (guestData ?? []) as any[];
-
-    // Collect device_ids from RPC rows
-    const deviceIds = Array.from(
-      new Set(
-        rawGuests
-          .map((r) => r.device_id)
-          .filter((x): x is string => typeof x === "string" && x.length > 0)
-      )
-    );
-
-    // Lookup guest_profiles rows by device_id (THIS is the reliable join)
-    const profileByDevice = new Map<string, { age: any; date_of_birth: any }>();
-
-    if (deviceIds.length > 0) {
-      // If you have thousands, we can chunk. For normal use, this is fine.
-      const { data: profiles, error: profileErr } = await supabase
-        .from("guest_profiles")
-        .select("device_id, age, date_of_birth")
-        .in("device_id", deviceIds);
-
-      if (profileErr) {
-        console.error("guest_profiles device_id lookup error:", profileErr);
-      } else {
-        for (const p of profiles ?? []) {
-          if (p?.device_id) {
-            profileByDevice.set(String(p.device_id), {
-              age: p.age,
-              date_of_birth: p.date_of_birth,
-            });
-          }
-        }
-      }
+    if (profilesError) {
+      console.error("guest_profiles fetch error:", profilesError);
+      // Don’t fail export; just continue without enrichment
     }
 
-    // Map guest rows + merge age/dob from guest_profiles
+    const rawGuests = (guestData ?? []) as any[];
+    const profiles = (profilesData ?? []) as any[];
+
+    // Build lookup maps from guest_profiles
+    const byDevice = new Map<string, any>();
+    const byEmail = new Map<string, any>();
+    const byPhone = new Map<string, any>();
+
+    for (const p of profiles) {
+      if (typeof p?.device_id === "string" && p.device_id) byDevice.set(p.device_id, p);
+      const e = normEmail(p?.email);
+      if (e) byEmail.set(e, p);
+      const ph = normPhone(p?.phone);
+      if (ph) byPhone.set(ph, p);
+    }
+
+    // Map guest rows, enriching from guest_profiles using device_id -> email -> phone
     const guestRows = rawGuests.map((r: any) => {
-      const prof = typeof r.device_id === "string" ? profileByDevice.get(r.device_id) : undefined;
+      const prof =
+        (typeof r?.device_id === "string" ? byDevice.get(r.device_id) : undefined) ||
+        (normEmail(r?.email) ? byEmail.get(normEmail(r.email)) : undefined) ||
+        (normPhone(r?.phone) ? byPhone.get(normPhone(r.phone)) : undefined);
 
       const age =
-        // If the RPC ever starts returning age, use it first
-        toAgeValue(r.age) !== "" ? toAgeValue(r.age) : toAgeValue(prof?.age);
+        toAgeValue(r?.age) !== "" ? toAgeValue(r.age) : toAgeValue(prof?.age);
 
       const date_of_birth =
-        r.date_of_birth != null
+        r?.date_of_birth != null
           ? normalizeDate(r.date_of_birth)
           : prof?.date_of_birth != null
           ? normalizeDate(prof.date_of_birth)
