@@ -70,7 +70,7 @@ export async function GET(req: Request) {
       { data: leadData, error: leadError },
       { data: profilesData, error: profilesError },
     ] = await Promise.all([
-      supabase.rpc("export_host_guests_v2", { p_host_id: hostId }),
+      supabase.rpc("export_host_guests", { p_host_id: hostId }),
       supabase
         .from("priority_leads")
         .select(
@@ -102,7 +102,7 @@ export async function GET(req: Request) {
     ]);
 
     if (guestError) {
-      console.error("export_host_guests_v2 error:", guestError);
+      console.error("export_host_guests error:", guestError);
       return new NextResponse(JSON.stringify({ error: guestError.message }), {
         status: 500,
         headers: { "Content-Type": "application/json; charset=utf-8" },
