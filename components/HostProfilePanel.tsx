@@ -7,7 +7,6 @@ import { supabase } from "@/lib/supabaseClient";
 
 import {
   User,
-  CreditCard,
   LogOut,
   SlidersHorizontal,
   Upload,
@@ -51,8 +50,6 @@ export default function HostProfilePanel({ host, setHost }: HostProfilePanelProp
   const [showGuestModal, setShowGuestModal] = useState(false);
   const [showTermsModal, setShowTermsModal] = useState(false);
 
-  const [billingLoading, setBillingLoading] = useState(false);
-
   const [showClearGuestsModal, setShowClearGuestsModal] = useState(false);
   const [clearGuestsLoading, setClearGuestsLoading] = useState(false);
   const [clearGuestsError, setClearGuestsError] = useState<string | null>(null);
@@ -94,50 +91,6 @@ export default function HostProfilePanel({ host, setHost }: HostProfilePanelProp
     if (!host?.id) return;
     await supabase.from("hosts").update({ [field]: value }).eq("id", host.id);
     setHost((prev: any) => ({ ...prev, [field]: value }));
-  }
-
-  /* ---------------------- BILLING: STRIPE PORTAL ---------------------- */
-  async function handleManageBilling() {
-    try {
-      if (!host?.id) return alert("Host not ready.");
-
-      setBillingLoading(true);
-
-      const { data } = await supabase.auth.getSession();
-      const token = data?.session?.access_token;
-      if (!token) {
-        alert("You must be logged in.");
-        return;
-      }
-
-      const res = await fetch("/api/stripe/create-portal-session", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ hostId: host.id }),
-      });
-
-      const payload = await res.json().catch(() => ({}));
-
-      if (!res.ok) {
-        alert(payload?.error || "Could not open billing portal.");
-        return;
-      }
-
-      if (!payload?.url) {
-        alert("Billing portal response missing url.");
-        return;
-      }
-
-      window.location.href = payload.url;
-    } catch (e: any) {
-      console.error("handleManageBilling error:", e);
-      alert(e?.message || "Billing portal error");
-    } finally {
-      setBillingLoading(false);
-    }
   }
 
   /* ---------------- AGE (COLLECT) + AGE BLOCKERS ---------------- */
@@ -827,37 +780,6 @@ export default function HostProfilePanel({ host, setHost }: HostProfilePanelProp
           <Button variant="outline" className={cn("w-full", "mt-2")} onClick={printGuestsPDF}>
             Print Guests (PDF)
           </Button>
-
-          <section>
-            <div
-              className={cn(
-                "flex",
-                "items-center",
-                "justify-center",
-                "gap-3",
-                "mb-3",
-                "text-blue-400",
-                "font-semibold"
-              )}
-            >
-              <CreditCard className={cn("w-5", "h-5")} /> Billing
-            </div>
-
-            <Button
-              variant="outline"
-              className="w-full"
-              onClick={handleManageBilling}
-              disabled={billingLoading || !host?.stripe_customer_id}
-            >
-              {billingLoading ? "Opening Billing…" : "Manage Billing"}
-            </Button>
-
-            {!host?.stripe_customer_id ? (
-              <p className={cn("text-xs", "text-gray-400", "mt-2", "text-center")}>
-                No billing profile yet — subscribe first.
-              </p>
-            ) : null}
-          </section>
 
           <section>
             <div

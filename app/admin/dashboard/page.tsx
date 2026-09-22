@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef } from "react";
 import { getSupabaseClient } from "@/lib/supabaseClient";
 import { getFanWallsByHost } from "@/lib/actions/fan_walls";
 
@@ -34,29 +34,10 @@ import { cn } from "@/lib/utils";
 
 const supabase = getSupabaseClient();
 
-type GateState = "loading" | "ok" | "verify" | "subscribe";
+type GateState = "loading" | "ok" | "verify";
 
 function isEmailVerified(user: any) {
   return !!(user?.email_confirmed_at || user?.confirmed_at);
-}
-
-function isStripeStatusActive(status: any) {
-  const s = String(status || "").toLowerCase();
-  return s === "active" || s === "trialing";
-}
-
-/**
- * Supports multiple possible schemas:
- * - subscription_active (boolean)
- * - stripe_status (text)
- * - subscription_status (text)
- */
-function hostHasActiveSub(hostRow: any) {
-  if (!hostRow) return false;
-  if (hostRow.subscription_active === true) return true;
-  if (isStripeStatusActive(hostRow.stripe_status)) return true;
-  if (isStripeStatusActive(hostRow.subscription_status)) return true;
-  return false;
 }
 
 export default function DashboardPage() {
@@ -96,14 +77,6 @@ export default function DashboardPage() {
   const [selectedTriviaForModeration, setSelectedTriviaForModeration] = useState<any | null>(null);
 
   const loadedRef = useRef(false);
-
-  const qs = useMemo(() => {
-    if (typeof window === "undefined") return new URLSearchParams();
-    return new URLSearchParams(window.location.search);
-  }, []);
-
-  const checkoutSuccess = qs.get("success") === "true";
-  const checkoutCanceled = qs.get("canceled") === "true";
 
   async function refreshAll(hostId: string) {
     const [walls, wheels, pollsData, triviaData, slideshowsData] =
@@ -177,6 +150,29 @@ export default function DashboardPage() {
 
     if (hostErr) console.error("Host load error:", hostErr);
 
+    // Support accounts created before signup began saving auth_id.
+    if (!hostRow) {
+      const { data: legacyHost, error: legacyHostErr } = await supabase
+        .from("hosts")
+        .select("*")
+        .eq("id", user.id)
+        .maybeSingle();
+
+      if (legacyHostErr) console.error("Legacy host load error:", legacyHostErr);
+
+      if (legacyHost) {
+        const { data: linkedHost, error: linkErr } = await supabase
+          .from("hosts")
+          .update({ auth_id: user.id })
+          .eq("id", legacyHost.id)
+          .select()
+          .maybeSingle();
+
+        if (linkErr) console.error("Legacy host link failed:", linkErr);
+        hostRow = linkedHost || legacyHost;
+      }
+    }
+
     // Auto-create host row (only using columns that exist in YOUR table)
     if (!hostRow) {
       const email = user.email || "unknown@example.com";
@@ -205,19 +201,8 @@ export default function DashboardPage() {
 
     setHost(hostRow);
 
-    // Gate 2: subscription
-    if (!hostHasActiveSub(hostRow)) {
-      setGate("subscribe");
-      setLoading(false);
-      return;
-    }
-
-    // unlocked
+    // Email verification is the only access gate.
     setGate("ok");
-
-    // Don't constantly clear+re-set on silent refresh
-    if (checkoutSuccess) setGateMsg("✅ Subscription success! Updating your dashboard…");
-    else if (checkoutCanceled) setGateMsg("⚠️ Checkout canceled.");
 
     if (hostRow?.id) await refreshAll(hostRow.id);
 
@@ -237,31 +222,10 @@ export default function DashboardPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // After Stripe success, webhook may take a moment -> light polling (silent to prevent flicker)
-  useEffect(() => {
-    if (!checkoutSuccess) return;
-
-    let tries = 0;
-    const id = setInterval(async () => {
-      tries++;
-      try {
-        await loadHostAndGate({ silent: true });
-      } catch {}
-      if (tries >= 10) clearInterval(id);
-    }, 1000);
-
-    return () => clearInterval(id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [checkoutSuccess]);
-
   // Guard wrapper
   function requireUnlocked(fn: () => void) {
     if (gate !== "ok") {
-      alert(
-        gate === "verify"
-          ? "Please verify your email first."
-          : "Please subscribe to unlock creation."
-      );
+      alert("Please verify your email first.");
       return;
     }
     fn();
@@ -279,61 +243,6 @@ export default function DashboardPage() {
     } catch (e: any) {
       console.error(e);
       setGateMsg(e?.message || "Failed to resend.");
-    }
-  }
-
-  // ✅ checkout starter
-  async function startCheckout() {
-    try {
-      const hostId = host?.id;
-      if (!hostId) {
-        alert("Host profile not ready yet (host.id missing). Try refresh.");
-        return;
-      }
-
-      const res = await fetch("/api/create-checkout-session", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ hostId }),
-      });
-
-      const contentType = res.headers.get("content-type") || "";
-      const payload = contentType.includes("application/json")
-        ? await res.json().catch(() => null)
-        : await res.text().catch(() => "");
-
-      console.log("checkout response:", {
-        status: res.status,
-        ok: res.ok,
-        contentType,
-        payload,
-      });
-
-      if (!res.ok) {
-        const msg =
-          typeof payload === "string"
-            ? payload.slice(0, 800)
-            : (payload as any)?.error ||
-              (payload as any)?.detail ||
-              JSON.stringify(payload);
-
-        alert(`Checkout failed (${res.status}):\n\n${msg}`);
-        return;
-      }
-
-      const url = (payload as any)?.url;
-      if (!url) {
-        alert(
-          "Checkout response missing url:\n\n" +
-            JSON.stringify(payload, null, 2)
-        );
-        return;
-      }
-
-      window.location.href = url;
-    } catch (e: any) {
-      console.error("startCheckout error:", e);
-      alert(e?.message || "Checkout failed.");
     }
   }
 
@@ -450,76 +359,6 @@ export default function DashboardPage() {
               )}
             >
               Logout
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // Gate: Subscribe
-  if (gate === "subscribe") {
-    return (
-      <div
-        className={cn(
-          "min-h-screen bg-[#0b111d] text.white flex flex-col items-center p-8"
-        ).replace("text.white", "text-white")}
-      >
-        <div
-          className={cn(
-            "w-full flex items-center justify-between mb-6 max-w-4xl"
-          )}
-        >
-          <h1 className={cn("text-3xl font-semibold")}>Host Dashboard</h1>
-          <HostProfilePanel host={host} setHost={setHost} />
-        </div>
-
-        <div
-          className={cn(
-            "w-full max-w-lg rounded-2xl border border-white/10 bg-white/5 p-6 text-center mt-10"
-          )}
-        >
-          <h2 className={cn("text-2xl font-semibold")}>
-            Subscription Required
-          </h2>
-          <p className={cn("mt-3 text-white/80")}>
-            You’re verified — now you just need an active subscription to create
-            walls and games.
-          </p>
-
-          <div className={cn("mt-2 text-sm text-white/70")}>
-            Status:{" "}
-            <span className="font-semibold">
-              {String(
-                host?.stripe_status ||
-                  host?.subscription_status ||
-                  (host?.subscription_active ? "active" : "inactive") ||
-                  "inactive"
-              )}
-            </span>
-          </div>
-
-          {gateMsg ? (
-            <div className={cn("mt-3 text-sm text-white/80")}>{gateMsg}</div>
-          ) : null}
-
-          <div className={cn("mt-5 flex flex-col gap-3")}>
-            <button
-              onClick={startCheckout}
-              className={cn(
-                "w-full rounded-xl bg-green-600 hover:bg-green-700 font-semibold py-3"
-              )}
-            >
-              Subscribe Now
-            </button>
-
-            <button
-              onClick={() => loadHostAndGate({ silent: true })}
-              className={cn(
-                "w-full rounded-xl border border-white/15 bg-white/5 hover:bg-white/10 font-semibold py-3"
-              )}
-            >
-              Refresh Status
             </button>
           </div>
         </div>

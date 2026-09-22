@@ -56,6 +56,7 @@ export default function HostSignupForm() {
           .insert([
             {
               id: userId,
+              auth_id: userId,
               master_id: masterId || null,
               venue_name: venueName,
               first_name: firstName,
