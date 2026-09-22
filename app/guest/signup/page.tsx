@@ -147,7 +147,6 @@ export default function GuestSignupPage() {
   const redirect = params.get("redirect") || "";
   const wallId = params.get("wall");
   const wheelId = params.get("prizewheel");
-  const basketballId = params.get("basketball");
   const triviaQueryId = params.get("trivia");
   const hostParam = params.get("host");
 
@@ -347,17 +346,6 @@ export default function GuestSignupPage() {
           foundBgCss = cssBg ?? foundBgCss;
         }
 
-        if (!foundHostId && basketballId) {
-          const { host_id, cssBg } = await fetchHostAndBgFromStandardTable(
-            supabase,
-            "bb_games",
-            basketballId,
-            "background_value"
-          );
-          foundHostId = host_id;
-          foundBgCss = cssBg ?? foundBgCss;
-        }
-
         if (!foundHostId && triviaId) {
           const { host_id, cssBg } = await fetchHostAndBgFromStandardTable(
             supabase,
@@ -411,7 +399,7 @@ export default function GuestSignupPage() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wallId, wheelId, pollId, basketballId, triviaId, hostParam, redirect, supabase]);
+  }, [wallId, wheelId, pollId, triviaId, hostParam, redirect, supabase]);
 
   /* -------------------------------------------------
      REQUIRED FIELD LOGIC
@@ -541,7 +529,6 @@ export default function GuestSignupPage() {
         if (wallId) return router.push(`/wall/${wallId}/submit`);
         if (wheelId) return router.push(`/prizewheel/${wheelId}/submit`);
         if (pollId) return router.push(`/polls/${pollId}/vote`);
-        if (basketballId) return router.push(`/basketball/${basketballId}/submit`);
         if (triviaId) return router.push(`/trivia/${triviaId}/join`);
       }
 
@@ -560,7 +547,6 @@ export default function GuestSignupPage() {
     wallId,
     wheelId,
     pollId,
-    basketballId,
     triviaId,
     router,
     supabase,
@@ -581,7 +567,6 @@ export default function GuestSignupPage() {
         wallId ||
         wheelId ||
         pollId ||
-        basketballId ||
         triviaId ||
         redirect.match(/([0-9a-fA-F-]{36})/)?.[0];
 
@@ -589,7 +574,6 @@ export default function GuestSignupPage() {
         wallId ? "wall" :
         wheelId ? "prizewheel" :
         pollId ? "poll" :
-        basketballId ? "basketball" :
         triviaId ? "trivia" :
         "";
 
@@ -638,7 +622,6 @@ export default function GuestSignupPage() {
       else if (wallId) router.push(`/wall/${wallId}/submit`);
       else if (wheelId) router.push(`/prizewheel/${wheelId}/submit`);
       else if (pollId) router.push(`/polls/${pollId}/vote`);
-      else if (basketballId) router.push(`/basketball/${basketballId}/submit`);
       else if (triviaId) router.push(`/trivia/${triviaId}/join`);
       else router.push("/");
     } catch (err: any) {

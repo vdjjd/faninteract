@@ -19,27 +19,6 @@ function getStoredGuestProfile() {
   }
 }
 
-/* ✅ Basketball device token (stable per phone) */
-function getOrCreateBbDeviceToken() {
-  const KEY = "bb_device_token";
-  let tok = "";
-  try {
-    tok = localStorage.getItem(KEY) || "";
-  } catch {}
-
-  if (!tok) {
-    tok =
-      (globalThis.crypto && "randomUUID" in globalThis.crypto
-        ? (globalThis.crypto as any).randomUUID()
-        : `bb_${Math.random().toString(16).slice(2)}_${Date.now()}`);
-    try {
-      localStorage.setItem(KEY, tok);
-    } catch {}
-  }
-
-  return tok;
-}
-
 async function recordVisit({
   device_id,
   guest_profile_id,
@@ -79,12 +58,11 @@ function normalizeType(t: string) {
     return "wheel";
   if (["poll", "polls"].includes(x)) return "poll";
   if (["wall", "fanwall", "fan_wall", "fan_walls"].includes(x)) return "wall";
-  if (["basketball", "bb", "bbgame", "bb_games"].includes(x)) return "basketball";
   if (["trivia", "triviacard", "trivia_cards"].includes(x)) return "trivia";
   return x;
 }
 
-type ThankType = "basketball" | "trivia" | "poll" | "wheel" | "wall" | "lead";
+type ThankType = "trivia" | "poll" | "wheel" | "wall" | "lead";
 
 /* ---------------------------------------------------------
    Component
@@ -117,7 +95,6 @@ export default function ThankYouPage() {
     if (typeof window === "undefined") return "lead";
 
     let detected: ThankType =
-      path.includes("/basketball/") ? "basketball" :
       path.includes("/trivia/") ? "trivia" :
       path.includes("/polls/") ? "poll" :
       path.includes("/prizewheel/") ? "wheel" :
@@ -136,7 +113,6 @@ export default function ThankYouPage() {
   const [visitInfo, setVisitInfo] = useState<any>(null);
 
   const pollRef = useRef<NodeJS.Timeout | null>(null);
-  const wakeLockRef = useRef<any>(null);
 
   // Trivia state
   const [triviaPhase, setTriviaPhase] =
@@ -177,7 +153,6 @@ export default function ThankYouPage() {
         { t: "wheel", table: "prize_wheels" },
         { t: "poll", table: "polls" },
         { t: "trivia", table: "trivia_cards" },
-        { t: "basketball", table: "bb_games" },
         { t: "wall", table: "fan_walls" },
       ];
 
@@ -233,22 +208,12 @@ export default function ThankYouPage() {
           ? "polls"
           : type === "wheel"
           ? "prize_wheels"
-          : type === "basketball"
-          ? "bb_games"
           : type === "trivia"
           ? "trivia_cards"
           : "fan_walls";
 
       const select =
-        type === "basketball"
-          ? `
-              id,
-              host:host_id (
-                id,
-                branding_logo_url
-              )
-            `
-          : type === "trivia"
+        type === "trivia"
           ? `
               id,
               host_id,
@@ -318,86 +283,6 @@ export default function ThankYouPage() {
       setVisitInfo(res);
     });
   }, [profile, host?.id]);
-
-  /* ---------------------------------------------------------
-     Wake Lock (basketball controller mode)
-  --------------------------------------------------------- */
-  useEffect(() => {
-    if (type !== "basketball") return;
-
-    async function lockScreen() {
-      try {
-        if ("wakeLock" in navigator) {
-          wakeLockRef.current = await (navigator as any).wakeLock.request(
-            "screen"
-          );
-        }
-      } catch {
-        // ignore
-      }
-    }
-
-    lockScreen();
-
-    return () => {
-      if (wakeLockRef.current) {
-        wakeLockRef.current.release().catch(() => {});
-        wakeLockRef.current = null;
-      }
-    };
-  }, [type]);
-
-  /* ---------------------------------------------------------
-     ✅ Basketball: Poll for approval by DEVICE TOKEN → redirect
-  --------------------------------------------------------- */
-  useEffect(() => {
-    if (type !== "basketball" || !gameId) return;
-
-    const bbToken = getOrCreateBbDeviceToken();
-
-    async function pollApproval() {
-      // 1) Check if an approved entry exists for this phone token
-      const { data: entry, error: entryErr } = await supabase
-        .from("bb_game_entries")
-        .select("id, device_token")
-        .eq("game_id", gameId)
-        .eq("device_token", bbToken)
-        .eq("status", "approved")
-        .maybeSingle();
-
-      if (entryErr) return;
-      if (!entry) return;
-
-      // 2) Find active player row for this phone token
-      const { data: player, error: playerErr } = await supabase
-        .from("bb_game_players")
-        .select("id, device_token")
-        .eq("game_id", gameId)
-        .eq("device_token", bbToken)
-        .is("disconnected_at", null)
-        .maybeSingle();
-
-      if (playerErr) return;
-      if (!player) return;
-
-      // Store player id for shooter page
-      try {
-        localStorage.setItem("bb_player_id", player.id);
-        localStorage.setItem("bb_device_token", bbToken);
-      } catch {}
-
-      if (pollRef.current) clearInterval(pollRef.current);
-
-      router.replace(`/basketball/${gameId}/shoot`);
-    }
-
-    // faster + smoother
-    pollRef.current = setInterval(pollApproval, 1200);
-
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
-    };
-  }, [type, gameId, supabase, router]);
 
   /* ---------------------------------------------------------
      Trivia server-time sync
@@ -559,9 +444,7 @@ export default function ThankYouPage() {
      UI helpers
   --------------------------------------------------------- */
   const bg =
-    type === "basketball"
-      ? `url(/bbgame1920x1080.png)` // ✅ FIXED
-      : type === "trivia"
+    type === "trivia"
       ? "linear-gradient(135deg,#0a2540,#1b2b44,#000000)"
       : data?.background_value?.includes?.("http")
       ? `url(${data.background_value})`
@@ -576,8 +459,6 @@ export default function ThankYouPage() {
 
   const message = useMemo(() => {
     switch (type) {
-      case "basketball":
-        return "You’re in! Get ready to play.";
       case "poll":
         return "Your vote has been recorded!";
       case "wheel":

@@ -11,10 +11,6 @@ import PollGrid from "./components/PollGrid";
 import TriviaGrid from "./components/TriviaGrid";
 import SlideshowGrid from "./components/SlideshowGrid";
 
-import BasketballGrid from "./components/BasketballGrid";
-import CreateBasketballGameModal from "@/components/CreateBasketballGameModal";
-import BasketballOptionsModal from "@/components/BasketballOptionsModal";
-
 import CreateFanWallModal from "@/components/CreateFanWallModal";
 import CreatePrizeWheelModal from "@/components/CreatePrizeWheelModal";
 import CreatePollModal from "@/components/CreatePollModal";
@@ -71,8 +67,6 @@ export default function DashboardPage() {
   const [polls, setPolls] = useState<any[]>([]);
   const [triviaList, setTriviaList] = useState<any[]>([]);
   const [slideshows, setSlideshows] = useState<any[]>([]);
-  const [basketballGames, setBasketballGames] = useState<any[]>([]);
-
   const [loading, setLoading] = useState(true);
 
   // Gate
@@ -86,18 +80,12 @@ export default function DashboardPage() {
   const [isPollModalOpen, setPollModalOpen] = useState(false);
   const [isTriviaModalOpen, setTriviaModalOpen] = useState(false);
   const [isSlideShowModalOpen, setSlideShowModalOpen] = useState(false);
-  const [isBasketballModalOpen, setBasketballModalOpen] = useState(false);
-
   const [isAdsModalOpen, setAdsModalOpen] = useState(false);
 
   const [selectedWall, setSelectedWall] = useState<any | null>(null);
   const [selectedPrizeWheel, setSelectedPrizeWheel] = useState<any | null>(null);
   const [selectedPoll, setSelectedPoll] = useState<any | null>(null);
   const [selectedSlideshow, setSelectedSlideshow] = useState<any | null>(null);
-
-  // Basketball options
-  const [selectedBasketballGame, setSelectedBasketballGame] = useState<any | null>(null);
-  const [isBasketballOptionsOpen, setBasketballOptionsOpen] = useState(false);
 
   // Ads Builder
   const [isCreateAdModalOpen, setCreateAdModalOpen] = useState(false);
@@ -118,7 +106,7 @@ export default function DashboardPage() {
   const checkoutCanceled = qs.get("canceled") === "true";
 
   async function refreshAll(hostId: string) {
-    const [walls, wheels, pollsData, triviaData, slideshowsData, basketballData] =
+    const [walls, wheels, pollsData, triviaData, slideshowsData] =
       await Promise.all([
         getFanWallsByHost(hostId),
         supabase
@@ -141,11 +129,6 @@ export default function DashboardPage() {
           .select("*")
           .eq("host_id", hostId)
           .order("created_at", { ascending: false }),
-        supabase
-          .from("bb_games")
-          .select("*")
-          .eq("host_id", hostId)
-          .order("created_at", { ascending: false }),
       ]);
 
     setFanWalls(walls);
@@ -153,7 +136,6 @@ export default function DashboardPage() {
     setPolls(pollsData.data || []);
     setTriviaList(triviaData.data || []);
     setSlideshows(slideshowsData.data || []);
-    setBasketballGames(basketballData.data || []);
   }
 
   // ✅ PATCHED: silent refresh option to prevent flicker
@@ -585,9 +567,6 @@ export default function DashboardPage() {
         onCreateSlideShow={() =>
           requireUnlocked(() => setSlideShowModalOpen(true))
         }
-        onCreateBasketballGame={() =>
-          requireUnlocked(() => setBasketballModalOpen(true))
-        }
       />
 
       <TriviaGrid
@@ -650,26 +629,6 @@ export default function DashboardPage() {
             setPrizeWheels(data || []);
           }}
           onOpenOptions={setSelectedPrizeWheel}
-        />
-      </div>
-
-      <div className={cn("w-full max-w-6xl mt-10")}>
-        <BasketballGrid
-          games={basketballGames}
-          host={host}
-          refreshBasketballGames={async () => {
-            if (!host?.id) return;
-            const { data } = await supabase
-              .from("bb_games")
-              .select("*")
-              .eq("host_id", host.id)
-              .order("created_at", { ascending: false });
-            setBasketballGames(data || []);
-          }}
-          onOpenOptions={(game: any) => {
-            setSelectedBasketballGame(game);
-            setBasketballOptionsOpen(true);
-          }}
         />
       </div>
 
@@ -764,21 +723,6 @@ export default function DashboardPage() {
         }}
       />
 
-      <CreateBasketballGameModal
-        isOpen={isBasketballModalOpen}
-        onClose={() => setBasketballModalOpen(false)}
-        hostId={host?.id}
-        refreshBasketballGames={async () => {
-          if (!host?.id) return;
-          const { data } = await supabase
-            .from("bb_games")
-            .select("*")
-            .eq("host_id", host.id)
-            .order("created_at", { ascending: false });
-          setBasketballGames(data || []);
-        }}
-      />
-
       {/* OPTIONS MODALS */}
       {selectedWall && (
         <OptionsModalFanWall
@@ -840,26 +784,6 @@ export default function DashboardPage() {
               .eq("host_id", host.id)
               .order("created_at", { ascending: false });
             setSlideshows(data || []);
-          }}
-        />
-      )}
-
-      {selectedBasketballGame && (
-        <BasketballOptionsModal
-          game={selectedBasketballGame}
-          isOpen={isBasketballOptionsOpen}
-          onClose={() => {
-            setBasketballOptionsOpen(false);
-            setSelectedBasketballGame(null);
-          }}
-          refreshBasketballGames={async () => {
-            if (!host?.id) return;
-            const { data } = await supabase
-              .from("bb_games")
-              .select("*")
-              .eq("host_id", host.id)
-              .order("created_at", { ascending: false });
-            setBasketballGames(data || []);
           }}
         />
       )}

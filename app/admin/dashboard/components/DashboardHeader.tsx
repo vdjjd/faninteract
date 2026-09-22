@@ -11,7 +11,6 @@ interface DashboardHeaderProps {
   onCreateTriviaGame: () => void;
   onCreateNewAd: () => void;
   onCreateSlideShow: () => void;
-  onCreateBasketballGame: () => void;
 }
 
 export default function DashboardHeader({
@@ -22,7 +21,6 @@ export default function DashboardHeader({
   onCreateTriviaGame,
   onCreateNewAd,
   onCreateSlideShow,
-  onCreateBasketballGame,
 }: DashboardHeaderProps) {
   const btn = cn(
     'px-4 py-2.5',
@@ -96,8 +94,8 @@ export default function DashboardHeader({
       {/* If handheld: no wall/game creation buttons */}
       {!canCreateWallsAndGames ? (
         <div className={cn('mt-1', 'text-xs', 'text-white/70', 'max-w-md', 'mx-auto')}>
-          To create or run Fan Walls, Trivia, Polls, Prize Wheels, Basketball,
-          or Slide Show walls, use a laptop or desktop with a second screen.
+          To create or run Fan Walls, Trivia, Polls, Prize Wheels, or Slide Show
+          walls, use a laptop or desktop with a second screen.
           <br />
           You can still manage ads from this device.
         </div>
@@ -137,14 +135,6 @@ export default function DashboardHeader({
             🎡 New Prize Wheel
           </button>
 
-          {/* Basketball */}
-          <button
-            onClick={onCreateBasketballGame}
-            className={cn(btn, 'bg-orange-600 hover:bg-orange-700')}
-          >
-            🏀 New Basketball Game
-          </button>
-
           {/* Trivia */}
           <button
             onClick={onCreateTriviaGame}
@@ -162,6 +152,7 @@ export default function DashboardHeader({
           </button>
 
           {/* Grid fillers */}
+          <div></div>
           <div></div>
           <div></div>
         </div>
