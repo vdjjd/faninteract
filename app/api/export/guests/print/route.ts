@@ -1,22 +1,8 @@
 import { NextResponse } from "next/server";
+import { loadGuestExportRows } from "@/lib/guestExport";
 import { createClient } from "@supabase/supabase-js";
 
 export const runtime = "nodejs";
-
-/** Split an ISO timestamp into YYYY-MM-DD and HH:MM (24h). */
-function splitDateTime(ts: string | null | undefined) {
-  if (!ts) return { date: "", time: "" };
-  const d = new Date(ts);
-  if (Number.isNaN(d.getTime())) return { date: "", time: "" };
-
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  const hh = String(d.getHours()).padStart(2, "0");
-  const mi = String(d.getMinutes()).padStart(2, "0");
-
-  return { date: `${yyyy}-${mm}-${dd}`, time: `${hh}:${mi}` };
-}
 
 function escapeHtml(v: any) {
   const s = String(v ?? "");
@@ -44,112 +30,7 @@ export async function GET(req: Request) {
   if (!hostId) return new NextResponse("Missing hostId", { status: 400 });
 
   try {
-    // ✅ SAME SOURCES AS CSV:
-    // 1) event guests from export_host_guests()
-    // 2) priority_leads rows for this host
-    const [
-      { data: guestData, error: guestError },
-      { data: leadData, error: leadError },
-    ] = await Promise.all([
-      supabase.rpc("export_host_guests", { p_host_id: hostId }),
-      supabase
-        .from("priority_leads")
-        .select(
-          `
-          first_name,
-          last_name,
-          email,
-          phone,
-          city,
-          region,
-          zip,
-          zip_code,
-          venue_name,
-          product_interest,
-          wants_contact,
-          scanned_at,
-          submitted_at,
-          source,
-          source_type
-        `
-        )
-        .eq("host_id", hostId)
-        .order("submitted_at", { ascending: true }),
-    ]);
-
-    if (guestError) {
-      console.error("export_host_guests error:", guestError);
-      return new NextResponse(JSON.stringify({ error: guestError.message }), {
-        status: 500,
-        headers: { "Content-Type": "application/json; charset=utf-8" },
-      });
-    }
-
-    if (leadError) {
-      console.error("priority_leads export error:", leadError);
-      return new NextResponse(JSON.stringify({ error: leadError.message }), {
-        status: 500,
-        headers: { "Content-Type": "application/json; charset=utf-8" },
-      });
-    }
-
-    // ✅ SAME MAPPING AS CSV (shape compatible)
-    const guestRows = (guestData ?? []).map((r: any) => ({
-      type: "guest",
-      first_name: r.first_name ?? "",
-      last_name: r.last_name ?? "",
-      email: r.email ?? "",
-      phone: r.phone ?? "",
-      profile_created_date: r.profile_created_date ?? "",
-      profile_created_time: r.profile_created_time ?? "",
-      joined_date: r.joined_date ?? "",
-      joined_time: r.joined_time ?? "",
-      event_id: r.event_id ?? "",
-      source: r.source ?? "",
-      feature: r.feature ?? "",
-      city: r.city ?? "",
-      state: r.state ?? "",
-      zip: r.zip ?? "",
-      venue: "",
-      product: "",
-      wants_contact: "",
-    }));
-
-    const priorityRows = (leadData ?? []).map((l: any) => {
-      const joinedTs = l.scanned_at ?? l.submitted_at ?? null;
-      const { date: joined_date, time: joined_time } = splitDateTime(joinedTs);
-      const { date: profile_created_date, time: profile_created_time } =
-        splitDateTime(joinedTs);
-
-      return {
-        type: "priority",
-        first_name: l.first_name ?? "",
-        last_name: l.last_name ?? "",
-        email: l.email ?? "",
-        phone: l.phone ?? "",
-        profile_created_date,
-        profile_created_time,
-        joined_date,
-        joined_time,
-        event_id: "",
-        source: l.source ?? l.source_type ?? "",
-        feature: "priority_lead",
-        city: l.city ?? "",
-        state: l.region ?? "",
-        zip: l.zip ?? l.zip_code ?? "",
-        venue: l.venue_name ?? "",
-        product: l.product_interest ?? "",
-        wants_contact:
-          l.wants_contact === true
-            ? "yes"
-            : l.wants_contact === false
-            ? "no"
-            : "",
-      };
-    });
-
-    // Combine same as CSV
-    const rows = [...guestRows, ...priorityRows];
+    const rows = await loadGuestExportRows(supabase, hostId);
 
     const headers = [
       "type",
@@ -157,10 +38,14 @@ export async function GET(req: Request) {
       "last_name",
       "email",
       "phone",
+      "age",
+      "date_of_birth",
       "profile_created_date",
       "profile_created_time",
       "joined_date",
       "joined_time",
+      "guest_status",
+      "visit_number",
       "event_id",
       "source",
       "feature",
@@ -206,7 +91,10 @@ export async function GET(req: Request) {
   th{background:#f2f2f2; position:sticky; top:0; z-index:1; cursor:pointer; user-select:none;}
   tr:nth-child(even) td{background:#fafafa;}
   .hint{font-size:11px; color:#666; margin:8px 0 14px;}
+  @page { size: landscape; margin: 10mm; }
   @media print {
+    table{font-size:8px; table-layout:fixed;}
+    th, td{padding:3px; overflow-wrap:anywhere;}
     button{display:none;}
     .hint{display:none;}
     .topbar{margin-bottom:8px;}
@@ -247,7 +135,7 @@ function sortTable(id,col){
 
   <table id="all" data-asc="true">
     <thead><tr>${thead}</tr></thead>
-    <tbody>${tbody}</tbody>
+    <tbody>${tbody || `<tr><td colspan="${headers.length}">No guests or leads found for this host.</td></tr>`}</tbody>
   </table>
 </body>
 </html>`;
